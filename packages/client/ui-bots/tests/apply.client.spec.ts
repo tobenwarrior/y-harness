@@ -188,10 +188,12 @@ async function boot(account?: GitHubAppRemoteFixture, settings?: McpActionRemote
       }
     }),
   }
+  const uiConversation = { events: { register: vi.fn(() => () => {}) } }
   ctx.provide('slots', slots as never)
   ctx.provide('locale', locale)
   ctx.provide('sessions', sessions)
   ctx.provide('connection', connection.connection as never)
+  ctx.provide('uiConversation', uiConversation as never)
   ctx.provide('sidebarRight', sidebarRight as never)
   ctx.provide('sidebarRightTabs', sidebarRightTabs as never)
   ctx.provide('inputTriggers', inputTriggers as never)
@@ -246,6 +248,8 @@ describe('ui-bots composition', () => {
     const sidebar = fixture.registered.find(entry => entry.options.name === 'sidebar.bots')!
     const actions = (sidebar.inject?.() as { readonly githubAppSignIn?: GitHubAppSignInActions }).githubAppSignIn
     if (actions === undefined) throw new Error('GitHub account actions were not mounted')
+    const chatCard = fixture.registered.find(entry => entry.options.id === 'bot-app-connection')
+    expect(chatCard?.inject?.()).toMatchObject({ githubAppSignIn: actions })
     await expect(actions.getGitHubAppSignIn()).resolves.toEqual(view)
     await expect(actions.startGitHubAppSignIn()).resolves.toEqual(view)
     await expect(actions.cancelGitHubAppSignIn(attemptId)).resolves.toEqual({
@@ -265,6 +269,9 @@ describe('ui-bots composition', () => {
     })
     const sidebar = fixture.registered.find(entry => entry.options.name === 'sidebar.bots')!
     expect((sidebar.inject?.() as { readonly githubAppSignIn?: GitHubAppSignInActions }).githubAppSignIn).toBeUndefined()
+    const chatCard = fixture.registered.find(entry => entry.options.id === 'bot-app-connection')
+    expect(chatCard?.inject?.()).toHaveProperty('hooks.workspace')
+    expect(chatCard?.inject?.()).not.toHaveProperty('githubAppSignIn')
     await fixture.fiber.dispose()
   })
 

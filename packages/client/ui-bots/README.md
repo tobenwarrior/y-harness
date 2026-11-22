@@ -43,6 +43,8 @@ Use **Reply** on a group message to quote it in the composer and send a reply to
 
 When a connected app requests approval in a shared conversation, choose **Allow once**, **Always allow**, or **Deny**. A remembered approval applies to the exact tool in that conversation for the person who approved it. That person can remove it from the conversation's approvals.
 
+When a Bot asks the owner to connect GitHub, the Bot Chat shows a compact **GitHub access needed** card in the Turn tail. **Connect GitHub** opens the same redacted device-flow controls used by Bot workspace settings; the card never displays credential values or appears in Code Chat.
+
 ### When to choose it
 
 

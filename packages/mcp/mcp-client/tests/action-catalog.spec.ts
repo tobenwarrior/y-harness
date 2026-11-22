@@ -25,7 +25,7 @@ function setEntry(ctx: Context, id: string): void {
 
 describe('MCP action catalog', () => {
   it('retains exact names, bounds descriptions, and returns isolated snapshots', () => {
-    const catalog = createMcpActionCatalog('records', 'profile:records')
+    const catalog = createMcpActionCatalog('github', 'profile:github', 'github-app')
     catalog.discovered([
       { name: 'records.read:recent', description: '', enabled: true },
       { name: 'tools with spaces', description: 'x'.repeat(4_097), enabled: false },
@@ -34,8 +34,9 @@ describe('MCP action catalog', () => {
 
     const snapshot = catalog.snapshot()
     expect(snapshot).toEqual({
-      serverName: 'records',
-      entryId: 'profile:records',
+      serverName: 'github',
+      entryId: 'profile:github',
+      authKind: 'github-app',
       connected: true,
       actions: [
         { name: 'records.read:recent', enabled: true },

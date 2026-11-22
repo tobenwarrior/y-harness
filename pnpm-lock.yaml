@@ -1227,9 +1227,15 @@ importers:
       '@yharness/credentials':
         specifier: workspace:*
         version: link:../../credentials/credentials
+      '@yharness/github-app-auth':
+        specifier: workspace:*
+        version: link:../../credentials/github-app-auth
       '@yharness/llm':
         specifier: workspace:*
         version: link:../../llm/llm
+      '@yharness/mcp-client':
+        specifier: workspace:*
+        version: link:../../mcp/mcp-client
       '@yharness/mcp-resources':
         specifier: workspace:*
         version: link:../../mcp/mcp-resources
@@ -3605,6 +3611,9 @@ importers:
       '@yharness/client-test-runtime':
         specifier: workspace:*
         version: link:../../test-support/client-runtime
+      '@yharness/client-ui-chat':
+        specifier: workspace:*
+        version: link:../ui-chat
       '@yharness/client-ui-conversation':
         specifier: workspace:*
         version: link:../ui-conversation

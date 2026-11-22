@@ -1518,12 +1518,21 @@ function isActiveGitHubAttempt(attempt: GitHubAppSignInAttempt | null | undefine
   return attempt?.phase === 'starting' || attempt?.phase === 'waiting'
 }
 
-function GitHubAppSignInSection({ actions, t }: {
+/**
+ * Render the owner-facing GitHub device-flow controls.
+ * @param props - Account actions, locale, and optional state from an inline Bot card.
+ * @returns the redacted GitHub account section.
+ */
+export function GitHubAppSignInSection({ actions, t, initialView, compact = false }: {
   actions: GitHubAppSignInActions
   t: BotWorkspaceViewProps['t']
+  /** Optional already-started view supplied by an in-chat connection request. */
+  initialView?: GitHubAppSignInView
+  /** Keep only the flow controls when a parent Bot card already supplies its chrome. */
+  compact?: boolean
 }): ReactNode {
-  const [view, setView] = useState<GitHubAppSignInView | undefined>()
-  const [loading, setLoading] = useState(true)
+  const [view, setView] = useState<GitHubAppSignInView | undefined>(initialView)
+  const [loading, setLoading] = useState(initialView === undefined)
   const [busy, setBusy] = useState<'start' | 'cancel' | 'disconnect' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -1561,10 +1570,10 @@ function GitHubAppSignInSection({ actions, t }: {
   pollRef.current = poll
   useEffect(() => {
     const epoch = ++epochRef.current
-    viewRef.current = undefined
+    viewRef.current = initialView
     setBusy(null)
-    setView(undefined)
-    setLoading(true)
+    setView(initialView)
+    setLoading(initialView === undefined)
     setError(null)
     setCopied(false)
     void poll(epoch)
@@ -1573,7 +1582,7 @@ function GitHubAppSignInSection({ actions, t }: {
       if (timerRef.current !== undefined) window.clearTimeout(timerRef.current)
       if (copyTimerRef.current !== undefined) window.clearTimeout(copyTimerRef.current)
     }
-  }, [poll])
+  }, [initialView, poll])
 
   const apply = async (
     kind: 'start' | 'cancel' | 'disconnect',
@@ -1617,39 +1626,52 @@ function GitHubAppSignInSection({ actions, t }: {
     })
   }
 
+  const accountActions = (
+    <span className={css.githubAccountActions}>
+      {connected && (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy !== null}
+          onClick={() => { void apply('disconnect', actions.disconnectGitHubApp) }}
+        >
+          {busy === 'disconnect' ? t('githubAccountDisconnecting') : t('githubAccountDisconnect')}
+        </Button>
+      )}
+      {!connected && !active && (view !== undefined || error !== null) && (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy !== null || loading}
+          onClick={() => { void apply('start', actions.startGitHubAppSignIn) }}
+        >
+          {attempt?.phase === 'failed' ? t('githubAccountRetry') : t('githubAccountConnect')}
+        </Button>
+      )}
+    </span>
+  )
+
   return (
-    <section className={css.githubAccountSection} aria-labelledby="yharness-github-account-title">
-      <div className={css.githubAccountHeader}>
-        <span className={css.githubAccountIcon} aria-hidden="true">
-          {connectedAppGlyph({ appId: 'github', size: 18 })}
-        </span>
-        <span className={css.githubAccountCopy}>
-          <strong id="yharness-github-account-title">{t('githubAccountLabel')}</strong>
-          <span>{connected ? t('githubAccountConnected') : t('githubAccountDescription')}</span>
-        </span>
-        <span className={css.githubAccountActions}>
-          {connected && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy !== null}
-              onClick={() => { void apply('disconnect', actions.disconnectGitHubApp) }}
-            >
-              {busy === 'disconnect' ? t('githubAccountDisconnecting') : t('githubAccountDisconnect')}
-            </Button>
-          )}
-          {!connected && !active && (view !== undefined || error !== null) && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy !== null || loading}
-              onClick={() => { void apply('start', actions.startGitHubAppSignIn) }}
-            >
-              {attempt?.phase === 'failed' ? t('githubAccountRetry') : t('githubAccountConnect')}
-            </Button>
-          )}
-        </span>
-      </div>
+    <section
+      className={compact ? css.githubAccountInline : css.githubAccountSection}
+      {...(compact ? { 'aria-label': t('githubAccountLabel') } : { 'aria-labelledby': 'yharness-github-account-title' })}
+    >
+      {compact ? (
+        <div className={css.githubAccountInlineActions}>
+          {connected ? <span className={css.githubAccountStatus} role="status">{t('githubAccountConnected')}</span> : accountActions}
+        </div>
+      ) : (
+        <div className={css.githubAccountHeader}>
+          <span className={css.githubAccountIcon} aria-hidden="true">
+            {connectedAppGlyph({ appId: 'github', size: 18 })}
+          </span>
+          <span className={css.githubAccountCopy}>
+            <strong id="yharness-github-account-title">{t('githubAccountLabel')}</strong>
+            <span>{connected ? t('githubAccountConnected') : t('githubAccountDescription')}</span>
+          </span>
+          {accountActions}
+        </div>
+      )}
       {loading && view === undefined && (
         <div className={css.githubAccountStatus} role="status">
           <StateDot state="ongoing" size={12} />

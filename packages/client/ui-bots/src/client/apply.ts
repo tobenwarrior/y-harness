@@ -7,6 +7,7 @@ import type {} from '@yharness/client-ui-renderer/client'
 import type {} from '@yharness/client-ui-sidebar/client'
 import type {} from '@yharness/client-ui-sidebar-right/client'
 import type {} from '@yharness/client-ui-conversation/client'
+import type {} from '@yharness/client-ui-chat/client'
 import type {} from '@yharness/client-locale/client'
 import type { InputTriggerSource } from '@yharness/client-ui-input-trigger/client'
 import type { BotAvatar } from '@yharness/bots/client'
@@ -23,6 +24,8 @@ import { createBotReferenceSource } from './bot-reference-source.ts'
 import { BotVaultRequestCard } from './BotVaultRequestCard.tsx'
 import { BotWebsiteLoginRequestCard } from './BotWebsiteLoginRequestCard.tsx'
 import { ComputerSignInCard } from './ComputerSignInCard.tsx'
+import { BotAppConnectionCard } from './BotAppConnectionCard.tsx'
+import { botAppConnectionTurnDefinition } from './bot-app-connection.ts'
 import type {
   BotMcpActionActions, GitHubAppSignInActions, GitHubAppSignInAttemptId, GitHubAppSignInView, McpActionServerView,
 } from './types.ts'
@@ -32,7 +35,7 @@ export const PANEL_ID = 'bots' as MainPanelId
 
 /** Services required by the Bot roster and its Session-backed Conversation; image generation is optional. */
 export const inject = [
-  'slots', 'locale', 'remote', 'remote.bots', 'sessions', 'connection',
+  'slots', 'locale', 'remote', 'remote.bots', 'sessions', 'connection', 'uiConversation',
 ]
 
 type GitHubAppRemoteValue =
@@ -113,6 +116,7 @@ export function apply(ctx: Context): void {
   )
   const account = ctx.get('remote.account') as typeof ctx.remote.account | undefined
   const githubAppSignIn = githubAppSignInActions(account)
+  ctx.uiConversation.events.register(botAppConnectionTurnDefinition)
   const computer = createComputerClient(connection.fetch)
   const computerAvailability = createComputerAvailability(computer)
   const computerTarget = createSnapshotStore<string | null>(null)
@@ -294,6 +298,13 @@ export function apply(ctx: Context): void {
         },
       }),
     }, ComputerSignInCard))
+    const disposeAppConnection = ctx.slots.inject('conversation.chat.turnTail', () => ctx.slots.register({
+      name: 'conversation.chat.turnTail', id: 'bot-app-connection', order: 10, locale: 'bots',
+      inject: () => ({
+        ...(githubAppSignIn === undefined ? {} : { githubAppSignIn }),
+        hooks: { workspace: controller.face().hooks.workspace },
+      }),
+    }, BotAppConnectionCard))
     const disposeReplyAvatar = ctx.slots.inject('conversation.bot.reply.avatar', () => ctx.slots.register({
       name: 'conversation.bot.reply.avatar',
       inject: (): BotReplyAvatarFace => {
@@ -325,6 +336,7 @@ export function apply(ctx: Context): void {
       disposeVaultRequest()
       disposeWebsiteLoginRequest()
       disposeSignIn()
+      disposeAppConnection()
       disposeSidebar()
       disposeReplyAvatar()
       disposeConversation()

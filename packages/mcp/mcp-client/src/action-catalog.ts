@@ -31,6 +31,8 @@ export interface McpActionCatalog {
   readonly serverName: string
   /** Full loader entry identity owning this configured plugin. */
   readonly entryId: string
+  /** Host authentication selected by the connector configuration, when applicable. */
+  readonly authKind?: 'github-app'
   /** Whether the last discovered generation is currently connected. */
   readonly connected: boolean
   /** Exact raw MCP action names and their local enabled state. */
@@ -60,9 +62,14 @@ export interface McpActionCatalogState {
 /** Create one connection-owned action catalog state.
  * @param serverName - Configured MCP server namespace.
  * @param entryId - Full loader entry identity owning the connector.
+ * @param authKind - Host authentication selected by this connector, when applicable.
  * @returns Mutable state for the connection supervisor's Host projection.
  */
-export function createMcpActionCatalog(serverName: string, entryId: string): McpActionCatalogState {
+export function createMcpActionCatalog(
+  serverName: string,
+  entryId: string,
+  authKind?: McpActionCatalog['authKind'],
+): McpActionCatalogState {
   let connected = false
   let actions: readonly McpActionCatalogAction[] = []
   return {
@@ -81,6 +88,7 @@ export function createMcpActionCatalog(serverName: string, entryId: string): Mcp
       return {
         serverName,
         entryId,
+        ...(authKind === undefined ? {} : { authKind }),
         connected,
         actions: actions.map(action => ({ ...action })),
       }
