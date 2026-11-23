@@ -1341,6 +1341,15 @@ describe('durable Bot roster', () => {
       const firstTarget = (await h.service.list({ includeHidden: true })).bots.find(bot => bot.name === 'Retry source copy')
       if (firstTarget === undefined) throw new Error('The partial target Bot was not retained')
       expect(firstTarget.state).toBe('provisioning')
+      await expect(h.service.create({
+        id: firstTarget.id,
+        name: firstTarget.name,
+        identity: firstTarget.identity,
+        accent: firstTarget.accent,
+        skillPolicy: { mode: 'selected', enabled: ['research'], disabled: [] },
+      })).rejects.toThrow('Retry this Bot using the original duplicate operation.')
+      expect((await h.service.list({ includeHidden: true })).bots.find(bot => bot.id === firstTarget.id)?.state)
+        .toBe('provisioning')
       const recovered = await h.service.duplicate(request)
       expect(recovered.bot.id).toBe(firstTarget.id)
       expect(h.create).toHaveBeenCalledTimes(3)

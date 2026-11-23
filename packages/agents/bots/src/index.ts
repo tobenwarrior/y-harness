@@ -1691,8 +1691,10 @@ function duplicateDigest(sourceBotId: BotId, operationId: BotDuplicateOperationI
   return createHash('sha256').update(String(sourceBotId)).update('\0').update(String(operationId)).digest('hex')
 }
 
+const BOT_DUPLICATE_ID_PREFIX = 'bot-duplicate-'
+
 function duplicateBotId(sourceBotId: BotId, operationId: BotDuplicateOperationId): BotId {
-  return BotId(`bot-duplicate-${duplicateDigest(sourceBotId, operationId).slice(0, 48)}`)
+  return BotId(`${BOT_DUPLICATE_ID_PREFIX}${duplicateDigest(sourceBotId, operationId).slice(0, 48)}`)
 }
 
 function duplicateOperationKey(sourceBotId: BotId, operationId: BotDuplicateOperationId): string {
@@ -7915,7 +7917,6 @@ export class BotService extends TypertRemoteService {
     const names: string[] = []
     for (const name of selectedNames) {
       signal?.throwIfAborted()
-      if (policy.disabled.includes(name)) continue
       if (await skillExists(source.sessionId, source.id, name, signal)) names.push(name)
     }
     return names.length === 0 ? undefined : names
@@ -8055,6 +8056,18 @@ export class BotService extends TypertRemoteService {
     const existing = storedExisting === undefined
       ? undefined
       : applyProfileSnapshot(storedExisting, profileState.profiles[String(id)])
+    const inOwnerScope = existing === undefined || existing.ownerId === this.ownerId
+    if (inOwnerScope && existing?.state !== 'active' && beforeActivate === undefined
+      && id.startsWith(BOT_DUPLICATE_ID_PREFIX)) {
+      const duplicates = await this.duplicateDomain
+      await duplicates.refresh()
+      for (const [, operation] of duplicates.table('operations').entries()) {
+        if (operation.targetBotId === id && operation.completedAt === undefined
+          && (operation.managedSkillNames?.length ?? 0) > 0) {
+          return badRequest('Retry this Bot using the original duplicate operation.')
+        }
+      }
+    }
     if (existing !== undefined) {
       if (existing.ownerId !== this.ownerId) {
         throw new RemoteError('bot/id-conflict', `Bot "${id}" already exists`, { botId: id })
