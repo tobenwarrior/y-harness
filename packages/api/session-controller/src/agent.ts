@@ -678,7 +678,12 @@ export class ApiSessionAgentController {
   }
 }
 
-function agentModelSelection(selection: ModelSelection): AgentModelSelection {
+/**
+ * Convert a persisted Session selection into the Agent's branded model controls.
+ * @param selection - provider, model, and optional request controls.
+ * @returns the Agent-scoped model selection.
+ */
+export function agentModelSelection(selection: ModelSelection): AgentModelSelection {
   return {
     provider: selection.provider,
     model: selection.model,
