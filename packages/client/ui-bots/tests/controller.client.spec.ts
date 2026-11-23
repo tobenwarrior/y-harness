@@ -3614,6 +3614,29 @@ describe('BotWorkspaceController', () => {
     queuedController.dispose()
   })
 
+  it.each([new Error('Roster unavailable'), 'Roster unavailable'])(
+    'shows a rejected roster refresh through both retry actions (%s)',
+    async (failure) => {
+      const controller = new BotWorkspaceController(remoteFixture([]), sessionsFixture().sessions, () => 'unexpected response')
+      const load = vi.spyOn(controller, 'load').mockRejectedValue(failure)
+      try {
+        const face = controller.face()
+        face.retryGroup()
+        await vi.waitFor(() => {
+          expect(controller.source.getSnapshot()).toMatchObject({ groupPhase: 'error', groupError: 'Roster unavailable' })
+        })
+
+        face.retry()
+        await vi.waitFor(() => {
+          expect(controller.source.getSnapshot()).toMatchObject({ phase: 'error', error: 'Roster unavailable' })
+        })
+        expect(load).toHaveBeenCalledTimes(2)
+      } finally {
+        controller.dispose()
+      }
+    },
+  )
+
   it('does not commit stale roster reads after disposal or roster revisions', async () => {
     const first = bot('bot-stale-roster-first', 'session-stale-roster-first')
 

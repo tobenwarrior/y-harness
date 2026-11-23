@@ -15,8 +15,8 @@ import { dirname, fileUrlToPath, isAbsolute, join, pathToFileUrl, resolve as res
 import { WRAPPER_PARAMS } from '../image-layout.ts'
 import type { MemoryVfs } from '../storage/memory.ts'
 
-/** Condition keys honoured in `exports`, in order; `node` is deliberately absent. */
-export const DEFAULT_CONDITIONS = ['browser', 'require', 'import', 'default'] as const
+/** Condition keys honoured in `exports`, in order; worker implementations win over browser ones. */
+export const DEFAULT_CONDITIONS = ['worker', 'browser', 'require', 'import', 'default'] as const
 
 /** Extensions probed when a specifier has no usable one. */
 const EXTENSIONS = ['.js', '.json', '.mjs', '.cjs'] as const
