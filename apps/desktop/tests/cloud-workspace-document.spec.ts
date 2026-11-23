@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { cloudAction, cloudDocument, cloudRequestAllowed, cloudSignInCookie, cloudVaultRequestId, cloudWebsiteLoginUseRequestId } from '../src/cloud-workspace-document.ts'
+import { cloudAction, cloudDocument, cloudExternalUrl, cloudRequestAllowed, cloudSignInCookie, cloudVaultRequestId, cloudWebsiteLoginUseRequestId } from '../src/cloud-workspace-document.ts'
 import { en } from '../src/locale.ts'
 
 it('accepts workspace actions only from the private control document', () => {
@@ -41,6 +41,20 @@ it('limits remote traffic to the tunnel and its matching WebSocket port', () => 
   expect(cloudRequestAllowed(origin, 'http://127.0.0.1:1235/')).toBe(false)
   expect(cloudRequestAllowed(origin, 'https://example.invalid/')).toBe(false)
   expect(cloudRequestAllowed(origin, 'http://user@127.0.0.1:1234/')).toBe(false)
+})
+
+it('accepts only canonical HTTP(S) external URLs without credentials', () => {
+  expect(cloudExternalUrl('https://docs.example.com/release')).toBe('https://docs.example.com/release')
+  expect(cloudExternalUrl('http://docs.example.com/release')).toBe('http://docs.example.com/release')
+  for (const value of [
+    'javascript:alert(1)',
+    'file:///etc/passwd',
+    'https://user:password@example.com/',
+    ' https://docs.example.com/',
+    'https://docs.example.com/ ' + 'x'.repeat(2_048),
+    null,
+    42,
+  ]) expect(cloudExternalUrl(value)).toBeUndefined()
 })
 
 it('accepts only an exact authenticated Cloud Vault request link', () => {

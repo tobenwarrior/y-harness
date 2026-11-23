@@ -896,18 +896,18 @@ export interface BotGrokHistoryImportRequest extends BotGrokHistoryRequest {
 
 /** Stable position used to continue reading one Bot Library page. */
 export interface BotLibraryCursor {
-  /** Session event sequence containing the delivered file declaration. */
+  /** Session event sequence containing the delivery or reply. */
   readonly eventSeq: number
-  /** Zero-based file position within that presented event. */
+  /** Zero-based original file or projected link position within the event. */
   readonly fileIndex: number
 }
 
-/** The safe category shown for one Bot-delivered Library item. */
-export type BotLibraryItemCategory = 'file' | 'image' | 'audio' | 'video'
+/** The safe category shown for one Bot Library item. */
+export type BotLibraryItemCategory = 'file' | 'image' | 'audio' | 'video' | 'link'
 
-/** Owner request for a bounded page of files presented by one Bot. */
+/** Owner request for a bounded page of Bot Library items. */
 export interface BotLibraryRequest {
-  /** Bot whose delivered files should be listed. */
+  /** Bot whose delivered files and links should be listed. */
   readonly botId: BotId
   /** Number of newest items to return; the Host applies a bounded default when omitted. */
   readonly limit?: number
@@ -915,29 +915,38 @@ export interface BotLibraryRequest {
   readonly before?: BotLibraryCursor
 }
 
-/** One Bot-created file projection from a durable `deliverables/presented` event. */
-export interface BotLibraryItem {
-  /** Bot that owns the Session containing the presentation event. */
+interface BotLibraryItemFields extends BotLibraryCursor {
+  /** Bot that owns the Session. */
   readonly botId: BotId
-  /** Session coordinate required by the existing authenticated open/download routes. */
+  /** Session containing the durable delivery or reply. */
   readonly sessionId: SessionId
-  /** Stable Session event coordinate for the presented declaration. */
-  readonly eventSeq: number
-  /** Stable file coordinate within the presented declaration. */
-  readonly fileIndex: number
-  /** User-facing label; the original filesystem path is never returned. */
+  /** User-facing label. Filesystem paths remain private. */
   readonly label: string
-  /** Coarse media/file badge category for the Library surface. */
-  readonly category: BotLibraryItemCategory
   /** Creation time copied from the durable Session event. */
   readonly createdAt: number
 }
 
+/** One Bot-created file declared in a durable presentation event. */
+export interface BotLibraryFileItem extends BotLibraryItemFields {
+  /** Media or file category for the existing authenticated download route. */
+  readonly category: Exclude<BotLibraryItemCategory, 'link'>
+}
+
+/** One web destination contained in a settled Bot reply. */
+export interface BotLibraryLinkItem extends BotLibraryItemFields {
+  readonly category: 'link'
+  /** Validated absolute HTTP(S) destination opened only on request. */
+  readonly url: string
+}
+
+/** An owner-visible file or link from the Bot's Session. */
+export type BotLibraryItem = BotLibraryFileItem | BotLibraryLinkItem
+
 /** Owner response for one bounded Bot Library page. */
 export interface BotLibraryValue {
-  /** Bot whose delivered files are listed. */
+  /** Bot whose delivered files and links are listed. */
   readonly botId: BotId
-  /** Newest-first presented files. */
+  /** Newest-first Bot Library items. */
   readonly items: readonly BotLibraryItem[]
   /** Position to pass as `before` when older items remain. */
   readonly nextBefore?: BotLibraryCursor

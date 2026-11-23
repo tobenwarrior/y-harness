@@ -1,7 +1,8 @@
-/** Bounded owner-facing projection of Bot-created presented files. */
+/** Bounded owner-facing projection of Bot-presented files and reply links. */
 
 import type { SessionId } from '@yharness/session'
-import type { BotId, BotLibraryCursor, BotLibraryItem, BotLibraryValue } from './types.ts'
+import type { BotId, BotLibraryCursor, BotLibraryFileItem, BotLibraryItem, BotLibraryValue } from './types.ts'
+import { readLibraryLinks } from './library-links.ts'
 
 /** Default number of newest Library items returned by one request. */
 export const BOT_LIBRARY_DEFAULT_LIMIT = 20
@@ -81,7 +82,7 @@ function libraryLabel(file: PresentedLibraryFile): string {
 }
 
 /** Classify a presented filename for the Library badge without resolving its path. */
-function libraryCategory(file: PresentedLibraryFile): BotLibraryItem['category'] {
+function libraryCategory(file: PresentedLibraryFile): BotLibraryFileItem['category'] {
   const base = file.path.replaceAll('\\', '/').replace(/^.*\//, '')
   const extension = base.slice(base.lastIndexOf('.') + 1).toLowerCase()
   if (IMAGE_EXTENSIONS.has(extension)) return 'image'
@@ -90,19 +91,37 @@ function libraryCategory(file: PresentedLibraryFile): BotLibraryItem['category']
   return 'file'
 }
 
-/** Compare two stable event/file positions in newest-first order. */
+function replyText(event: BotLibraryEvent): string {
+  if (event.type !== 'assistant/message' || !isRecord(event.data) || !isRecord(event.data.message)
+    || !isUnknownArray(event.data.message.content)) return ''
+  return event.data.message.content.flatMap(part => isRecord(part) && part.type === 'text' && typeof part.text === 'string'
+    ? [part.text] : []).join('\n\n')
+}
+
+function libraryItemsOf(event: BotLibraryEvent, botId: BotId, sessionId: SessionId): readonly BotLibraryItem[] {
+  const fields = { botId, sessionId, eventSeq: event.seq, createdAt: event.time }
+  if (event.type === 'assistant/message') {
+    return readLibraryLinks(replyText(event)).map((link, fileIndex) => ({
+      ...fields, ...link, fileIndex, category: 'link',
+    }))
+  }
+  return presentedFilesOf(event).map(file => ({
+    ...fields, fileIndex: file.index, label: libraryLabel(file), category: libraryCategory(file),
+  }))
+}
+
+/** Compare two stable event/item positions in newest-first order. */
 function isOlder(position: BotLibraryCursor, before: BotLibraryCursor): boolean {
   return position.eventSeq < before.eventSeq
     || (position.eventSeq === before.eventSeq && position.fileIndex < before.fileIndex)
 }
 
 /**
- * Read a newest-first page of Bot-presented files from a bounded event reader.
+ * Read a newest-first page of Bot-presented files and reply links.
  *
- * The cursor is exclusive and includes the file index because one presented event
- * can declare more than one file. The projector intentionally returns only safe
- * labels and coordinates; the original path remains private to the existing
- * authenticated open/download handlers.
+ * The exclusive cursor includes the item index within a delivery or reply. File
+ * paths stay private to authenticated download handlers. Link rows carry their
+ * validated destination without performing any network request.
  *
  * @param botId - owner-scoped Bot identity to place on each result.
  * @param sessionId - Session identity used by the existing download routes.
@@ -139,24 +158,13 @@ export async function readBotLibraryPage(
     continuationEndExclusive = start
     for (const event of Array.from(events).reverse()) {
       if (hasOlder) break
-      const eventSeq = event.seq
-      const files = presentedFilesOf(event)
-      for (const file of Array.from(files).reverse()) {
-        const position = { eventSeq, fileIndex: file.index }
-        if (before !== undefined && !isOlder(position, before)) continue
+      for (const item of libraryItemsOf(event, botId, sessionId).toReversed()) {
+        if (before !== undefined && !isOlder(item, before)) continue
         if (items.length >= limit) {
           hasOlder = true
           break
         }
-        items.push({
-          botId,
-          sessionId,
-          eventSeq,
-          fileIndex: file.index,
-          label: libraryLabel(file),
-          category: libraryCategory(file),
-          createdAt: event.time,
-        })
+        items.push(item)
       }
     }
     if (hasOlder || start === 0) break

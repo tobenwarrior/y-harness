@@ -823,9 +823,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'readLibrary\') async readLibrary(request: BotLibraryRequest, signal?: AbortSignal): Promise<BotLibraryValue>',
-        description: 'Read a bounded owner-only Library page from durable Bot-presented files.\n\nOnly `deliverables/presented` events are included. User uploads, imported Grok attachments, and arbitrary workspace files stay outside this view.',
+        description: 'Read a bounded owner-only Library page from Bot deliveries and settled replies.\n\nFile rows use `deliverables/presented` events. Link rows use settled assistant replies in the same Session.',
         parameters: [{ name: 'request', description: 'Bot identity, page size, and optional older-item cursor.' }, { name: 'signal', description: 'Cancellation for storage reads.' }],
-        returns: 'Newest-first safe file labels and existing download coordinates.',
+        returns: 'Newest-first files and links with stable item coordinates.',
       },
       {
         signature: '@Remote(\'importGrokHistory\') async importGrokHistory(request: BotGrokHistoryImportRequest): Promise<{ readonly messages: number }>',
@@ -6075,12 +6075,20 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotLibraryCursor {\n    readonly eventSeq: number;\n    readonly fileIndex: number;\n}',
   },
   {
+    name: 'BotLibraryFileItem',
+    declaration: 'export interface BotLibraryFileItem extends BotLibraryItemFields {\n    readonly category: Exclude<BotLibraryItemCategory, \'link\'>;\n}',
+  },
+  {
     name: 'BotLibraryItem',
-    declaration: 'export interface BotLibraryItem {\n    readonly botId: BotId;\n    readonly sessionId: SessionId;\n    readonly eventSeq: number;\n    readonly fileIndex: number;\n    readonly label: string;\n    readonly category: BotLibraryItemCategory;\n    readonly createdAt: number;\n}',
+    declaration: 'export type BotLibraryItem = BotLibraryFileItem | BotLibraryLinkItem;',
   },
   {
     name: 'BotLibraryItemCategory',
-    declaration: 'export type BotLibraryItemCategory = \'file\' | \'image\' | \'audio\' | \'video\';',
+    declaration: 'export type BotLibraryItemCategory = \'file\' | \'image\' | \'audio\' | \'video\' | \'link\';',
+  },
+  {
+    name: 'BotLibraryLinkItem',
+    declaration: 'export interface BotLibraryLinkItem extends BotLibraryItemFields {\n    readonly category: \'link\';\n    readonly url: string;\n}',
   },
   {
     name: 'BotLibraryRequest',

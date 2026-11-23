@@ -2,6 +2,7 @@
 import { EventEmitter } from 'node:events'
 import { BrowserWindow } from 'electron'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { DESKTOP_IPC } from '../src/ipc.ts'
 import { DesktopCloudWorkspace } from '../src/cloud-workspace.ts'
 import type { DesktopCloudVault } from '../src/cloud-vault-window.ts'
 import { en } from '../src/locale.ts'
@@ -14,6 +15,7 @@ const fixture = vi.hoisted(() => ({
   open: vi.fn(),
   forward: vi.fn(),
   write: vi.fn(async () => {}),
+  openExternal: vi.fn(async () => {}),
   installCookie: vi.fn(async () => {}),
   interceptRequest: vi.fn<(listener: RequestHandler) => void>(),
   vault: { close: vi.fn<DesktopCloudVault['close']>(), open: vi.fn<DesktopCloudVault['open']>() },
@@ -43,6 +45,8 @@ vi.mock('electron', () => ({
       close: vi.fn(),
       focus: vi.fn(),
       send: vi.fn(),
+      mainFrame: {},
+      ipc: { on: vi.fn() },
       getUserAgent: vi.fn(() => 'Cloud workspace fixture'),
       setUserAgent: vi.fn(),
       setWindowOpenHandler: vi.fn(),
@@ -63,6 +67,7 @@ vi.mock('electron', () => ({
     setPermissionRequestHandler: vi.fn(),
     webRequest: { onBeforeRequest: fixture.interceptRequest },
   })) },
+  shell: { openExternal: fixture.openExternal },
 }))
 
 const ORIGIN = 'http://127.0.0.1:43112'
@@ -83,6 +88,8 @@ type FakeView = {
     close: ReturnType<typeof vi.fn>
     loadURL: ReturnType<typeof vi.fn<(url: string) => Promise<void>>>
     send: ReturnType<typeof vi.fn>
+    mainFrame: object
+    ipc: { on: ReturnType<typeof vi.fn> }
   }
   readonly setVisible: ReturnType<typeof vi.fn>
   readonly setBounds: ReturnType<typeof vi.fn>
@@ -114,6 +121,36 @@ afterEach(async () => {
   vi.resetAllMocks()
   vi.unstubAllGlobals()
   vi.useRealTimers()
+})
+
+it('opens only safe links from the current authenticated Cloud main frame', async () => {
+  const online = connection()
+  fixture.open.mockResolvedValueOnce(online.value)
+  workspace.attach(new BrowserWindow())
+  await vi.advanceTimersByTimeAsync(0)
+  const chat = view(1)
+  const registration = chat.webContents.ipc.on.mock.calls.find(([channel]) => channel === DESKTOP_IPC.cloudOpenExternal)
+  expect(registration).toBeDefined()
+  const openExternal = registration![1] as (event: { sender: object; senderFrame: object | null }, value: unknown) => void
+  const event = { sender: chat.webContents, senderFrame: chat.webContents.mainFrame }
+
+  openExternal(event, 'https://docs.example.com/release')
+  await Promise.resolve()
+  expect(fixture.openExternal).toHaveBeenCalledExactlyOnceWith('https://docs.example.com/release')
+
+  for (const value of [
+    'javascript:alert(1)',
+    'https://user:password@example.com/',
+    ORIGIN + '/private',
+  ]) openExternal(event, value)
+  openExternal({ sender: {}, senderFrame: chat.webContents.mainFrame }, 'https://docs.example.com/wrong-sender')
+  openExternal({ sender: chat.webContents, senderFrame: {} }, 'https://docs.example.com/wrong-frame')
+  openExternal({ sender: chat.webContents, senderFrame: null }, 'https://docs.example.com/missing-frame')
+  expect(fixture.openExternal).toHaveBeenCalledOnce()
+
+  workspace.showMac()
+  openExternal(event, 'https://docs.example.com/after-mac')
+  expect(fixture.openExternal).toHaveBeenCalledOnce()
 })
 
 it('keeps the loaded Cloud chat across a failed reconnect and reauthenticates at the same origin', async () => {

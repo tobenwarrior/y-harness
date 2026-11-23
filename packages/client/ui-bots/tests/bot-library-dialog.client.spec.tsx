@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
-import { BotId, type BotLibraryItem, type BotLibraryValue } from '@yharness/bots/client'
+import { BotId, type BotLibraryFileItem, type BotLibraryValue } from '@yharness/bots/client'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import { SessionId } from '@yharness/session/types'
 import { BotDetail } from '../src/client/BotWorkspace.tsx'
@@ -14,7 +14,7 @@ const t = makeTranslate(en)
 const botId = BotId('bot-fixture')
 const sessionId = SessionId('bot-session-fixture')
 const archive = { eventSeq: 5, fileIndex: 2 }
-const row = (patch: Partial<BotLibraryItem> = {}): BotLibraryItem => ({
+const row = (patch: Partial<BotLibraryFileItem> = {}): BotLibraryFileItem => ({
   botId, sessionId, ...archive, label: 'notes.md', category: 'file', createdAt: new Date(2026, 10, 25, 9).getTime(), ...patch,
 })
 
@@ -55,6 +55,28 @@ it('loads only when opened, filters, and appends older deliveries using the prov
   fireEvent.click(screen.getByRole('button', { name: en.close }))
   expect(screen.queryByRole('dialog', { name: en.libraryTitle })).toBeNull()
   expect(screen.getByText('Existing conversation')).toBeTruthy()
+})
+
+it('filters web links and opens them without using the file download route', async () => {
+  const url = 'https://docs.example.com/release'
+  const read = vi.fn<ReadBotLibrary>().mockResolvedValue({ botId, items: [
+    row(), row({ eventSeq: 6, label: 'chart.png', category: 'image' }),
+    { ...row({ eventSeq: 7, label: 'Release notes' }), category: 'link', url },
+  ] })
+  openLibrary(read)
+  const link = await screen.findByRole('link', { name: 'Open Release notes' })
+  expect(link.getAttribute('href')).toBe(url)
+  expect(link.getAttribute('target')).toBe('_blank')
+  expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+  expect(link.hasAttribute('data-yh-open-external')).toBe(true)
+  expect(link.hasAttribute('download')).toBe(false)
+  expect(screen.getByText('docs.example.com')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: en.libraryMedia }))
+  expect(screen.queryByRole('link', { name: 'Open Release notes' })).toBeNull()
+  expect(screen.getByRole('link', { name: 'Download chart.png' }).hasAttribute('data-yh-open-external')).toBe(false)
+  fireEvent.click(screen.getByRole('button', { name: en.libraryLinks }))
+  expect(screen.getAllByRole('link')).toHaveLength(1)
+  expect(screen.getByRole('link', { name: 'Open Release notes' })).toBeTruthy()
 })
 
 it('retries a failed read and shows an empty library after the next response', async () => {

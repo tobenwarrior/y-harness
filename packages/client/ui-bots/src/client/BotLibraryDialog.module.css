@@ -12,6 +12,7 @@
 
 .filters {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
 }
 
@@ -56,7 +57,18 @@
   flex-shrink: 0;
 }
 
+.linkIcon {
+  display: grid;
+  inline-size: 24px;
+  block-size: 24px;
+  flex: none;
+  place-items: center;
+  border-radius: var(--yh-radius-sm);
+  background: var(--yh-alias-interactive-bg-hover);
+}
+
 .download,
+.linkHost,
 .notice,
 .fileText time {
   color: var(--yh-alias-label-secondary);
@@ -70,7 +82,8 @@
   font-size: 13px;
 }
 
-.label {
+.label,
+.linkHost {
   overflow-wrap: anywhere;
 }
 

@@ -3,12 +3,13 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { writeFileAtomic } from '@yharness/atomic-write'
-import { WebContentsView, session, type BrowserWindow, type Session } from 'electron'
+import { WebContentsView, session, shell, type BrowserWindow, type Session, type WebContents, type WebFrameMain } from 'electron'
 import { isCloudTarget, openCloudConnection, openCloudForward, type CloudConnection, type CloudForward } from './cloud-connection.ts'
 import {
   CLOUD_DESKTOP_USER_AGENT,
   cloudAction,
   cloudDocument,
+  cloudExternalUrl,
   cloudRequestAllowed,
   cloudSignInCookie,
   cloudWebsiteLoginUseRequestId,
@@ -161,6 +162,27 @@ export class DesktopCloudWorkspace {
       },
       sendVaultRequest: (payload, signal) => active() ? connection.sendVaultRequest(payload, signal) : Promise.resolve(undefined),
     }
+  }
+
+  /**
+   * Resolve one external URL request from the currently authenticated Cloud main frame.
+   * @param sender - WebContents that sent the request.
+   * @param senderFrame - frame that sent the request.
+   * @param value - untrusted IPC payload from the Cloud preload.
+   * @param remote - WebContents captured when the request listener was installed.
+   * @param forward - SSH forward captured when the request listener was installed.
+   * @returns a validated external URL, or undefined when the request is stale or invalid.
+   */
+  private externalUrl(sender: WebContents, senderFrame: WebFrameMain | null, value: unknown,
+    remote: WebContents, forward: CloudForward): string | undefined {
+    const { connection } = this
+    if (!this.selected || this.status !== 'online' || !this.authenticated || !this.remoteReady
+      || connection === undefined || this.forward !== forward || this.remote?.webContents !== remote
+      || sender !== remote || senderFrame === null
+      || senderFrame !== sender.mainFrame) return undefined
+    const url = cloudExternalUrl(value)
+    if (url === undefined || new URL(url).origin === connection.origin) return undefined
+    return url
   }
 
   /**
@@ -420,6 +442,13 @@ export class DesktopCloudWorkspace {
     const contents = remote.webContents
     contents.on('did-finish-load', this.syncChrome)
     contents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    contents.ipc.on(DESKTOP_IPC.cloudOpenExternal, (event, value: unknown) => {
+      const url = this.externalUrl(event.sender, event.senderFrame, value, contents, forward)
+      if (url === undefined) return
+      void shell.openExternal(url).catch(() => {
+        // An OS browser-launch failure leaves the authenticated Cloud view available.
+      })
+    })
     contents.on('will-frame-navigate', (event) => {
       if (!cloudRequestAllowed(origin, event.url)) event.preventDefault()
     })

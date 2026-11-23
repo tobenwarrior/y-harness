@@ -50,6 +50,8 @@ The macOS **Workspace** menu marks the current workspace. Choose **Open Mac Work
 
 On Cloud setup and recovery screens, **Open Mac Workspace** appears below the connection controls.
 
+In the Cloud Bot Library, selecting a reply link opens it in the Mac’s default browser. The Cloud workspace stays on its private connection.
+
 Cloud’s [Vault](../../docs/user/guide/vps.md#manage-service-secrets-from-the-mac-app) opens in a separate desktop-owned window. Its preload accepts only that window’s document. The main process sends requests over the connected owner’s SSH account and returns names, permission lists, and operation status. **Bot access** checks the connected Cloud Host’s current policy before reading or changing grants and uses its authenticated roster for grant choices. Grant controls require a Cloud Host that uses the standard local Vault broker and its per-Bot grants. With shared grants enabled, the owner can set whether each exact service key can be requested from shared chats.
 
 A compatible Cloud Host can open the same window for website sign-in approval. Review the website and destination, then choose a saved login or enter one for the current request. The VPS Vault sends the login directly to the browser. Select **Save this login to Vault** to keep an entered login after submission. In **Websites**, use **Saved for** to assign a dedicated account to a Bot. The VPS Vault offers it for that Bot's matching website sign-in.
