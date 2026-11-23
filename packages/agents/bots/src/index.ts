@@ -7289,9 +7289,9 @@ export class BotService extends TypertRemoteService {
       const events = observation.events
       return await readBotLibraryPage(bot.id, bot.sessionId, {
         eventCount: events.length,
-        read: async (offset, length, readSignal) => {
+        read: (offset, length, readSignal) => {
           readSignal?.throwIfAborted()
-          return events.slice(offset, offset + length)
+          return Promise.resolve(events.slice(offset, offset + length))
         },
       }, limit, before, signal)
     } finally {

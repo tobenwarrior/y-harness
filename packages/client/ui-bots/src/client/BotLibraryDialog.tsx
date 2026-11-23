@@ -65,8 +65,8 @@ export function BotLibraryDialog({ botId, botName, read, downloadUrl, onClose, t
     setRequest(before === undefined ? {} : { before })
   }
   const groups = groupResults(items, filter, now)
-  const emptyMessage = filter !== 'all' ? 'libraryFilterEmpty'
-    : nextBefore === undefined ? 'libraryEmpty' : 'libraryPageEmpty'
+  const emptyMessage = filter !== 'all' ? t('libraryFilterEmpty')
+    : nextBefore === undefined ? t('libraryEmpty') : t('libraryPageEmpty')
   return <Modal open onClose={onClose} title={t('libraryTitle')} description={botName}
     closeLabel={t('close')} className={css.modal as string}>
     <div className={css.content} aria-busy={phase === 'loading'}>
@@ -92,7 +92,7 @@ export function BotLibraryDialog({ botId, botName, read, downloadUrl, onClose, t
         </ul>
       </section>)}
       {phase === 'ready' && sections.every(section => groups[section].length === 0)
-        && <p className={css.notice} role="status">{t(emptyMessage)}</p>}
+        && <p className={css.notice} role="status">{emptyMessage}</p>}
       {phase === 'loading' && <div className={css.loading} role="status" aria-label={t('libraryLoading')}>
         <StateDot state="ongoing" size={18} />
       </div>}
