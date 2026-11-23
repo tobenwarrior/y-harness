@@ -423,6 +423,15 @@ python3 ~/.yharness-vps/source/scripts/import-grok-bot.py ./grok-bot-export.json
   --bot "Research Bot" --source-name "Research Bot" --connected-app-map ./reviewed-app-map.json
 ```
 
+To discover the source positions and the exact configured target server identifiers without creating a map, use the read-only discovery mode:
+
+```sh
+python3 ~/.yharness-vps/source/scripts/import-grok-bot.py ./grok-bot-export.json \
+  --bot "Research Bot" --source-name "Research Bot" --discover-connected-apps
+```
+
+Discovery sends an empty preview and reads the owner-local connected-app catalog. It prints `sourceApps` with each exported label and zero-based index, `targets` with each exact `targetServerName`, display name, and current Bot `accessStatus`, plus the preview `updatedAt` revision and `catalogAvailable` flag. It does not create a map, change grants, or print credentials. The catalog response reports Bot access (`allowed` or `denied`), not per-connector transport liveness; use a reviewed mapping preview when you need the Host's `connected` or `unconnected` classification for a specific target.
+
 The map is owner-reviewed and additive-only. The Host reports connected, unconnected, missing, ambiguous, or unavailable entries, never infers a connector from a label, and never imports credentials or shared-app grants. Add `--apply` only after reviewing the result; the apply is revision-guarded and rejects unresolved entries without a partial write, while configured but disconnected connectors remain eligible for a later reconnect.
 
 The preview prints the `updatedAt` revision used for the review. Apply only with that captured revision, for example `python3 ~/.yharness-vps/source/scripts/import-grok-bot.py ./grok-bot-export.json --bot "Research Bot" --source-name "Research Bot" --connected-app-map ./reviewed-app-map.json --apply --expected-updated-at 1234567890`. If the Bot changed after preview, the apply fails closed and must be previewed again.
