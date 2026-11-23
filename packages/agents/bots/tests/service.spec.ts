@@ -5338,6 +5338,97 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('keeps a scheduled Bot turn on its assigned managed shell exactly once', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Managed schedule owner', cwd: fixtureCwd })
+    await close(first.ctx)
+
+    let assignedAgent: Agent | undefined
+    let managed = true
+    const shellExecute = vi.fn(async (_arguments: unknown, execution: ToolRunContext) => {
+      if (execution.agent !== assignedAgent) throw new Error('scheduled shell received the wrong Agent')
+      return 'scheduled managed shell fixture result'
+    })
+    const h = await routineHarness(
+      pool, undefined, undefined, [String(created.bot.sessionId)], true, [], new Map(), new Map(), new Map(), {}, undefined, false, 0, 1,
+    )
+    try {
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('scheduled managed shell Agent was not created')
+      assignedAgent = owner
+      h.ctx.provide('botWorkspaces', {
+        workspace: sessionId => String(sessionId), prepare: async () => {}, installSkill: async () => true,
+        managed: () => managed, managedExecution: candidate => candidate === assignedAgent,
+      })
+      h.ctx.effect(() => h.ctx.tools.register(defineTool({
+        name: 'bash', description: 'Run a scoped shell command.', parameters: { command: { type: 'string', required: true } },
+        output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+        execute: shellExecute,
+      })), 'scheduled managed shell fixture tool')
+
+      const schedule = h.ctx.get('schedule')
+      if (schedule === undefined) throw new Error('Schedule service was not mounted')
+      vi.useFakeTimers()
+      try {
+        await schedule.create(created.bot.sessionId, {
+          title: 'Managed shell check', prompt: 'Run the benign managed shell check.', after_seconds: 1,
+        })
+        await vi.advanceTimersByTimeAsync(1_000)
+        expect(followup).toHaveBeenCalledOnce()
+      } finally {
+        vi.useRealTimers()
+      }
+      const scheduled = followup.mock.calls[0]?.[0]
+      if (scheduled === undefined) throw new Error('scheduled message was not delivered')
+      expect(scheduled.source.kind).toBe('schedule')
+
+      owner.session.append('turn/start', { turn: 1 })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('user/message', scheduled, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('managed shell provider was not mounted')
+      const shell = (await provider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'managed_bot_shell')
+      if (shell === undefined) throw new Error('managed shell native tool was not mounted for the scheduled turn')
+      const context = {
+        callId: 'scheduled-shell-call', threadId: 'scheduled-shell-thread', turnId: 'scheduled-shell-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const call = { name: 'managed_bot_shell' as const, ...context, arguments: { command: 'printf scheduled-managed' } }
+      await provider.observe({ phase: 'started', ...call })
+      const result = await shell.execute(call.arguments, context)
+      expect(result).toEqual({ success: true, contentItems: [{ type: 'inputText', text: 'scheduled managed shell fixture result' }] })
+      await provider.observe({ phase: 'settled', ...call, result })
+      expect(shellExecute).toHaveBeenCalledOnce()
+      expect(owner.session.snapshotEvents().filter(event => event.type === 'bot/dynamic-tool')).toHaveLength(2)
+      expect(owner.session.snapshotEvents().filter(event => event.type === 'bot/dynamic-tool').at(-1)?.data).toMatchObject({
+        phase: 'settled', name: 'managed_bot_shell', result,
+      })
+      owner.session.append('assistant/message', {
+        turn: 1, step: 0,
+        message: createAssistantMessage({ content: [{ type: 'text', text: 'scheduled managed shell fixture result' }], source: { provider: 'test', model: 'test-model' } }),
+        stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+
+      managed = false
+      expect((await provider.resolve({ sessionId: created.bot.sessionId })).map(tool => tool.name)).not.toContain('managed_bot_shell')
+      await expect(shell.execute(call.arguments, context)).resolves.toMatchObject({ success: false })
+      expect(shellExecute).toHaveBeenCalledOnce()
+      await expect(provider.observe({ phase: 'started', ...call, callId: 'scheduled-shell-revoked' }))
+        .rejects.toThrow('managed Bot shell grant is unavailable')
+      await expect(provider.replay({ sessionId: created.bot.sessionId })).resolves.toEqual([])
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it.each([false, true])('keeps peer delivery working when both Bots are hidden: %s', async (hidden) => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
