@@ -139,6 +139,7 @@ jobs:
 
       - uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       # Redirect the Node compile cache (enabled by pnpm and TypeScript) off
@@ -580,6 +581,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           persist-credentials: false
       # Checkout removes the gitignored duration history, so restore it from
       # the GitHub cache before coverage and save the updated one afterwards.

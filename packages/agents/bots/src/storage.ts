@@ -71,6 +71,7 @@ export const botEventRoutineSchema = z.object({
     createdAt: instant,
     deliveredAt: instant.optional(),
   }).strict()).max(200),
+  firstEligibleEventSeq: z.number().int().nonnegative().optional(),
   admissionWatermark: z.number().int().nonnegative().optional(),
   admissionTombstones: z.array(z.object({
     triggerEventSeq: z.number().int().nonnegative(),

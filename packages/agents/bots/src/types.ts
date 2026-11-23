@@ -342,6 +342,8 @@ export interface BotEventRoutine {
   readonly updatedAt: number
   /** Bounded delivery records, oldest first. */
   readonly deliveries: readonly BotEventRoutineDelivery[]
+  /** First Session event sequence eligible after the routine is resumed or its active trigger changes. */
+  readonly firstEligibleEventSeq?: number | undefined
   /** Highest source event sequence durably considered for this routine. */
   readonly admissionWatermark?: number | undefined
   /** Source identities retained when delivery records are pruned. */
@@ -351,7 +353,7 @@ export interface BotEventRoutine {
 }
 
 /** Browser/native view of one Bot event routine. */
-export type BotEventRoutineView = Omit<BotEventRoutine, 'deliveries' | 'results'> & {
+export type BotEventRoutineView = Omit<BotEventRoutine, 'deliveries' | 'results' | 'firstEligibleEventSeq'> & {
   /** Common routine discriminator used alongside timed Schedule records. */
   readonly kind: 'event'
   /** Event routines wait for a matching message instead of a wall-clock target. */

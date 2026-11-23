@@ -1004,6 +1004,14 @@ describe('shared Bot service', () => {
         'bots/share/list-approvals', {}, new AbortController().signal, participant.peer,
       )).resolves.toMatchObject({ ok: true, value: { approvals: [] } })
 
+      const prefix = 'long-tool-call-'.repeat(24)
+      const longCall = { toolName: 'mcp_test', callId: `${prefix}first` }
+      await expect(value.service.requestSharedAppApproval(request, longCall)).resolves.toBe('allowed-once')
+      expect(value.service.isRememberedSharedAppApproval(request, longCall)).toBe(true)
+      expect(value.service.isRememberedSharedAppApproval(request, { ...longCall, callId: `${prefix}second` })).toBe(false)
+      value.service.forgetRememberedSharedAppApproval(request, longCall)
+      expect(value.service.isRememberedSharedAppApproval(request, longCall)).toBe(false)
+
       const firstLiveToken = Symbol('same-description') as ToolExecutionToken
       const secondLiveToken = Symbol('same-description') as ToolExecutionToken
       await expect(value.service.requestSharedAppApproval(request, {
