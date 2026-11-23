@@ -28,6 +28,7 @@ const CAPTURE_HISTORY = process.env.DSH_GROK_HISTORY_MEDIA === '1'
 const INLINE_VISUAL_DIR = process.env.DSH_GROK_INLINE_VISUAL_DIR
 const DUPLICATE_VISUAL_DIR = process.env.DSH_BOT_DUPLICATE_VISUAL_DIR
 const PRIMARY_VISUAL_DIR = process.env.DSH_PRIMARY_BOT_VISUAL_DIR
+const PROMPT_VISUAL_DIR = process.env.DSH_BOT_PROMPT_LINK_VISUAL_DIR
 
 describe('web e2e: Bot workspace retains one Conversation Session per Bot', () => {
   let scaffold: WebScaffold
@@ -41,7 +42,7 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     // The scenario exercises the real Bot and Session services but never sends
     // a model request, so a header-only providers-only fixture is sufficient.
     scaffold = await launchWebScaffold({ replayFixture: FIXTURE, replayProvidersOnly: true })
-    if (CAPTURE_HISTORY || DUPLICATE_VISUAL_DIR !== undefined || PRIMARY_VISUAL_DIR !== undefined) {
+    if (CAPTURE_HISTORY || DUPLICATE_VISUAL_DIR !== undefined || PRIMARY_VISUAL_DIR !== undefined || PROMPT_VISUAL_DIR !== undefined) {
       await scaffold.ctx.settings.update('ui-theme', { preference: 'system' })
     }
     firstBot = (await scaffold.ctx.bots.create({
@@ -614,6 +615,74 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await removeDialog.getByRole('button', { name: 'Confirm', exact: true }).click()
     await removeDialog.waitFor({ state: 'hidden' })
     expect(await scaffold.ctx.bots.readPrimary({})).toEqual({ primaryBotId: null, revision: 3 })
+    expect(tripwire.pageErrors).toEqual([])
+    expect(tripwire.warnings).toEqual([])
+  })
+
+  it('opens named and primary Bot links as unsent drafts and preserves existing work', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-bot-prompt-deep-link'))
+    const primary = await scaffold.ctx.bots.readPrimary({})
+    await scaffold.ctx.bots.setPrimary({ botId: firstBot.id, expectedRevision: primary.revision })
+    const relay = (await scaffold.ctx.bots.create({
+      name: 'Relay', identity: 'agent', accent: 'teal', cwd: scaffold.workspaceCwd,
+    })).bot
+
+    const prompt = 'Review the latest recovery report ☕'
+    const link = (text: string, id?: string): URL => {
+      const target = new URL(scaffold.baseUrl)
+      const params = new URLSearchParams({ text })
+      if (id !== undefined) params.set('id', id)
+      target.hash = `/bots/prompt?${params.toString()}`
+      return target
+    }
+    await page.goto('about:blank')
+    await page.goto(link(prompt, relay.id).href, { waitUntil: 'load' })
+    const detail = page.getByRole('region', { name: relay.name, exact: true })
+    const composer = detail.locator('[data-composer-input][contenteditable="true"]')
+    await composer.waitFor()
+    await expect.poll(() => composer.textContent()).toBe(prompt)
+    expect(new URL(page.url()).hash).toBe('')
+
+    if (PROMPT_VISUAL_DIR !== undefined) {
+      await mkdir(PROMPT_VISUAL_DIR, { recursive: true })
+      for (const [width, theme, filename] of [
+        [1440, 'dark', 'desktop-dark.png'], [480, 'light', 'narrow-light.png'],
+      ] as const) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+        await page.locator('body[data-ds-dark-theme]').waitFor({ state: theme === 'dark' ? 'visible' : 'detached' })
+        await page.screenshot({ path: join(PROMPT_VISUAL_DIR, filename), animations: 'disabled' })
+      }
+      await page.setViewportSize({ width: 1440, height: 900 })
+    }
+
+    const openLink = async (text: string, id?: string): Promise<void> => {
+      await page.evaluate((fragment) => { window.location.hash = fragment }, link(text, id).hash)
+      await expect.poll(() => new URL(page.url()).hash).toBe('')
+    }
+    await openLink('Check the team queue')
+    const primaryComposer = page.getByRole('region', { name: firstBot.name, exact: true })
+      .locator('[data-composer-input][contenteditable="true"]')
+    await primaryComposer.waitFor()
+    await expect.poll(() => primaryComposer.textContent()).toBe('Check the team queue')
+    await openLink('Keep the original draft', relay.id)
+    await composer.waitFor()
+    await expect.poll(() => composer.textContent()).toBe(prompt)
+
+    await composer.fill('')
+    await detail.locator('input[type="file"]').setInputFiles({
+      name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('Synthetic outline.'),
+    })
+    await detail.getByTitle('notes.txt').waitFor()
+    await page.getByRole('button', { name: 'Code', exact: true }).click()
+    await composer.waitFor({ state: 'hidden' })
+    await openLink('Leave the attachment alone', relay.id)
+    await composer.waitFor()
+    expect(await composer.textContent()).toBe('')
+    expect(await detail.getByTitle('notes.txt').count()).toBe(1)
+
+    using observed = await scaffold.ctx.sessionQuery.observeSession(relay.sessionId)
+    expect(observed.events.some(event => event.type === 'user/message')).toBe(false)
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
   })

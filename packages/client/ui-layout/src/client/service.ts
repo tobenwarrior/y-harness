@@ -35,10 +35,11 @@ export interface ILayout {
    */
   selectPanel(panelId: MainPanelId | null): void
   /**
-   * Start an asynchronous navigation, superseding any earlier pending navigation.
-   * @returns a signal aborted by the next navigation or layout disposal; check it before committing UI state.
+   * Start an asynchronous navigation.
+   * @param priority - foreground supersedes pending work. Background shares the current signal.
+   * @returns a signal aborted by the next foreground navigation, panel selection, or layout disposal.
    */
-  beginNavigation(): AbortSignal
+  beginNavigation(priority?: 'foreground' | 'background'): AbortSignal
   /** Toggle the sidebar panel (closed ⟷ contract default width). */
   toggleSidebar(): void
   /**
@@ -77,10 +78,12 @@ export class LayoutController implements ILayout {
     this.panels.selectPanel(panelId)
   }
 
-  /** @returns the new pending navigation's cancellation signal. */
-  beginNavigation(): AbortSignal {
-    this.navigation.abort()
-    this.navigation = new AbortController()
+  /** @returns The cancellation signal for the navigation. */
+  beginNavigation(priority: 'foreground' | 'background' = 'foreground'): AbortSignal {
+    if (priority === 'foreground') {
+      this.navigation.abort()
+      this.navigation = new AbortController()
+    }
     return this.navigation.signal
   }
 

@@ -25,6 +25,11 @@ import { BotVaultRequestCard } from './BotVaultRequestCard.tsx'
 import { BotWebsiteLoginRequestCard } from './BotWebsiteLoginRequestCard.tsx'
 import { ComputerSignInCard } from './ComputerSignInCard.tsx'
 import type { BotMessageSearchActions } from './BotMessageSearchDialog.tsx'
+import {
+  BOT_PROMPT_FRAGMENT,
+  parseBotPromptUrl,
+  type BotPromptIntent,
+} from './deep-link.ts'
 
 /** Stable main-panel identity shared by the sidebar entry and main occupant. */
 export const PANEL_ID = 'bots' as MainPanelId
@@ -123,6 +128,7 @@ export function apply(ctx: Context): void {
   const terminalAvailable = createSnapshotStore(false)
   const filesAvailable = createSnapshotStore(false)
   const sharedFilesAvailable = createSnapshotStore(false)
+  const rosterReady = controller.load()
   const setComputerTarget = (sessionId: string | null, request?: ComputerSignInTarget): void => {
     const sidebar = ctx.get('sidebarRight')
     if (sessionId !== null && sidebar !== undefined && sidebar.mounted.getSnapshot() === sessionId && sidebar.isExpanded()) {
@@ -178,7 +184,6 @@ export function apply(ctx: Context): void {
       }
     }, 'ui-bots: selected VPS workspace')
   })
-  const rosterReady = controller.load()
   ctx.inject(['inputTriggers'], (scope) => {
     const loadAvatar = (botId: string, avatar: BotAvatar): Promise<string> =>
       controller.face().loadAvatar(botId, avatar)
@@ -328,4 +333,38 @@ export function apply(ctx: Context): void {
       controller.dispose()
     }
   }, 'ui-bots: panel registrations')
+
+  ctx.inject(['layout', 'conversation'], (scope) => {
+    scope.effect(() => {
+      const lifetime = new AbortController()
+      const openPrompt = async (intent: BotPromptIntent): Promise<void> => {
+        try {
+          const navigation = AbortSignal.any([scope.layout.beginNavigation(), lifetime.signal])
+          const reference = await controller.openPromptTarget(intent.target, navigation)
+          if (navigation.aborted || reference === undefined) return
+          scope.layout.selectPanel(PANEL_ID)
+          scope.conversation.input.requestDraftInitialization(reference.binding, { prompt: intent.text })
+        } catch (error: unknown) {
+          // Navigation may release the Session before the composer is initialized.
+          void error
+        }
+      }
+      const host = typeof globalThis.window === 'undefined' ? undefined : globalThis.window
+      const openWebPrompt = (): void => {
+        if (host === undefined) return
+        const link = new URL(host.location.href)
+        if (!link.hash.startsWith(BOT_PROMPT_FRAGMENT)) return
+        const intent = parseBotPromptUrl(link, host.location.origin)
+        link.hash = ''
+        host.history.replaceState(host.history.state, '', link.href)
+        if (intent !== undefined) void openPrompt(intent)
+      }
+      host?.addEventListener('hashchange', openWebPrompt)
+      openWebPrompt()
+      return () => {
+        lifetime.abort()
+        host?.removeEventListener('hashchange', openWebPrompt)
+      }
+    }, 'ui-bots: prompt link navigation')
+  })
 }

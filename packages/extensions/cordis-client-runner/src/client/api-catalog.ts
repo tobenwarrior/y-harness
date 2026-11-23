@@ -93,10 +93,10 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['if the selected main key is not registered; preserves the current selection.'],
       },
       {
-        signature: 'beginNavigation(): AbortSignal',
-        description: 'Start an asynchronous navigation, superseding any earlier pending navigation.',
-        parameters: [],
-        returns: 'a signal aborted by the next navigation or layout disposal; check it before committing UI state.',
+        signature: 'beginNavigation(priority?: \'foreground\' | \'background\'): AbortSignal',
+        description: 'Start an asynchronous navigation.',
+        parameters: [{ name: 'priority', description: 'foreground supersedes pending work. Background shares the current signal.' }],
+        returns: 'a signal aborted by the next foreground navigation, panel selection, or layout disposal.',
       },
       {
         signature: 'toggleSidebar(): void',

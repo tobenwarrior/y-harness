@@ -357,7 +357,9 @@ class UiWorkspaceService extends Service implements UiWorkspace {
       this.replaceMain(summary.id, this.lifetime.signal, 'preserve')
       return
     }
-    const navigation = AbortSignal.any([this.ctx.layout.beginNavigation(), this.lifetime.signal])
+    const navigation = AbortSignal.any([this.ctx.layout.beginNavigation('background'), this.lifetime.signal])
+    const canRestore = (): boolean => !navigation.aborted
+    if (!canRestore()) return
     let sessionId: SessionId | undefined
     if (summary !== undefined && workspace !== undefined && summary.cwd === workspace.path
       && !workspaces.archivedSessionIds.includes(summary.id)) {
@@ -366,11 +368,11 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     let target = workspace?.workspaceId ?? recentWorkspace(workspaces.items, sessions.byId)
     if (target === undefined && workspaces.items.length === 0 && sessions.ids.length === 0) {
       const prepared = await this.initializeDefaultWorkspace(navigation)
-      if (navigation.aborted) return
+      if (!canRestore()) return
       target = prepared?.workspaceId
     }
     if (sessionId === undefined && target !== undefined) sessionId = await this.connectWorkspace(target)
-    if (sessionId !== undefined && !navigation.aborted) {
+    if (sessionId !== undefined && canRestore()) {
       this.replaceMain(sessionId, navigation, 'preserve')
     }
   }
