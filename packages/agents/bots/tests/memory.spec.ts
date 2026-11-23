@@ -3,8 +3,10 @@ import { SessionSeq, type SessionEvent } from '@yharness/session'
 import {
   BOT_MEMORY_ENTRY_LIMIT,
   BOT_MEMORY_SEARCH_LIMIT,
+  BOT_MEMORY_SEARCH_QUERY_LIMIT,
   BOT_MEMORY_TEXT_LIMIT,
   BotMemoryId,
+  normalizeBotMemorySearchQuery,
   normalizeBotMemoryText,
   parseBotMemoryId,
   projectBotMemories,
@@ -43,6 +45,13 @@ describe('Bot memory projection', () => {
     expect(() => normalizeBotMemoryText(null as never)).toThrow('Memory text must be a string.')
     expect(() => normalizeBotMemoryText('')).toThrow(/Memory text must contain/)
     expect(() => normalizeBotMemoryText('x'.repeat(BOT_MEMORY_TEXT_LIMIT + 1))).toThrow(/Memory text must contain/)
+
+    expect(normalizeBotMemorySearchQuery(undefined)).toBeUndefined()
+    expect(normalizeBotMemorySearchQuery('   ')).toBeUndefined()
+    expect(normalizeBotMemorySearchQuery('  Café ')).toBe('café')
+    expect(() => normalizeBotMemorySearchQuery(42 as never)).toThrow('Memory search query must be a string.')
+    expect(() => normalizeBotMemorySearchQuery('x'.repeat(BOT_MEMORY_SEARCH_QUERY_LIMIT + 1)))
+      .toThrow(/Memory search queries must contain at most/)
   })
 
   it('reconstructs active records and forget tombstones across persisted events', () => {

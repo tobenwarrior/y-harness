@@ -978,9 +978,10 @@ describe('native Bot actions', () => {
     expect(manage).toHaveBeenCalledOnce()
   })
   it('reads, remembers, and forgets durable memory through native actions', async () => {
+    const sessionId = SessionId('bot-session-alpha')
     const bound = client()
     const provider = createBotNativeToolProvider({ bind: async () => bound, persist: async () => {}, replay: async () => [] })
-    const tools = await provider.resolve({ sessionId: SessionId('bot-session-alpha') })
+    const tools = await provider.resolve({ sessionId })
     const list = tools.find(tool => tool.name === 'list_bot_memory')
     const search = tools.find(tool => tool.name === 'search_bot_memory')
     const remember = tools.find(tool => tool.name === 'remember_bot_memory')
@@ -994,6 +995,49 @@ describe('native Bot actions', () => {
     expect(searched.success).toBe(true)
     expect(searched.contentItems[0]?.text).toContain('Use dark mode.')
     expect(vi.mocked(bound.memory!.search).mock.calls[0]?.[0]).toMatchObject({ query: 'dark', limit: 1 })
+
+    vi.mocked(bound.memory!.search).mockResolvedValueOnce({
+      memories: [{ id: BotMemoryId('memory-older'), text: 'An older note.', createdAt: 1 }],
+      nextBefore: BotMemoryId('memory-older'),
+    })
+    const paged = await search.execute({ before: 'memory-newer', limit: 2 }, context())
+    expect(paged.success).toBe(true)
+    expect(paged.contentItems[0]?.text).toContain('memory-older')
+    expect(paged.contentItems[0]?.text).toContain('nextBefore')
+
+    await expect(search.execute({ query: 42 }, context())).resolves.toMatchObject({ success: false })
+    await expect(search.execute({ before: 42 }, context())).resolves.toMatchObject({ success: false })
+    await expect(search.execute({ limit: 1.5 }, context())).resolves.toMatchObject({ success: false })
+    await expect(search.execute({ before: 'not-a-memory-cursor' }, context())).resolves.toMatchObject({ success: false })
+
+    const unavailableClient = (() => {
+      const { memory, ...withoutMemory } = client()
+      void memory
+      return withoutMemory
+    })()
+    const unavailable = createBotNativeToolProvider({
+      bind: async () => unavailableClient, persist: async () => {}, replay: async () => [],
+    })
+    const unavailableSearch = (await unavailable.resolve({ sessionId })).find(tool => tool.name === 'search_bot_memory')
+    if (unavailableSearch === undefined) throw new Error('unavailable memory search tool missing')
+    await expect(unavailableSearch.execute({}, context())).resolves.toMatchObject({ success: false })
+
+    const cancelled = new AbortController()
+    cancelled.abort()
+    await expect(search.execute({}, context({ signal: cancelled.signal }))).resolves.toMatchObject({ success: false })
+
+    vi.mocked(bound.memory!.search).mockRejectedValueOnce(new BotMemoryError('memory-not-found', 'No matching memory.'))
+    await expect(search.execute({}, context())).resolves.toMatchObject({ success: false })
+    vi.mocked(bound.memory!.search).mockRejectedValueOnce(new Error('search unavailable'))
+    await expect(search.execute({}, context())).resolves.toMatchObject({ success: false })
+
+    const searchCancelled = new AbortController()
+    vi.mocked(bound.memory!.search).mockImplementationOnce(async () => {
+      searchCancelled.abort()
+      throw new Error('search cancelled')
+    })
+    await expect(search.execute({}, context({ signal: searchCancelled.signal }))).resolves.toMatchObject({ success: false })
+
     const remembered = await remember.execute({ text: 'Keep reviews concise.', memoryId: 'memory-review' }, context())
     expect(remembered.success).toBe(true)
     expect(remembered.contentItems[0]?.text).not.toContain('Keep reviews concise.')

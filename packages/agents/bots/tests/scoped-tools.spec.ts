@@ -316,6 +316,11 @@ describe('scoped Bot collaboration tools', () => {
       const searchRequest = vi.mocked(memory.search).mock.calls[0]?.[0]
       expect(searchRequest).toMatchObject({ query: 'private', limit: 1 })
       expect(searchRequest?.signal).toBeInstanceOf(AbortSignal)
+      vi.mocked(memory.search).mockResolvedValueOnce({ memories: [] })
+      const older = await execute(h.ctx, h.agent, 'search_bot_memory', { before: 'memory-cursor' }, 'search-older')
+      expect(older.isError).toBe(false)
+      expect(JSON.parse(text(older))).toEqual({ memories: [] })
+      expect(vi.mocked(memory.search).mock.calls[1]?.[0]).toMatchObject({ before: BotMemoryId('memory-cursor') })
 
       const remembered = await execute(h.ctx, h.agent, 'remember_bot_memory', {
         text: 'Remember this fact.', memoryId: 'memory-explicit',
@@ -345,6 +350,7 @@ describe('scoped Bot collaboration tools', () => {
     const h = await harness({ withApproval: true, withMemory: false })
     try {
       await expect(execute(h.ctx, h.agent, 'list_bot_memory', {})).resolves.toMatchObject({ isError: true })
+      await expect(execute(h.ctx, h.agent, 'search_bot_memory', {}, 'search-unavailable')).resolves.toMatchObject({ isError: true })
       await expect(execute(h.ctx, h.agent, 'remember_bot_memory', { text: 'No memory' }, 'remember-unavailable')).resolves.toMatchObject({ isError: true })
       await expect(execute(h.ctx, h.agent, 'forget_bot_memory', { memoryId: 'memory-missing' }, 'forget-unavailable')).resolves.toMatchObject({ isError: true })
     } finally {
