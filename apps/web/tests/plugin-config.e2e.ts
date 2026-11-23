@@ -5,7 +5,7 @@
 // registered by its own browser half. Zero model calls: everything is client
 // state plus the settings document and the profile on a blank frame, so there
 // is no fixture and a stray stream would fail loud on the open llm seam.
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import type { Browser, Locator, Page } from 'playwright'
 import { chromium } from 'playwright'
@@ -24,6 +24,7 @@ const ROW_EXPECTED = join(SNAPSHOT_DIR, 'row.expected.md')
 const BUNDLE_EXPECTED = join(SNAPSHOT_DIR, 'bundle.expected.md')
 const FIXTURE_PLUGINS = fileURLToPath(new URL('./fixtures/plugins', import.meta.url))
 const MODE = webSnapshotMode()
+const PLUGIN_LINK_VISUAL_DIR = process.env.DSH_PLUGIN_LINK_VISUAL_DIR
 
 describe('web e2e: plugin configuration pages', () => {
   let scaffold: WebScaffold
@@ -346,6 +347,60 @@ describe('web e2e: plugin configuration pages', () => {
     const itemPage = panel.locator('[data-plugin-item-detail]')
     expect(await itemPage.locator('[data-live-action], [data-live-badge], [data-live-section]').count()).toBe(0)
     expect(tripwire.pageErrors).toEqual([])
+  }, 90_000)
+
+  it('opens and copies an official plugin link without changing its activation', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-official-plugin-link'))
+    if (PLUGIN_LINK_VISUAL_DIR !== undefined) await scaffold.ctx.settings.update('ui-theme', { preference: 'system' })
+    const before = await settingsDocument()
+    const link = (id: string): URL => {
+      const url = new URL(scaffold.baseUrl)
+      url.hash = `/plugins/add?${new URLSearchParams({ id }).toString()}`
+      return url
+    }
+    const activateLink = async (id: string): Promise<void> => {
+      await page.evaluate((hash) => { window.location.hash = hash }, link(id).hash)
+      await expect.poll(() => new URL(page.url()).hash).toBe('')
+    }
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: link('shell').origin })
+    await page.goto('about:blank')
+    await page.goto(link('shell').href, { waitUntil: 'load' })
+    const shell = page.locator('[data-plugin-item-detail="shell"]')
+    await shell.getByRole('heading', { name: 'Shell', exact: true }).waitFor()
+    const copy = shell.getByRole('button', { name: 'Copy link', exact: true })
+    await copy.click()
+    await page.getByText('Plugin link copied.', { exact: true }).waitFor()
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(link('shell').href)
+    expect(new URL(page.url()).hash).toBe('')
+
+    const official = OPTIONAL_BUNDLES[0]!
+    await activateLink(official)
+    const bundle = page.locator(`[data-plugin-detail="${official}"]`)
+    await bundle.waitFor()
+    const toggle = bundle.getByRole('switch', { name: /^Enable/ }).first()
+    expect(await toggle.getAttribute('aria-checked')).toBe('false')
+    expect(await settingsDocument()).toBe(before)
+
+    if (PLUGIN_LINK_VISUAL_DIR !== undefined) {
+      await mkdir(PLUGIN_LINK_VISUAL_DIR, { recursive: true })
+      for (const [width, theme, filename] of [
+        [1440, 'dark', 'desktop-dark.png'], [480, 'light', 'narrow-light.png'],
+      ] as const) {
+        await page.setViewportSize({ width, height: 920 })
+        await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+        await page.locator('body[data-ds-dark-theme]').waitFor({ state: theme === 'dark' ? 'visible' : 'detached' })
+        const bounds = await bundle.getByRole('button', { name: 'Copy link', exact: true }).boundingBox()
+        expect(bounds).not.toBeNull()
+        expect(bounds!.x).toBeGreaterThanOrEqual(0)
+        expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width)
+        await page.screenshot({ path: join(PLUGIN_LINK_VISUAL_DIR, filename), animations: 'disabled' })
+      }
+      await page.setViewportSize({ width: 1440, height: 920 })
+    }
+    await activateLink('unavailable-fixture-plugin')
+    await page.getByRole('status').getByText('This plugin is unavailable in this workspace.').waitFor()
+    expect(await page.locator('[data-plugin-detail], [data-plugin-item-detail]').count()).toBe(0)
+    expect(await settingsDocument()).toBe(before)
   }, 90_000)
 
   it.skipIf(MODE === 'record')('keeps the fixture inventory closed', async () => {

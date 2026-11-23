@@ -529,6 +529,8 @@ Open `dsh://bots/prompt?id=<bot-id>&text=<message>` to start an unsent draft in 
 
 **Bot options → Copy chat link** copies `dsh://bots/open?id=<bot-id>` in Desktop. Open it with the Bot’s workspace selected. The link opens the chat using existing access and leaves its composer alone.
 
+**Plugin details → Copy link** copies `dsh://plugins/add?id=<plugin-id>` in Desktop. Open it with the application workspace selected. The link selects the existing Plugin detail page after the document is ready; it does not install, enable, edit, or submit the plugin, and an unavailable id leaves the profile unchanged. The link carries only the catalog id and Desktop queues it across startup or Cloud reconnect until the selected workspace or server changes.
+
 On macOS, the ordinary development launcher prepares an ad-hoc-signed `Y harness.app` under `.desktop-build/development`, declares `dsh` in its Info.plist, and registers it with Launch Services. The GitHub-managed launcher does not register that URL scheme. The generated bundle does not contain account tokens and requires the workspace and prepared runtime to remain available.
 
 An expired login displays a timeout heading with explicit Sign in again and Add API Key actions. Opening the API-key form dismisses the authorization view; late account-state notifications do not replace an in-progress key entry.

@@ -60,7 +60,7 @@ import { DesktopUpdateDialog, type UpdateDialogOptions } from './update-dialog.t
 import { readDesktopRuntime } from './runtime-tree.ts'
 import { DesktopCloudWorkspace } from './cloud-workspace.ts'
 import { DesktopCloudVault } from './cloud-vault-window.ts'
-import { desktopOpenUrlFromArgs, routeDesktopBotPrompt } from './bot-prompt-link.ts'
+import { desktopOpenUrlFromArgs, routeDesktopWorkspaceLink } from './workspace-link.ts'
 import { MacComputer } from './mac-computer.ts'
 import { macDesktop } from './mac-desktop.ts'
 import { DesktopBrowserGuests } from './browser-guests.ts'
@@ -457,7 +457,7 @@ async function main(): Promise<void> {
   })
   const appPreload = fileURLToPath(new URL('./preload-app.cjs', import.meta.url))
   const applicationUrl = `${SCHEME}://app/`
-  let pendingBotPrompt: string | undefined
+  let pendingWorkspaceLink: string | undefined
   let hostUrl: string | undefined
   let hostCookie: string | undefined
   async function resolveMacBotName(sessionId: string, signal: AbortSignal): Promise<string | undefined> {
@@ -1424,14 +1424,14 @@ async function main(): Promise<void> {
     })
     return window
   }
-  const deliverBotPrompt = (): void => {
+  const deliverWorkspaceLink = (): void => {
     const window = mainWindow
-    if (pendingBotPrompt === undefined || !enteredWorkspace || isQuitting() || isMandatory()
+    if (pendingWorkspaceLink === undefined || !enteredWorkspace || isQuitting() || isMandatory()
       || window === undefined || window.isDestroyed()) return
-    const fragment = pendingBotPrompt
-    pendingBotPrompt = undefined
-    if (cloudWorkspace?.isCloudSelected() === true) cloudWorkspace.openBotPrompt(fragment)
-    else window.webContents.send(DESKTOP_IPC.botPromptNavigation, fragment)
+    const fragment = pendingWorkspaceLink
+    pendingWorkspaceLink = undefined
+    if (cloudWorkspace?.isCloudSelected() === true) cloudWorkspace.openWorkspaceLink(fragment)
+    else window.webContents.send(DESKTOP_IPC.workspaceLinkNavigation, fragment)
   }
 
   const enterWorkspace = async (): Promise<void> => {
@@ -1442,7 +1442,7 @@ async function main(): Promise<void> {
     cloudWorkspace?.attach(window)
     window.show()
     enteredWorkspace = true
-    deliverBotPrompt()
+    deliverWorkspaceLink()
     if (raiseAfterUpdate) {
       raiseAfterUpdate = false
       window.moveTop()
@@ -1484,12 +1484,12 @@ async function main(): Promise<void> {
       focusPrimaryWindow()
       return
     }
-    const target = routeDesktopBotPrompt(url)
+    const target = routeDesktopWorkspaceLink(url)
     if (target === undefined) return
-    pendingBotPrompt = new URL(target).hash
+    pendingWorkspaceLink = new URL(target).hash
     if (!enteredWorkspace) return
     focusPrimaryWindow()
-    deliverBotPrompt()
+    deliverWorkspaceLink()
   }
   deliverOpenUrl = handleOpenUrl
   const queuedOpenUrl = pendingOpenUrl

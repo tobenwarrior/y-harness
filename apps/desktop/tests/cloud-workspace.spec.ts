@@ -129,23 +129,23 @@ it('queues a Bot link until Cloud signs in and delivers later links in the same 
   fixture.open.mockResolvedValueOnce(connection().value)
   workspace.attach(new BrowserWindow())
   const first = '#/bots/prompt?id=bot-scout&text=First'
-  workspace.openBotPrompt(first)
+  workspace.openWorkspaceLink(first)
   await vi.advanceTimersByTimeAsync(0)
   expect(fixture.views).toHaveLength(1)
   signedIn.resolve(undefined)
   await vi.advanceTimersByTimeAsync(0)
   const chat = view(1).webContents
-  expect(chat.send).toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, first)
+  expect(chat.send).toHaveBeenCalledWith(DESKTOP_IPC.workspaceLinkNavigation, first)
 
   const second = '#/bots/prompt?text=Second'
   chat.isLoadingMainFrame.mockReturnValueOnce(true)
-  workspace.openBotPrompt(second)
-  expect(chat.send).not.toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, second)
+  workspace.openWorkspaceLink(second)
+  expect(chat.send).not.toHaveBeenCalledWith(DESKTOP_IPC.workspaceLinkNavigation, second)
   chat.emit('did-finish-load')
-  expect(chat.send).toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, second)
+  expect(chat.send).toHaveBeenCalledWith(DESKTOP_IPC.workspaceLinkNavigation, second)
   chat.emit('did-finish-load')
-  expect(chat.send.mock.calls.filter(([channel]) => channel === DESKTOP_IPC.botPromptNavigation))
-    .toEqual([[DESKTOP_IPC.botPromptNavigation, first], [DESKTOP_IPC.botPromptNavigation, second]])
+  expect(chat.send.mock.calls.filter(([channel]) => channel === DESKTOP_IPC.workspaceLinkNavigation))
+    .toEqual([[DESKTOP_IPC.workspaceLinkNavigation, first], [DESKTOP_IPC.workspaceLinkNavigation, second]])
   expect(chat.loadURL).toHaveBeenCalledExactlyOnceWith(ORIGIN + '/')
 })
 
@@ -156,13 +156,13 @@ it('keeps a Bot link in its selected workspace and clears it when leaving Cloud'
   const chat = view(1).webContents
   const prompt = '#/bots/prompt?text=Private%20draft'
   chat.getURL.mockReturnValueOnce(`${ORIGIN}/__yharness/download`)
-  workspace.openBotPrompt(prompt)
-  expect(chat.send).not.toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, prompt)
+  workspace.openWorkspaceLink(prompt)
+  expect(chat.send).not.toHaveBeenCalledWith(DESKTOP_IPC.workspaceLinkNavigation, prompt)
   workspace.showMac()
-  workspace.openBotPrompt(prompt)
+  workspace.openWorkspaceLink(prompt)
   workspace.showCloud()
   chat.emit('did-finish-load')
-  expect(chat.send).not.toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, prompt)
+  expect(chat.send).not.toHaveBeenCalledWith(DESKTOP_IPC.workspaceLinkNavigation, prompt)
 })
 
 it('keeps the loaded Cloud chat across a failed reconnect and reauthenticates at the same origin', async () => {
@@ -281,8 +281,8 @@ it('cancels the old retry and closes the old chat when the owner changes servers
   first.ended.resolve(undefined)
   await vi.advanceTimersByTimeAsync(0)
   const unsent = '#/bots/prompt?text=Old%20workspace%20draft'
-  workspace.openBotPrompt(unsent)
-  expect(chat.webContents.send).not.toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, unsent)
+  workspace.openWorkspaceLink(unsent)
+  expect(chat.webContents.send).not.toHaveBeenCalledWith(DESKTOP_IPC.workspaceLinkNavigation, unsent)
 
   function choose(url: string) {
     view(0).webContents.emit('will-navigate', { preventDefault: vi.fn() }, url)
@@ -298,5 +298,5 @@ it('cancels the old retry and closes the old chat when the owner changes servers
   expect(fixture.open).toHaveBeenNthCalledWith(2, 'another-cloud', expect.any(AbortSignal),
     expect.objectContaining({ forward: nextForward }))
   expect(view(2).webContents.loadURL).toHaveBeenCalledExactlyOnceWith(newOrigin + '/')
-  expect(view(2).webContents.send).not.toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, unsent)
+  expect(view(2).webContents.send).not.toHaveBeenCalledWith(DESKTOP_IPC.workspaceLinkNavigation, unsent)
 })

@@ -27,6 +27,7 @@ import { configLedgerSource } from './config-ledger.ts'
 import { PluginManagerController } from './manager-store.ts'
 import { en, type PluginManagerLocaleKey } from './locales.ts'
 import { createNavigationStore } from './navigation-store.ts'
+import { OFFICIAL_PLUGIN_FRAGMENT, parseOfficialPluginLink } from './plugin-link.ts'
 import type {} from './slot-contract.ts'
 
 declare module '@yharness/cordis' {
@@ -137,6 +138,22 @@ export function apply(ctx: ClientContext): void {
       },
     })
     yield () => { void disposeNavigation() }
+    const host = typeof globalThis.window === 'undefined' ? undefined : globalThis.window
+    if (host !== undefined) {
+      const openCatalogLink = (): void => {
+        const url = new URL(host.location.href)
+        if (!url.hash.startsWith(OFFICIAL_PLUGIN_FRAGMENT)) return
+        const id = parseOfficialPluginLink(url, host.location.origin)
+        url.hash = ''
+        host.history.replaceState(host.history.state, '', url.href)
+        if (id === undefined) return
+        ctx.layout.selectPanel(PANEL_ID)
+        instance.actions.setView({ kind: 'catalog-link', id })
+      }
+      host.addEventListener('hashchange', openCatalogLink)
+      yield () => { host.removeEventListener('hashchange', openCatalogLink) }
+      openCatalogLink()
+    }
   })
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
     name: 'sidebar.panellist',
