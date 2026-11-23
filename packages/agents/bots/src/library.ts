@@ -82,13 +82,18 @@ function libraryLabel(file: PresentedLibraryFile): string {
 }
 
 /** Classify a presented filename for the Library badge without resolving its path. */
-function libraryCategory(file: PresentedLibraryFile): BotLibraryFileItem['category'] {
-  const base = file.path.replaceAll('\\', '/').replace(/^.*\//, '')
+/** Classify a bounded filename without resolving or exposing its path. */
+export function classifyLibraryFilename(path: string): BotLibraryFileItem['category'] {
+  const base = path.replaceAll('\\', '/').replace(/^.*\//, '')
   const extension = base.slice(base.lastIndexOf('.') + 1).toLowerCase()
   if (IMAGE_EXTENSIONS.has(extension)) return 'image'
   if (AUDIO_EXTENSIONS.has(extension)) return 'audio'
   if (VIDEO_EXTENSIONS.has(extension)) return 'video'
   return 'file'
+}
+
+function libraryCategory(file: PresentedLibraryFile): BotLibraryFileItem['category'] {
+  return classifyLibraryFilename(file.path)
 }
 
 function replyText(event: BotLibraryEvent): string {

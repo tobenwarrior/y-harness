@@ -134,15 +134,21 @@ export class GrokHistoryAttachmentVault {
    * @param botId - Exact owner-authorized Bot.
    * @param archive - The current archive for that Bot.
    * @param signal - Cancellation for the owner request.
+   * @param positions - Optional page candidates to verify instead of scanning the full index.
    * @returns Only the positions that match the archive and have verified bytes.
    */
   async available(
     botId: BotId,
     archive: BotGrokHistoryArchive,
     signal?: AbortSignal,
+    positions?: readonly BotGrokHistoryAttachmentPosition[],
   ): Promise<BotGrokHistoryAttachmentPosition[]> {
     const available: BotGrokHistoryAttachmentPosition[] = []
-    for (const entry of this.byBot.get(botId)?.values() ?? []) {
+    const entries = this.byBot.get(botId)
+    const candidates = positions === undefined
+      ? entries?.values() ?? []
+      : positions.map(position => entries?.get(positionKey(position))).filter((entry): entry is Entry => entry !== undefined)
+    for (const entry of candidates) {
       if (!matches(archive, entry)) continue
       const verified = await verifiedFile(this.root, entry, signal)
       if (verified === undefined) continue

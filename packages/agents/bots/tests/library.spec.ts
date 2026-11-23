@@ -5,8 +5,9 @@ import {
   type BotLibraryEvent,
   type BotLibraryEventReader,
 } from '../src/library.ts'
+import { readBotGrokLibraryPage } from '../src/grok-library.ts'
 import { readLibraryLinks } from '../src/library-links.ts'
-import { BotId } from '../src/types.ts'
+import { BotId, type BotGrokHistoryArchive } from '../src/types.ts'
 import { SessionId } from '@yharness/session'
 
 const botId = BotId('bot-library')
@@ -192,5 +193,142 @@ describe('Bot Library event projection', () => {
     ])])
     const page = await readBotLibraryPage(botId, sessionId, source, 1)
     expect(page.items).toEqual([expect.objectContaining({ fileIndex: 1, label: 'report.txt' })])
+  })
+})
+
+describe('Imported Grok Bot Library projection', () => {
+  const archive: BotGrokHistoryArchive = {
+    source: 'grok-bot',
+    version: 2,
+    firstCachedSequence: 1,
+    messages: [
+      { sourceSequence: 1, role: 'assistant', text: '[Primary](https://primary.example/one)', timestampMs: 1_001 },
+      { sourceSequence: 2, role: 'attachment', text: 'primary.pdf', timestampMs: 1_002 },
+      {
+        sourceSequence: 3,
+        role: 'assistant',
+        text: '[First](https://primary.example/first) [Second](https://primary.example/second)',
+        timestampMs: 1_003,
+      },
+    ],
+    sources: [{
+      id: 'builder',
+      label: 'Bot builder',
+      firstCachedSequence: 0,
+      messages: [
+        { sourceSequence: 0, role: 'attachment', text: 'builder.png', timestampMs: null },
+        { sourceSequence: 1, role: 'assistant', text: '[Builder](https://builder.example/)', timestampMs: 2_001 },
+      ],
+    }],
+  }
+
+  it('projects only bounded links and verified attachment positions with explicit provenance', () => {
+    const page = readBotGrokLibraryPage(BotId('bot-imported-library'), archive, [
+      { sourceId: 'primary', sourceSequence: 2 },
+      { sourceId: 'builder', sourceSequence: 0 },
+      { sourceId: 'primary', sourceSequence: 2 },
+    ], 10)
+
+    expect(page.items).toEqual([
+      expect.objectContaining({
+        origin: 'grok-history', sourceId: 'builder', sourceSequence: 1, itemIndex: 0,
+        sourceLabel: 'Bot builder', category: 'link', url: 'https://builder.example/', createdAt: 2_001,
+      }),
+      expect.objectContaining({
+        origin: 'grok-history', sourceId: 'primary', sourceSequence: 3, itemIndex: 1,
+        category: 'link', url: 'https://primary.example/second', createdAt: 1_003,
+      }),
+      expect.objectContaining({
+        origin: 'grok-history', sourceId: 'primary', sourceSequence: 3, itemIndex: 0,
+        category: 'link', url: 'https://primary.example/first', createdAt: 1_003,
+      }),
+      expect.objectContaining({
+        origin: 'grok-history', sourceId: 'primary', sourceSequence: 2, itemIndex: 0,
+        category: 'file', label: 'primary.pdf', createdAt: 1_002,
+      }),
+      expect.objectContaining({
+        origin: 'grok-history', sourceId: 'primary', sourceSequence: 1, itemIndex: 0,
+        category: 'link', url: 'https://primary.example/one', createdAt: 1_001,
+      }),
+      expect.objectContaining({
+        origin: 'grok-history', sourceId: 'builder', sourceSequence: 0, itemIndex: 0,
+        sourceLabel: 'Bot builder', category: 'image', label: 'builder.png', createdAt: null,
+      }),
+    ])
+    expect(page.items.every(item => item.botId === BotId('bot-imported-library'))).toBe(true)
+    expect(page.items.every(item => item.label.length <= 160 && !item.label.includes('/'))).toBe(true)
+  })
+
+  it('uses timestamp and source coordinates for stable pages and does not mutate the archive', () => {
+    const first = readBotGrokLibraryPage(BotId('bot-imported-library'), archive, [
+      { sourceId: 'primary', sourceSequence: 2 },
+      { sourceId: 'builder', sourceSequence: 0 },
+    ], 2)
+    expect(first.items.map(item => [item.sourceId, item.sourceSequence, item.itemIndex])).toEqual([
+      ['builder', 1, 0], ['primary', 3, 1],
+    ])
+    expect(first.nextBefore).toEqual({ sourceId: 'primary', sourceSequence: 3, itemIndex: 1, createdAt: 1_003 })
+
+    const second = readBotGrokLibraryPage(BotId('bot-imported-library'), archive, [
+      { sourceId: 'primary', sourceSequence: 2 },
+      { sourceId: 'builder', sourceSequence: 0 },
+    ], 4, first.nextBefore)
+    expect(second.items.map(item => [item.sourceId, item.sourceSequence, item.itemIndex])).toEqual([
+      ['primary', 3, 0], ['primary', 2, 0], ['primary', 1, 0], ['builder', 0, 0],
+    ])
+    expect(second.nextBefore).toBeUndefined()
+
+    const repeat = readBotGrokLibraryPage(BotId('bot-imported-library'), archive, [
+      { sourceId: 'primary', sourceSequence: 2 },
+      { sourceId: 'builder', sourceSequence: 0 },
+    ], 2)
+    expect(repeat).toEqual(first)
+    expect(archive.sources?.[0]?.messages).toHaveLength(2)
+  })
+
+  it('ignores unverified or malformed attachment positions while retaining links', () => {
+    const page = readBotGrokLibraryPage(BotId('bot-imported-library'), {
+      ...archive,
+      messages: [
+        ...archive.messages,
+        { sourceSequence: 4, role: 'attachment', text: 'unsafe/name.txt', timestampMs: 1_004 },
+      ],
+    }, [
+      { sourceId: 'primary', sourceSequence: 4 },
+      { sourceId: 'primary', sourceSequence: 99 },
+      { sourceId: 'missing', sourceSequence: 1 },
+    ], 20)
+    expect(page.items.some(item => item.sourceSequence === 4)).toBe(false)
+    expect(page.items.some(item => item.category === 'link')).toBe(true)
+  })
+
+  it('orders independent sources by immutable timestamps before stable coordinates', () => {
+    const dated = readBotGrokLibraryPage(BotId('bot-imported-library'), {
+      ...archive,
+      sources: [{
+        id: 'aaa', label: 'Older source', firstCachedSequence: 1,
+        messages: [{ sourceSequence: 1, role: 'assistant' as const, text: '[Older](https://older.example/)', timestampMs: 1_500 }],
+      }, ...(archive.sources ?? [])],
+    }, [], 1)
+    expect(dated.items[0]).toMatchObject({ sourceId: 'builder', sourceSequence: 1, createdAt: 2_001 })
+    expect(dated.nextBefore).toMatchObject({ sourceId: 'builder', sourceSequence: 1, createdAt: 2_001 })
+  })
+
+  it('returns an exclusive continuation after a bounded sparse scan', () => {
+    const sparse: BotGrokHistoryArchive = {
+      source: 'grok-bot', version: 2, firstCachedSequence: 0,
+      messages: [
+        { sourceSequence: 0, role: 'assistant', text: '[Old](https://old.example/)', timestampMs: 0 },
+        ...Array.from({ length: 256 }, (_, index) => ({
+          sourceSequence: index + 1, role: 'user' as const, text: `message-${index + 1}`, timestampMs: index + 1,
+        })),
+      ],
+    }
+    const first = readBotGrokLibraryPage(BotId('bot-imported-library'), sparse, [], 1)
+    expect(first.items).toEqual([])
+    expect(first.nextBefore).toEqual({ sourceId: 'primary', sourceSequence: 1, itemIndex: 0, createdAt: 1 })
+    const second = readBotGrokLibraryPage(BotId('bot-imported-library'), sparse, [], 1, first.nextBefore)
+    expect(second.items).toEqual([expect.objectContaining({ sourceSequence: 0, url: 'https://old.example/' })])
+    expect(second.nextBefore).toBeUndefined()
   })
 })

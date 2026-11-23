@@ -16542,4 +16542,48 @@ describe('durable Bot roster', () => {
       await close(h.ctx)
     }
   })
+
+  it('reads imported Grok Library rows without Session access and preserves owner authorization', async () => {
+    const pool = new MemoryMediaPool()
+    const observeSession = vi.fn(async () => { throw new Error('imported Library must not inspect a Session') })
+    const first = await harness(pool, undefined, undefined, [], new Map(), new Map(), { ownerId: 'imported-library-owner-a' }, 'native', false, {
+      beforeService: (ctx) => { ctx.provide('sessionQuery', { observeSession } as never) },
+    })
+    let botId!: BotView['id']
+    try {
+      const created = await first.service.create({ id: BotId('bot-imported-library-service'), name: 'Imported Library', cwd: '/tmp' })
+      botId = created.bot.id
+      const document = JSON.stringify({
+        source: 'grok-bot', version: 2, firstCachedSequence: 1,
+        messages: [
+          { sourceSequence: 1, role: 'assistant', text: '[Notes](https://notes.example/)', timestampMs: 100 },
+          { sourceSequence: 2, role: 'user', text: 'not a Library item', timestampMs: 101 },
+        ],
+      })
+      const before = (await first.ctx.sessionController.inspect(created.bot.sessionId)).events
+      await expect(first.service.importGrokHistory({ botId, document })).resolves.toEqual({ messages: 2 })
+      await expect(first.service.importGrokHistory({ botId, document })).resolves.toEqual({ messages: 2 })
+      await expect(first.service.readGrokLibrary({ botId, limit: 1 })).resolves.toEqual({
+        botId,
+        items: [expect.objectContaining({
+          origin: 'grok-history', sourceId: 'primary', sourceSequence: 1, itemIndex: 0,
+          category: 'link', url: 'https://notes.example/', createdAt: 100,
+        })],
+      })
+      await expect(first.service.readGrokLibrary({ botId, before: { sourceId: 'missing', sourceSequence: 1, itemIndex: 0 } }))
+        .rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(first.service.readGrokLibrary({ botId, limit: 0 })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      expect((await first.ctx.sessionController.inspect(created.bot.sessionId)).events).toEqual(before)
+      expect(observeSession).not.toHaveBeenCalled()
+    } finally {
+      await close(first.ctx)
+    }
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), new Map(), { ownerId: 'imported-library-owner-b' })
+    try {
+      await expect(second.service.readGrokLibrary({ botId })).rejects.toMatchObject({ code: 'bot/not-found' })
+    } finally {
+      await close(second.ctx)
+    }
+  })
 })

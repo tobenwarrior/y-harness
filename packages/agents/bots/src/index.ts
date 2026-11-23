@@ -144,6 +144,10 @@ import {
   BOT_LIBRARY_MAX_LIMIT,
   readBotLibraryPage,
 } from './library.ts'
+import {
+  listBotGrokLibraryAttachmentPositions,
+  readBotGrokLibraryPage,
+} from './grok-library.ts'
 import { importGrokBotSkills } from './grok-import-skills.ts'
 import type { BotConnectedAppToolHost, BotGrokHistoryToolHost, BotGroupToolHost } from './scoped-tools.ts'
 import {
@@ -199,6 +203,8 @@ import type {
   BotGrokHistoryView,
   BotLibraryRequest,
   BotLibraryValue,
+  BotGrokLibraryRequest,
+  BotGrokLibraryValue,
   BotGrokImportRequest,
   BotGrokImportValue,
   BotMemoryView,
@@ -7297,6 +7303,63 @@ export class BotService extends TypertRemoteService {
     } finally {
       observation[Symbol.dispose]()
     }
+  }
+
+  /**
+   * Read a bounded owner-only Library page from an imported Grok archive.
+   *
+   * Imported rows are kept separate from live Session rows. Attachments are
+   * page candidates until the configured vault verifies their bytes; the
+   * existing owner-authenticated archive download route serves them later.
+   * @param request - Bot identity, page size, and optional source/item cursor.
+   * @param signal - Cancellation for archive and attachment verification reads.
+   * @returns Newest-first verified files and links, or an empty page without an archive.
+   */
+  @Remote('readGrokLibrary')
+  async readGrokLibrary(request: BotGrokLibraryRequest, signal?: AbortSignal): Promise<BotGrokLibraryValue> {
+    if (!isRequestObject(request)) return badRequest('Imported Grok Library request must be an object')
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const limit = request.limit ?? BOT_LIBRARY_DEFAULT_LIMIT
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > BOT_LIBRARY_MAX_LIMIT) {
+      return badRequest(`Imported Grok Library limit must be a safe integer from 1 through ${BOT_LIBRARY_MAX_LIMIT}`)
+    }
+    const before = request.before
+    if (before !== undefined && (!isRequestObject(before)
+      || typeof before.sourceId !== 'string' || before.sourceId.length < 1 || before.sourceId.length > 128
+      || before.sourceId.trim() !== before.sourceId || /[\r\n\u2028\u2029]/u.test(before.sourceId)
+      || !Number.isSafeInteger(before.sourceSequence) || before.sourceSequence < 0
+      || !Number.isSafeInteger(before.itemIndex) || before.itemIndex < 0
+      || (before.createdAt !== undefined && before.createdAt !== null
+        && (!Number.isSafeInteger(before.createdAt) || before.createdAt < 0)))) {
+      return badRequest('Imported Grok Library cursor must contain a source id and non-negative source/item integers')
+    }
+    const archive = await this.readOwnedGrokHistory(botId, signal)
+    if (archive === undefined) return { botId, items: [] }
+    if (before !== undefined) {
+      const sourceIds = new Set([
+        'primary',
+        ...(archive.version === 2 ? (archive.sources ?? []).map(source => source.id) : []),
+      ])
+      if (!sourceIds.has(before.sourceId)) return badRequest('Imported Grok Library cursor source was not found')
+    }
+    const vault = this.grokHistoryAttachmentVault
+    const candidateAttachments = vault === undefined || archive.version !== 2
+      ? []
+      : listBotGrokLibraryAttachmentPositions(archive)
+    const candidatePage = readBotGrokLibraryPage(botId, archive, candidateAttachments, limit, before)
+    if (vault === undefined || archive.version !== 2) {
+      return candidatePage
+    }
+    const candidatePositions = candidatePage.items
+      .filter(item => item.category !== 'link')
+      .map(item => ({ sourceId: item.sourceId, sourceSequence: item.sourceSequence }))
+    if (candidatePositions.length === 0) return candidatePage
+    const verified = await vault.available(botId, archive, signal, candidatePositions)
+    const verifiedKeys = new Set(verified.map(position => JSON.stringify([position.sourceId, position.sourceSequence])))
+    const items = candidatePage.items.filter(item => item.category === 'link'
+      || verifiedKeys.has(JSON.stringify([item.sourceId, item.sourceSequence])))
+    return { botId, items, ...(candidatePage.nextBefore === undefined ? {} : { nextBefore: candidatePage.nextBefore }) }
   }
 
   /** Authorize the Bot and read the current durable archive together. */
