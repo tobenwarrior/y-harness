@@ -138,16 +138,23 @@ class Tests(unittest.TestCase):
             calls.append((argv, kwargs))
             return Child()
 
-        url = 'dsh://bots/prompt?id=bot-scout&text=Review%20the%20queue'
-        runner = supervisor.Supervisor(self.u, self.support, self.config, popen=popen)
-        self.assertEqual(runner.run_once(open_url=url), 0)
-        self.assertEqual(calls[0][0], ['/node', '/pnpm', 'run', 'start:desktop', '--', url])
+        for url in (
+            'dsh://bots/prompt?id=bot-scout&text=Review%20the%20queue',
+            'dsh://plugins/add?id=%40yharness%2Fexperimental-agent-team-profile',
+        ):
+            with self.subTest(url=url):
+                calls.clear()
+                runner = supervisor.Supervisor(self.u, self.support, self.config, popen=popen)
+                self.assertEqual(runner.run_once(open_url=url), 0)
+                self.assertEqual(calls[0][0], ['/node', '/pnpm', 'run', 'start:desktop', '--', url])
 
     def test_open_url_admission_matches_desktop_transport_routes(self):
         valid = 'dsh://bots/prompt?id=bot-scout&text=Review%20the%20queue'
         self.assertEqual(supervisor.first_admitted_open_url(['https://example.test', valid]), valid)
         chat = 'dsh://bots/open?id=bot-scout'
         self.assertEqual(supervisor.first_admitted_open_url([chat]), chat)
+        plugin = 'dsh://plugins/add?id=%40yharness%2Fexperimental-agent-team-profile'
+        self.assertEqual(supervisor.first_admitted_open_url([plugin]), plugin)
         self.assertEqual(supervisor.first_admitted_open_url(['dsh://open/']), 'dsh://open/')
         for invalid in (
             'dsh://bots/prompt?text=',
@@ -158,7 +165,18 @@ class Tests(unittest.TestCase):
             'dsh://bots/open?id=bot-scout&id=bot-other',
             'dsh://bots/open?id=bot-scout&text=ignored',
             'dsh://bots/open?unknown=value',
+            'dsh://plugins/add?id=',
+            'dsh://plugins/add?id=plugin&id=other',
+            'dsh://plugins/add?id=plugin&enable=true',
             'dsh://open?text=ok',
+        ):
+            with self.subTest(invalid=invalid):
+                self.assertIsNone(supervisor.admitted_open_url(invalid))
+
+        for invalid in (
+            'dsh://user:pass@plugins/add?id=plugin',
+            'dsh://plugins:443/add?id=plugin',
+            'dsh://plugins/add?id=plugin#details',
         ):
             with self.subTest(invalid=invalid):
                 self.assertIsNone(supervisor.admitted_open_url(invalid))

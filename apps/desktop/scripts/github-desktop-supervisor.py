@@ -43,7 +43,13 @@ def admitted_open_url(value):
         return None
     if source.hostname == 'open' and source.path in ('', '/') and not source.query:
         return value
-    if source.hostname != 'bots' or source.path not in ('/prompt', '/open'):
+    if source.hostname == 'plugins' and source.path == '/add':
+        expected_key = 'id'
+        prompt = False
+    elif source.hostname == 'bots' and source.path in ('/prompt', '/open'):
+        prompt = source.path == '/prompt'
+        expected_key = 'text' if prompt else 'id'
+    else:
         return None
     if len(source.query) + 1 > DESKTOP_OPEN_URL_LIMIT:
         return None
@@ -52,14 +58,13 @@ def admitted_open_url(value):
     except ValueError:
         return None
     seen = set()
-    prompt = source.path == '/prompt'
     for key, query_value in pairs:
         if key not in ('id', 'text') or (key == 'text' and not prompt) or key in seen:
             return None
         seen.add(key)
-        if key == ('text' if prompt else 'id') and query_value == '':
+        if key == expected_key and query_value == '':
             return None
-    return value if ('text' if prompt else 'id') in seen else None
+    return value if expected_key in seen else None
 
 
 def first_admitted_open_url(values):
