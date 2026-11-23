@@ -218,6 +218,7 @@ export const SERVICE_WALK_EXEMPTIONS: Record<string, string> = {
   sidebarRight: 'client-side right-Sidebar navigation face — packages/client/ui-sidebar-right/README.md owns the API',
   sidebarRightTabs: 'client-side right-Sidebar tab-type registry — packages/client/ui-sidebar-right/README.md owns the API',
   documentPreviews: 'client-side document renderer registry — docs/subsystems/sidebar-right.md owns the API',
+  presentedFileDownloads: 'client-side delivered-file download addressing — packages/client/ui-deliverables/README.md owns the API',
 }
 
 /**
@@ -1034,6 +1035,8 @@ export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
   BotGrokHistoryRequest: 'Grok chat archive reads are owned by packages/agents/bots/README.md and src/types.ts',
   BotGrokHistoryView: 'Owner archive and attachment availability are documented in packages/agents/bots/README.md and src/types.ts',
   BotGrokHistoryImportRequest: 'Grok chat archive imports are owned by packages/agents/bots/README.md and src/types.ts',
+  BotLibraryRequest: 'Bot Library page requests are owned by packages/agents/bots/README.md and src/types.ts',
+  BotLibraryValue: 'Bot Library page results are owned by packages/agents/bots/README.md and src/types.ts',
   BotGrokImportRequest: 'Grok Bot import input is owned by packages/agents/bots/README.md and src/types.ts',
   BotGrokImportValue: 'Grok Bot import output is owned by packages/agents/bots/README.md and src/types.ts',
   BotMemoryListValue: 'Bot memory list result is owned by packages/agents/bots/README.md and src/types.ts',

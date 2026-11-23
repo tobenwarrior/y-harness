@@ -822,6 +822,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Recovered history or null if the Bot has no archive.',
       },
       {
+        signature: '@Remote(\'readLibrary\') async readLibrary(request: BotLibraryRequest, signal?: AbortSignal): Promise<BotLibraryValue>',
+        description: 'Read a bounded owner-only Library page from durable Bot-presented files.\n\nOnly `deliverables/presented` events are included. User uploads, imported Grok attachments, and arbitrary workspace files stay outside this view.',
+        parameters: [{ name: 'request', description: 'Bot identity, page size, and optional older-item cursor.' }, { name: 'signal', description: 'Cancellation for storage reads.' }],
+        returns: 'Newest-first safe file labels and existing download coordinates.',
+      },
+      {
         signature: '@Remote(\'importGrokHistory\') async importGrokHistory(request: BotGrokHistoryImportRequest): Promise<{ readonly messages: number }>',
         description: 'Store a reviewed transcript without delivering it to the Bot or changing its Session.',
         parameters: [{ name: 'request', description: 'Existing Bot and versioned transcript JSON.' }],
@@ -6063,6 +6069,26 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotInputAttachmentView',
     declaration: 'export type BotInputAttachmentView = BotAttachmentMetadata & {\n    readonly attachmentId: string;\n};',
+  },
+  {
+    name: 'BotLibraryCursor',
+    declaration: 'export interface BotLibraryCursor {\n    readonly eventSeq: number;\n    readonly fileIndex: number;\n}',
+  },
+  {
+    name: 'BotLibraryItem',
+    declaration: 'export interface BotLibraryItem {\n    readonly botId: BotId;\n    readonly sessionId: SessionId;\n    readonly eventSeq: number;\n    readonly fileIndex: number;\n    readonly label: string;\n    readonly category: BotLibraryItemCategory;\n    readonly createdAt: number;\n}',
+  },
+  {
+    name: 'BotLibraryItemCategory',
+    declaration: 'export type BotLibraryItemCategory = \'file\' | \'image\' | \'audio\' | \'video\';',
+  },
+  {
+    name: 'BotLibraryRequest',
+    declaration: 'export interface BotLibraryRequest {\n    readonly botId: BotId;\n    readonly limit?: number;\n    readonly before?: BotLibraryCursor;\n}',
+  },
+  {
+    name: 'BotLibraryValue',
+    declaration: 'export interface BotLibraryValue {\n    readonly botId: BotId;\n    readonly items: readonly BotLibraryItem[];\n    readonly nextBefore?: BotLibraryCursor;\n}',
   },
   {
     name: 'BotListRequest',
