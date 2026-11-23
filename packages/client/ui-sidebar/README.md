@@ -25,7 +25,7 @@ The dsh web client sidebar shows the app name, starts new sessions, collapses na
 <a id="use-this-package"></a>
 ## Use this package
 
-The sidebar is the navigation shell: users see the brand, start new sessions, browse workspaces, and reach utility panels and Settings below the workspace list. Feature plugins fill its seats — ui-workspace fills `sidebar.workspaces`, ui-settings registers the trigger row and settings panel at `sidebar.settings`.
+The sidebar is the navigation shell: users see the brand, start new sessions, browse workspaces, and reach utility panels and Settings below the workspace list. Feature plugins fill its seats — ui-workspace fills `sidebar.workspaces`, and ui-settings registers the trigger row and settings panel at `sidebar.settings`. Active status actions sit beside Settings in the expanded footer and stack beneath it in the collapsed rail.
 
 ### Brand and New Session
 
@@ -65,7 +65,7 @@ The shell is pure composition: `SidebarRootComponentProps` composes the layout o
 
 ### Slot discipline
 
-Declaration-aware `slots.inject()` lets a replacing package activate before or after the sidebar. The foot is the `sidebar.settings` seat: the sidebar renders only the bottom-pinned layout slot and shares its column state (`wide`). The `/client` exports are the plugin body (`apply`/`inject`) plus the contract types only; SidebarRoot, the row components, and the tree derivation remain package-internal behind the slot registration.
+Declaration-aware `slots.inject()` lets a replacing package activate before or after the sidebar. The footer gives `sidebar.settings` and `sidebar.footer.action` the same column state (`wide`). The `/client` exports are the plugin body (`apply`/`inject`) plus the contract types only; SidebarRoot, the row components, and the tree derivation remain package-internal behind the slot registration.
 
 </details>
 

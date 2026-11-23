@@ -1,23 +1,8 @@
 .indicator {
-  display: inline-grid;
-  grid-template-columns: 14px;
-  align-items: center;
-  justify-content: center;
   flex: none;
   width: 28px;
-  height: 28px;
-  padding: 0;
-  box-sizing: border-box;
-  border: none;
-  border-radius: 50%;
-  corner-shape: round;
-  color: var(--yh-static-neutral-bluish-00);
-  background: var(--yh-static-blue-500);
-  cursor: pointer;
-}
-
-.indicator:hover:not([aria-disabled="true"]) {
-  background: var(--yh-static-blue-600);
+  padding-inline: 0;
+  color: var(--yh-alias-state-business-primary);
 }
 
 .indicator:focus-visible {
@@ -40,6 +25,8 @@
   top: calc((var(--dsh-windows-titlebar-height) - 28px) / 2);
   left: 84px;
   z-index: 30;
+  border-radius: 50%;
+  corner-shape: round;
   -webkit-app-region: no-drag;
 }
 
@@ -49,4 +36,8 @@
 
 .indicator[aria-disabled="true"] {
   cursor: default;
+}
+
+.indicator[aria-disabled="true"]:hover {
+  background: transparent;
 }

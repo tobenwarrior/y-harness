@@ -28,13 +28,13 @@ Mount beside `@yharness/skill-compound`, which registers the `api/skill-compound
 - name: '@yharness/client-ui-compound-update'
 ```
 
-The badge registers into `sidebar.footer.action` and the steps panel into `shell.overlay`; both share one reading controller, so the panel shows the state the badge announced.
+The icon button registers into `sidebar.footer.action` beside Settings. The steps panel registers into `shell.overlay`. Both share one reading controller, so the panel shows the status indicated by the icon.
 
 | Reading | What the user sees |
 |---|---|
-| Released version is newer | Pending badge with the released version; the panel names both versions and the upstream repository, and offers the update button. |
+| Released version is newer | Download icon with an update tooltip; the panel names both versions and the upstream repository, and offers the update button. |
 | Released version matches | No sidebar badge; the automatic updater stays quiet after confirming the bundled revision is current. |
-| Upstream unreadable | Check-failed badge; the panel reports why the check failed and offers another attempt. |
+| Upstream unreadable | Amber warning icon; the panel reports why the check failed and offers another attempt. |
 | First reading has not completed | No badge yet; the panel shows a concise loading state when opened. |
 
 ## Understand the implementation

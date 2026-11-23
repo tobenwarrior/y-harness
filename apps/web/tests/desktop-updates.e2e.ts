@@ -2,7 +2,7 @@
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { chromium } from 'playwright'
+import { chromium, type Locator, type Page } from 'playwright'
 import { describe, expect, it } from 'vitest'
 import { presentDesktopUpdate } from '../../desktop/src/update-presentation.ts'
 import { en } from '../../desktop/src/locale.ts'
@@ -17,6 +17,28 @@ interface CarrierFixture {
 }
 type FixtureWindow = Window & typeof globalThis & { updateFixture: CarrierFixture }
 
+const PREVIEWS = process.env.YH_SIDEBAR_STATUS_SCREENSHOTS
+
+async function alignment(axis: 'x' | 'y', controls: readonly Locator[]): Promise<number> {
+  const sizes = await Promise.all(controls.map(async (control) => {
+    const box = await control.boundingBox()
+    if (box === null) throw new Error('Sidebar footer control did not render')
+    return axis === 'x' ? box.x + box.width / 2 : box.y + box.height / 2
+  }))
+  return Math.max(...sizes) - Math.min(...sizes)
+}
+
+async function captureFooter(page: Page, name: string): Promise<void> {
+  if (PREVIEWS === undefined) return
+  await mkdir(PREVIEWS, { recursive: true })
+  for (const colorScheme of ['dark', 'light'] as const) {
+    await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
+    await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme'))
+      .toBe(colorScheme === 'dark' ? '' : null)
+    await page.screenshot({ path: join(PREVIEWS, `${name}-${colorScheme}.png`), animations: 'disabled' })
+  }
+}
+
 describe('web e2e: Desktop update workspace chrome', () => {
   it.each(['zh-CN', 'en-US'])('renders update states and routes explicit actions in %s', async (locale) => {
     const scaffold = await launchWebScaffold({})
@@ -24,6 +46,10 @@ describe('web e2e: Desktop update workspace chrome', () => {
       const browser = await chromium.launch()
       try {
         const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, locale })
+        await page.route('**/api/skill-compound.update', route => route.fulfill({ json: {
+          vendored: '0.11.0', upstream: null, updateAvailable: false, repository: 'example/skills',
+          checkedAt: 1, error: 'The update check timed out.',
+        } }))
         await page.addInitScript(() => {
           let current: Presentation = { phase: 'idle' }
           const listeners = new Set<(state: Presentation) => void>()
@@ -47,6 +73,8 @@ describe('web e2e: Desktop update workspace chrome', () => {
         try {
           await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
           await page.waitForSelector('[class*="frame"]')
+          await page.locator('[data-yh-part="sidebar"]').getByRole('button', { name: 'Bots', exact: true }).click()
+          await page.getByRole('complementary', { name: 'Bot workspace', exact: true }).waitFor()
           await expect.poll(() => page.evaluate(() => (window as FixtureWindow).updateFixture.listeners.size)).toBe(1)
           // The current Web bundle has English-only update copy, so unsupported
           // browser locales use the English fallback for every update control.
@@ -64,6 +92,33 @@ describe('web e2e: Desktop update workspace chrome', () => {
           await publish(available)
           const update = page.getByRole('button', { name: availableLabel, exact: true })
           await update.waitFor()
+          const settings = page.getByRole('button', { name: /^(Account menu|Settings)$/ })
+          const warningName = 'Could not check for Compound skills updates'
+          const warning = page.getByRole('button', { name: warningName, exact: true })
+          await warning.waitFor()
+          await expect.poll(() => alignment('y', [settings, update, warning])).toBeLessThan(2)
+          await expect.poll(async () => {
+            const launchBox = await settings.boundingBox()
+            const updateBox = await update.boundingBox()
+            return launchBox !== null && updateBox !== null && updateBox.x >= launchBox.x + launchBox.width
+          }).toBe(true)
+          const footer = page.locator('[data-yh-part="sidebar-footer"]')
+          await expect.poll(() => footer.getByRole('button').count()).toBe(3)
+          for (const control of [update, warning]) {
+            expect(await control.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+          }
+          if (locale === 'en-US') await captureFooter(page, 'bots-desktop')
+          const collapse = 'Collapse sidebar'
+          const expand = 'Open sidebar'
+          const toggle = page.getByRole('button', { name: expand, exact: true })
+          await page.setViewportSize({ width: 480, height: 800 })
+          await toggle.waitFor()
+          await expect.poll(() => alignment('x', [settings, update, warning])).toBeLessThan(2)
+          if (locale === 'en-US') await captureFooter(page, 'narrow')
+          await toggle.click()
+          await expect.poll(() => alignment('y', [settings, update, warning])).toBeLessThan(2)
+          if (locale === 'en-US') await captureFooter(page, 'narrow-expanded')
+          await page.setViewportSize({ width: 1280, height: 800 })
           expect(await opens()).toBe(0)
           const geometry = await update.boundingBox()
           expect(geometry).not.toBeNull()
@@ -72,6 +127,24 @@ describe('web e2e: Desktop update workspace chrome', () => {
           await page.screenshot({ path: join(evidence, 'available.png') })
           await update.click()
           await expect.poll(opens).toBe(1)
+          await update.focus()
+          await page.keyboard.press('Tab')
+          expect(await warning.evaluate(element => document.activeElement === element)).toBe(true)
+          const warningTip = page.getByRole('tooltip', { name: warningName, exact: true })
+          await warningTip.waitFor({ timeout: 5_000 })
+          expect(await warningTip.evaluate((element) => {
+            const { top, left, bottom, right, height } = element.getBoundingClientRect()
+            const style = getComputedStyle(element)
+            const blockPadding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+            return top >= 0 && left >= 0 && bottom <= innerHeight && right <= innerWidth
+              && height - blockPadding <= 2 * parseFloat(style.lineHeight)
+          })).toBe(true)
+          await warning.press('Enter')
+          const skillDialog = page.getByRole('dialog', { name: 'Compound skills update', exact: true })
+          await skillDialog.getByText('Could not check for updates: The update check timed out.', { exact: true })
+            .waitFor({ timeout: 5_000 })
+          await skillDialog.getByRole('button', { name: 'Close', exact: true }).click()
+          await skillDialog.waitFor({ state: 'hidden' })
 
           const progress = presentDesktopUpdate({ phase: 'downloading', version, percent: 58 }, en)
           await publish(progress)
@@ -84,15 +157,13 @@ describe('web e2e: Desktop update workspace chrome', () => {
           expect(await opens()).toBe(1)
           await page.screenshot({ path: join(evidence, 'downloading.png') })
 
-          const collapse = 'Collapse sidebar'
-          const expand = 'Open sidebar'
           await page.getByRole('button', { name: collapse, exact: true }).click()
-          const toggle = page.getByRole('button', { name: expand, exact: true })
           const badge = page.getByRole('button', { name: '58%', exact: true })
           await badge.waitFor()
           await expect.poll(() => wideDownloading.count()).toBe(0)
           expect(await page.getByRole('button', { name: '58%', exact: true }).count()).toBe(1)
           const updateBackground = await badge.evaluate(element => getComputedStyle(element).backgroundColor)
+          await expect.poll(() => alignment('x', [settings, badge, warning])).toBeLessThan(2)
           await page.screenshot({ path: join(evidence, 'collapsed.png') })
 
           const error = presentDesktopUpdate({ phase: 'error', version, failedOperation: 'download', message: 'HTTP 503' }, en)
@@ -133,8 +204,16 @@ describe('web e2e: Desktop update workspace chrome', () => {
           await page.screenshot({ path: join(evidence, 'ready.png') })
           await ready.click()
           await expect.poll(opens).toBe(3)
+          await page.context().setOffline(true)
+          const reconnect = footer.getByRole('button', { name: 'Disconnected, reconnect now', exact: true })
+          await reconnect.waitFor()
+          await expect.poll(() => alignment('y', [settings, reconnect, warning])).toBeLessThan(2)
+          expect(await ready.count()).toBe(0)
+          if (locale === 'en-US') await captureFooter(page, 'disconnected')
+          await page.context().setOffline(false)
+          await ready.waitFor()
           expect(tripwire.pageErrors).toEqual([])
-          expect(tripwire.warnings).toEqual([])
+          expect(tripwire.warnings.filter(warning => warning !== '[connection] connection lost, retry #1')).toEqual([])
           expect(await page.evaluate(() => (window as FixtureWindow).updateFixture.listeners.size)).toBe(1)
           await writeFile(join(evidence, 'result.json'), JSON.stringify({ locale, geometry, updateBackground, failedBackground,
             passed: true, explicitActions: 3, carrier: 'substituted', host: 'real Web composition',

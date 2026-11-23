@@ -1,5 +1,5 @@
 /** Optional Electron status presentation; the native shell owns actions and Web owns visible copy. */
-import { IconDownloadOutlineRegular, IconLoadingOutlineRegular, IconWarningTriangleOutlineRegular, Tooltip } from '@yharness/client-ui-primitives'
+import { Button, IconDownloadOutlineRegular, IconLoadingOutlineRegular, IconWarningTriangleOutlineRegular, Tooltip } from '@yharness/client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@yharness/client-ui-slots'
 import css from './DesktopUpdateIndicator.module.css'
 import type { DesktopUpdateFailureKind, DesktopUpdatePresentation, DesktopUpdateView } from '../types.ts'
@@ -57,7 +57,7 @@ export function updateCopy(state: DesktopUpdatePresentation, t: SettingsTranslat
 }
 
 /**
- * Render update status as a compact circular icon with brand-blue ink, including retries.
+ * Render update status as a compact icon button, including retries.
  * State labels and detail live in the tooltip and accessible name in every phase.
  * @param props - Connection priority, sidebar width, and localized bridge-failure copy.
  * @returns Desktop-only status beside the account button, or nothing in browsers.
@@ -94,14 +94,14 @@ function DesktopUpdateControl({ t, view, onOpen, side, className, dataPart }: De
   const updateAvailable = state?.phase === 'available' || state?.phase === 'ready'
   const tooltip = updateAvailable ? t('desktop.update.availableTooltip') : failed ? retryLabel : copy.detail
   return <Tooltip label={tooltip} side={side}>
-    <button type="button" className={className === undefined ? css.indicator : `${css.indicator} ${className}`}
+    <Button size="sm" className={className === undefined ? css.indicator : `${css.indicator} ${className}`}
       aria-label={label} aria-disabled={busy} data-yh-part={dataPart}
       onClick={() => { if (!busy) onOpen() }}>
       <span className={css.icon} aria-hidden="true">
         {error ? <IconWarningTriangleOutlineRegular size={14} />
           : busy ? <IconLoadingOutlineRegular className={css.spinner} size={14} /> : <IconDownloadOutlineRegular size={14} />}
       </span>
-    </button>
+    </Button>
   </Tooltip>
 }
 

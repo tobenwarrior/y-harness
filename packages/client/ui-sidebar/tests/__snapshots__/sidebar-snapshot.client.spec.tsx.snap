@@ -82,20 +82,21 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
     </div>
     <div
       class="footArea"
+      data-yh-part="sidebar-footer"
     >
-      <div
-        class="footerActions"
-      >
-        <div
-          data-slot="sidebar.footer.action"
-          style="display: contents;"
-        />
-      </div>
       <div
         class="settingsArea"
       >
         <div
           data-slot="sidebar.settings"
+          style="display: contents;"
+        />
+      </div>
+      <div
+        class="footerActions"
+      >
+        <div
+          data-slot="sidebar.footer.action"
           style="display: contents;"
         />
       </div>
@@ -212,20 +213,21 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
     </div>
     <div
       class="footArea"
+      data-yh-part="sidebar-footer"
     >
-      <div
-        class="footerActions"
-      >
-        <div
-          data-slot="sidebar.footer.action"
-          style="display: contents;"
-        />
-      </div>
       <div
         class="settingsArea"
       >
         <div
           data-slot="sidebar.settings"
+          style="display: contents;"
+        />
+      </div>
+      <div
+        class="footerActions"
+      >
+        <div
+          data-slot="sidebar.footer.action"
           style="display: contents;"
         />
       </div>
@@ -316,20 +318,21 @@ exports[`sidebar shell snapshots > renders the collapsed rail after the crossfad
     </div>
     <div
       class="footArea"
+      data-yh-part="sidebar-footer"
     >
-      <div
-        class="footerActions"
-      >
-        <div
-          data-slot="sidebar.footer.action"
-          style="display: contents;"
-        />
-      </div>
       <div
         class="settingsArea"
       >
         <div
           data-slot="sidebar.settings"
+          style="display: contents;"
+        />
+      </div>
+      <div
+        class="footerActions"
+      >
+        <div
+          data-slot="sidebar.footer.action"
           style="display: contents;"
         />
       </div>
@@ -446,20 +449,21 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
     </div>
     <div
       class="footArea"
+      data-yh-part="sidebar-footer"
     >
-      <div
-        class="footerActions"
-      >
-        <div
-          data-slot="sidebar.footer.action"
-          style="display: contents;"
-        />
-      </div>
       <div
         class="settingsArea"
       >
         <div
           data-slot="sidebar.settings"
+          style="display: contents;"
+        />
+      </div>
+      <div
+        class="footerActions"
+      >
+        <div
+          data-slot="sidebar.footer.action"
           style="display: contents;"
         />
       </div>
@@ -576,20 +580,21 @@ exports[`sidebar shell snapshots > renders the expanded column in the English fa
     </div>
     <div
       class="footArea"
+      data-yh-part="sidebar-footer"
     >
-      <div
-        class="footerActions"
-      >
-        <div
-          data-slot="sidebar.footer.action"
-          style="display: contents;"
-        />
-      </div>
       <div
         class="settingsArea"
       >
         <div
           data-slot="sidebar.settings"
+          style="display: contents;"
+        />
+      </div>
+      <div
+        class="footerActions"
+      >
+        <div
+          data-slot="sidebar.footer.action"
           style="display: contents;"
         />
       </div>

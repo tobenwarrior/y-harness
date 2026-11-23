@@ -611,34 +611,38 @@
   padding-left: 0;
 }
 
-/* Footer seats: additive actions stack above Settings. Each occupant owns its
-   button geometry and hover chrome. */
 .footArea {
   flex: none;
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 6px;
 }
 
-.settingsArea,
+.settingsArea {
+  flex: 1;
+  min-width: 0;
+}
+
 .footerActions {
   flex: none;
-  min-width: 0;
-  width: 100%;
-}
-
-.footerActions {
   display: flex;
+  gap: 4px;
+  margin-inline-start: auto;
 }
 
 .collapsed .footArea {
-  align-items: center;
+  flex-direction: column;
+  gap: 0;
 }
 
-.collapsed .settingsArea,
+.collapsed .settingsArea {
+  flex: none;
+}
+
 .collapsed .footerActions {
-  display: flex;
-  justify-content: center;
-  width: auto;
+  flex-direction: column;
+  align-items: center;
+  margin-inline-start: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
