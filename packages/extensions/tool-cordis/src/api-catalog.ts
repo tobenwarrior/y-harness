@@ -828,6 +828,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Newest-first files and links with stable item coordinates.',
       },
       {
+        signature: '@Remote(\'readGrokLibrary\') async readGrokLibrary(request: BotGrokLibraryRequest, signal?: AbortSignal): Promise<BotGrokLibraryValue>',
+        description: 'Read a bounded owner-only Library page from an imported Grok archive.\n\nImported rows are kept separate from live Session rows. Attachments are page candidates until the configured vault verifies their bytes; the existing owner-authenticated archive download route serves them later.',
+        parameters: [{ name: 'request', description: 'Bot identity, page size, and optional source/item cursor.' }, { name: 'signal', description: 'Cancellation for archive and attachment verification reads.' }],
+        returns: 'Newest-first verified files and links, or an empty page without an archive.',
+      },
+      {
         signature: '@Remote(\'importGrokHistory\') async importGrokHistory(request: BotGrokHistoryImportRequest): Promise<{ readonly messages: number }>',
         description: 'Store a reviewed transcript without delivering it to the Bot or changing its Session.',
         parameters: [{ name: 'request', description: 'Existing Bot and versioned transcript JSON.' }],
@@ -5953,6 +5959,30 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotGrokImportValue',
     declaration: 'export interface BotGrokImportValue {\n    readonly sourceName: string;\n    readonly memories: number;\n    readonly skills: number;\n    readonly skillNames: readonly string[];\n    readonly routines: number;\n    readonly missingRoutineSkills: readonly string[];\n}',
+  },
+  {
+    name: 'BotGrokLibraryCursor',
+    declaration: 'export interface BotGrokLibraryCursor {\n    readonly sourceId: string;\n    readonly sourceSequence: number;\n    readonly itemIndex: number;\n    readonly createdAt?: number | null;\n}',
+  },
+  {
+    name: 'BotGrokLibraryFileItem',
+    declaration: 'export interface BotGrokLibraryFileItem extends BotGrokLibraryItemFields {\n    readonly category: Exclude<BotLibraryItemCategory, \'link\'>;\n}',
+  },
+  {
+    name: 'BotGrokLibraryItem',
+    declaration: 'export type BotGrokLibraryItem = BotGrokLibraryFileItem | BotGrokLibraryLinkItem;',
+  },
+  {
+    name: 'BotGrokLibraryLinkItem',
+    declaration: 'export interface BotGrokLibraryLinkItem extends BotGrokLibraryItemFields {\n    readonly category: \'link\';\n    readonly url: string;\n}',
+  },
+  {
+    name: 'BotGrokLibraryRequest',
+    declaration: 'export interface BotGrokLibraryRequest {\n    readonly botId: BotId;\n    readonly limit?: number;\n    readonly before?: BotGrokLibraryCursor;\n}',
+  },
+  {
+    name: 'BotGrokLibraryValue',
+    declaration: 'export interface BotGrokLibraryValue {\n    readonly botId: BotId;\n    readonly items: readonly BotGrokLibraryItem[];\n    readonly nextBefore?: BotGrokLibraryCursor;\n}',
   },
   {
     name: 'BotGroupCreateRequest',

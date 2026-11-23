@@ -1037,6 +1037,8 @@ export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
   BotGrokHistoryImportRequest: 'Grok chat archive imports are owned by packages/agents/bots/README.md and src/types.ts',
   BotLibraryRequest: 'Bot Library page requests are owned by packages/agents/bots/README.md and src/types.ts',
   BotLibraryValue: 'Bot Library page results are owned by packages/agents/bots/README.md and src/types.ts',
+  BotGrokLibraryRequest: 'Imported Grok Library page requests are owned by packages/agents/bots/README.md and src/types.ts',
+  BotGrokLibraryValue: 'Imported Grok Library page results are owned by packages/agents/bots/README.md and src/types.ts',
   BotGrokImportRequest: 'Grok Bot import input is owned by packages/agents/bots/README.md and src/types.ts',
   BotGrokImportValue: 'Grok Bot import output is owned by packages/agents/bots/README.md and src/types.ts',
   BotMemoryListValue: 'Bot memory list result is owned by packages/agents/bots/README.md and src/types.ts',

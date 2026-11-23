@@ -331,6 +331,18 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('readLibrary') async readLibrary(request: BotLibraryRequest, signal?: AbortSignal): Promise<BotLibraryValue>
 
 /**
+ * Read a bounded owner-only Library page from an imported Grok archive.
+ *
+ * Imported rows are kept separate from live Session rows. Attachments are
+ * page candidates until the configured vault verifies their bytes; the
+ * existing owner-authenticated archive download route serves them later.
+ * @param request - Bot identity, page size, and optional source/item cursor.
+ * @param signal - Cancellation for archive and attachment verification reads.
+ * @returns Newest-first verified files and links, or an empty page without an archive.
+ */
+@Remote('readGrokLibrary') async readGrokLibrary(request: BotGrokLibraryRequest, signal?: AbortSignal): Promise<BotGrokLibraryValue>
+
+/**
  * Store a reviewed transcript without delivering it to the Bot or changing its Session.
  * @param request - Existing Bot and versioned transcript JSON.
  * @returns The total number of stored records across the primary and supplemental sources.
