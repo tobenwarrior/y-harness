@@ -26,9 +26,11 @@ import { BotWebsiteLoginRequestCard } from './BotWebsiteLoginRequestCard.tsx'
 import { ComputerSignInCard } from './ComputerSignInCard.tsx'
 import type { BotMessageSearchActions } from './BotMessageSearchDialog.tsx'
 import {
+  BOT_CHAT_FRAGMENT,
   BOT_PROMPT_FRAGMENT,
+  parseBotChatUrl,
   parseBotPromptUrl,
-  type BotPromptIntent,
+  type BotPromptTarget,
 } from './deep-link.ts'
 
 /** Stable main-panel identity shared by the sidebar entry and main occupant. */
@@ -337,34 +339,36 @@ export function apply(ctx: Context): void {
   ctx.inject(['layout', 'conversation'], (scope) => {
     scope.effect(() => {
       const lifetime = new AbortController()
-      const openPrompt = async (intent: BotPromptIntent): Promise<void> => {
+      const openBotLink = async (target: BotPromptTarget, prompt?: string): Promise<void> => {
         try {
           const navigation = AbortSignal.any([scope.layout.beginNavigation(), lifetime.signal])
-          const reference = await controller.openPromptTarget(intent.target, navigation)
+          const reference = await controller.openPromptTarget(target, navigation)
           if (navigation.aborted || reference === undefined) return
           scope.layout.selectPanel(PANEL_ID)
-          scope.conversation.input.requestDraftInitialization(reference.binding, { prompt: intent.text })
+          if (prompt !== undefined) scope.conversation.input.requestDraftInitialization(reference.binding, { prompt })
         } catch (error: unknown) {
           // Navigation may release the Session before the composer is initialized.
           void error
         }
       }
       const host = typeof globalThis.window === 'undefined' ? undefined : globalThis.window
-      const openWebPrompt = (): void => {
+      const openWebLink = (): void => {
         if (host === undefined) return
         const link = new URL(host.location.href)
-        if (!link.hash.startsWith(BOT_PROMPT_FRAGMENT)) return
-        const intent = parseBotPromptUrl(link, host.location.origin)
+        const chatLink = link.hash.startsWith(BOT_CHAT_FRAGMENT)
+        if (!chatLink && !link.hash.startsWith(BOT_PROMPT_FRAGMENT)) return
+        const intent = chatLink ? undefined : parseBotPromptUrl(link, host.location.origin)
+        const target = chatLink ? parseBotChatUrl(link, host.location.origin) : intent?.target
         link.hash = ''
         host.history.replaceState(host.history.state, '', link.href)
-        if (intent !== undefined) void openPrompt(intent)
+        if (target !== undefined) void openBotLink(target, intent?.text)
       }
-      host?.addEventListener('hashchange', openWebPrompt)
-      openWebPrompt()
+      host?.addEventListener('hashchange', openWebLink)
+      openWebLink()
       return () => {
         lifetime.abort()
-        host?.removeEventListener('hashchange', openWebPrompt)
+        host?.removeEventListener('hashchange', openWebLink)
       }
-    }, 'ui-bots: prompt link navigation')
+    }, 'ui-bots: link navigation')
   })
 }

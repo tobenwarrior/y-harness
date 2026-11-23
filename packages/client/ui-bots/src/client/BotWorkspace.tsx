@@ -8,7 +8,8 @@ import {
   IconPinFillRegular, IconPinOutlineRegular, IconShareOutlineRegular, IconContextInjectionOutlineRegular, IconClockOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
   IconSidebarSkillsOutlineRegular,
-  IconUnarchiveOutlineRegular, IconUsersOutlineRegular, Input, Menu, MenuSurface, Modal, StateDot, Tag, Tooltip, connectedAppGlyph,
+  IconUnarchiveOutlineRegular, IconUsersOutlineRegular, IconWarningOutlineRegular,
+  Input, Menu, MenuSurface, Modal, StateDot, Tag, Toast, Tooltip, connectedAppGlyph, writeClipboard,
   type MenuItem,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
@@ -33,6 +34,7 @@ import { BotMemoryManager } from './BotMemoryManager.tsx'
 import { BotSkillsManager } from './BotSkillsManager.tsx'
 import { BotRoutineManager } from './BotRoutineManager.tsx'
 import { GrokHistoryDialog } from './GrokHistoryAction.tsx'
+import { botChatLink } from './deep-link.ts'
 import type { BotGrokHistoryView } from '@yharness/bots/client'
 import css from './BotWorkspace.module.css'
 import type {
@@ -1352,6 +1354,8 @@ export function BotDetail({
   }, [bot?.id])
   const [routineOpen, setRoutineOpen] = useState(false)
   const [shareTarget, setShareTarget] = useState<string | null>(null)
+  const [chatLinkNotice, setChatLinkNotice] = useState<{ sequence: number; copied: boolean } | null>(null)
+  const chatLinkSequence = useRef(0)
   const [historyTarget, setHistoryTarget] = useState<string | null>(null)
   const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null)
   const [primaryChange, setPrimaryChange] = useState<PrimaryBotChange | null>(null)
@@ -1411,6 +1415,16 @@ export function BotDetail({
     ...(share === undefined ? [] : [{
       id: 'share', label: t('shareBot'), icon: <IconShareOutlineRegular size={16} />, run: () => { setShareTarget(bot.id) },
     }]),
+    ...(bot.status === 'preparing' ? [] : [{
+      id: 'copy-chat-link', label: t('copyChatLink'), icon: <IconLinkOutlineRegular size={16} />,
+      run: () => {
+        const sequence = ++chatLinkSequence.current
+        const link = botChatLink(new URL(window.location.href), bot.id, navigator.userAgent)
+        void writeClipboard(link).then((copied) => {
+          if (chatLinkSequence.current === sequence) setChatLinkNotice({ sequence, copied })
+        })
+      },
+    }]),
     ...(memoryManager === undefined ? [] : [{
       id: 'memory', label: t('manageMemories'), icon: <IconContextInjectionOutlineRegular size={16} />, run: () => { setMemoryOpen(true) },
     }]),
@@ -1460,6 +1474,12 @@ export function BotDetail({
           <BotToolbarMenu key={bot.id} items={items} label={t('botMenu')} />
         </span>
       </header>
+      {chatLinkNotice !== null && (
+        <Toast key={chatLinkNotice.sequence}
+          text={t(chatLinkNotice.copied ? 'chatLinkCopied' : 'chatLinkCopyFailed')}
+          {...(chatLinkNotice.copied ? { tone: 'success' as const } : { icon: <IconWarningOutlineRegular /> })}
+          onDone={() => { setChatLinkNotice(null) }} />
+      )}
       {share !== undefined && (
         <BotShareDialog key={`share:${bot.id}`} bot={bot} actions={share} open={shareTarget === bot.id}
           onClose={() => { setShareTarget(null) }} t={t} />
