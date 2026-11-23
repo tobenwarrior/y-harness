@@ -553,38 +553,39 @@ export function installBotCollaborationTools(
       })))
     }
 
-    for (const action of manage === undefined ? [] : ['create', 'edit'] as const) {
-      register(scope.tools.register(defineTool({
-        name: action === 'create' ? 'create_bot' : 'edit_bot_profile',
-        description: action === 'create' ? 'Create a persistent Bot when the user requests it.'
-          : 'Edit a Bot name, character, color or generated picture when requested.',
-        parameters: {
-          botId: { type: 'string', description: 'Bot id to edit; omit to edit yourself.' },
-          name: { type: 'string' }, description: { type: 'string' }, identity: { type: 'string', enum: BOT_IDENTITIES },
-          accent: { type: 'string', enum: BOT_ACCENTS }, pictureDescription: { type: 'string' },
-        },
-        output: jsonOutput({ type: 'object', additionalProperties: false, properties: {
-          id: { type: 'string', required: true }, name: { type: 'string' },
-          state: { type: 'string' }, pictureError: { type: 'string' },
-        } } as const),
-        async execute(args, exec) {
-          if (manage === undefined) throw new Error('Bot management is unavailable.')
-          if (exec.agent === undefined) throw new Error('Bot management requires a live Bot.')
-          const client = await bind()
-          const result = await manage(action, args, {
-            callId: String(exec.callId), threadId: String(exec.agent.id), turnId: String(exec.callId),
-            sessionId: exec.agent.id, signal: exec.signal, approvalPolicy: 'on-request', requestApproval: () => Promise.resolve(true),
-          })
-          if (typeof result !== 'object' || result === null || !('id' in result) || typeof result.id !== 'string') {
-            throw new Error('Bot management returned an invalid result.')
-          }
-          void client
-          return { id: result.id,
-            ...('name' in result && typeof result.name === 'string' ? { name: result.name } : {}),
-            ...('state' in result && typeof result.state === 'string' ? { state: result.state } : {}),
-            ...('pictureError' in result && typeof result.pictureError === 'string' ? { pictureError: result.pictureError } : {}) }
-        },
-      })))
+    if (manage !== undefined) {
+      for (const action of ['create', 'edit'] as const) {
+        register(scope.tools.register(defineTool({
+          name: action === 'create' ? 'create_bot' : 'edit_bot_profile',
+          description: action === 'create' ? 'Create a persistent Bot when the user requests it.'
+            : 'Edit a Bot name, character, color or generated picture when requested.',
+          parameters: {
+            botId: { type: 'string', description: 'Bot id to edit; omit to edit yourself.' },
+            name: { type: 'string' }, description: { type: 'string' }, identity: { type: 'string', enum: BOT_IDENTITIES },
+            accent: { type: 'string', enum: BOT_ACCENTS }, pictureDescription: { type: 'string' },
+          },
+          output: jsonOutput({ type: 'object', additionalProperties: false, properties: {
+            id: { type: 'string', required: true }, name: { type: 'string' },
+            state: { type: 'string' }, pictureError: { type: 'string' },
+          } } as const),
+          async execute(args, exec) {
+            if (exec.agent === undefined) throw new Error('Bot management requires a live Bot.')
+            const client = await bind()
+            const result = await manage(action, args, {
+              callId: String(exec.callId), threadId: String(exec.agent.id), turnId: String(exec.callId),
+              sessionId: exec.agent.id, signal: exec.signal, approvalPolicy: 'on-request', requestApproval: () => Promise.resolve(true),
+            })
+            if (typeof result !== 'object' || result === null || !('id' in result) || typeof result.id !== 'string') {
+              throw new Error('Bot management returned an invalid result.')
+            }
+            void client
+            return { id: result.id,
+              ...('name' in result && typeof result.name === 'string' ? { name: result.name } : {}),
+              ...('state' in result && typeof result.state === 'string' ? { state: result.state } : {}),
+              ...('pictureError' in result && typeof result.pictureError === 'string' ? { pictureError: result.pictureError } : {}) }
+          },
+        })))
+      }
     }
     register(scope.on('tools/pre-execute', (exec, next) => {
       const connectedAppDecision = connectedApps?.check(exec)

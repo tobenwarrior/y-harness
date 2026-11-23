@@ -282,6 +282,11 @@ describe('scoped Bot collaboration tools', () => {
       expect(JSON.parse(text(edited))).toEqual({ id: 'bot-alpha' })
       const invalid = await execute(h.ctx, h.agent, 'create_bot', { name: 'Invalid response' }, 'create-invalid-result')
       expect(invalid.isError).toBe(true)
+      const create = h.ctx.tools.get('create_bot', h.agent)
+      if (create === undefined) throw new Error('scoped Bot creation tool was not installed')
+      await expect(create.execute({ name: 'No owning Bot' }, {
+        agent: undefined, signal: new AbortController().signal,
+      } as never)).rejects.toThrow('Bot management requires a live Bot.')
       expect(h.manage).toHaveBeenNthCalledWith(1, 'create', expect.objectContaining({ name: 'Research' }), expect.objectContaining({
         sessionId: h.agent.id,
         approvalPolicy: 'on-request',

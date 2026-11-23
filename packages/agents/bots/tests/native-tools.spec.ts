@@ -1651,6 +1651,52 @@ describe('native Bot actions', () => {
     expect((await tool.execute({ name: 'Research' }, context())).success).toBe(true)
     expect(manage).toHaveBeenCalledOnce()
   })
+
+  it('matches every creation identity field and retires settled no-effect retries', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const manage = vi.fn<NonNullable<BotNativeToolHost['manage']>>(async () => ({ id: 'bot-created' }))
+    const replay: readonly BotDynamicToolEvent[] = [
+      {
+        phase: 'started', name: 'create_bot', callId: 'current', threadId: 'wrong-thread', turnId: 'turn-1', sessionId,
+        arguments: { name: 'Thread mismatch' },
+      },
+      {
+        phase: 'settled', name: 'create_bot', callId: 'current', threadId: 'wrong-thread', turnId: 'turn-1', sessionId,
+        arguments: { name: 'Thread mismatch' }, result: { success: true, contentItems: [] },
+      },
+      {
+        phase: 'started', name: 'create_bot', callId: 'current', threadId: 'thread-1', turnId: 'wrong-turn', sessionId,
+        arguments: { name: 'Turn mismatch' },
+      },
+      {
+        phase: 'settled', name: 'create_bot', callId: 'current', threadId: 'thread-1', turnId: 'wrong-turn', sessionId,
+        arguments: { name: 'Turn mismatch' }, result: { success: true, contentItems: [] },
+      },
+      {
+        phase: 'started', name: 'create_bot', callId: 'no-effect', threadId: 'thread-no-effect', turnId: 'turn-no-effect', sessionId,
+        arguments: { name: 'No effect' },
+      },
+      {
+        phase: 'settled', name: 'create_bot', callId: 'no-effect', threadId: 'thread-no-effect', turnId: 'turn-no-effect', sessionId,
+        arguments: { name: 'No effect' },
+        result: { success: false, contentItems: [{ type: 'inputText', text: JSON.stringify({ error: 'approval-denied' }) }] },
+      },
+      {
+        phase: 'started', name: 'create_bot', callId: 'current', threadId: 'thread-1', turnId: 'turn-1', sessionId,
+        arguments: { name: 'Current' },
+      },
+    ]
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => {}, replay: async () => replay, manage,
+    })
+    const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'create_bot')
+    if (create === undefined) throw new Error('create_bot was not registered')
+    await expect(create.execute({ name: 'Current' }, context({
+      sessionId, callId: 'current', threadId: 'thread-1', turnId: 'turn-1',
+    }))).resolves.toMatchObject({ success: true })
+    expect(manage).toHaveBeenCalledOnce()
+  })
+
   it('binds to the live sender, exposes only collaboration actions, and persists bounded lifecycles', async () => {
     const bound = client()
     const persisted: BotDynamicToolEvent[] = []
