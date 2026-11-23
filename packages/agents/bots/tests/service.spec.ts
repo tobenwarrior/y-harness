@@ -16501,12 +16501,20 @@ describe('durable Bot roster', () => {
         items: [{ eventSeq: 1, fileIndex: 0, label: 'new.txt' }],
         nextBefore: { eventSeq: 1, fileIndex: 0 },
       })
-      await expect(h.service.readLibrary({ botId: created.bot.id, limit: 1, before: { eventSeq: 1, fileIndex: 0 } }))
+      const request = { botId: created.bot.id, limit: 1, before: { eventSeq: 1, fileIndex: 0 } }
+      const active = new AbortController()
+      await expect(h.service.readLibrary(request, active.signal))
         .resolves.toMatchObject({ items: [{ eventSeq: 0, label: 'old.txt' }] })
-      expect(observeSession).toHaveBeenCalledTimes(2)
       expect(observeSession).toHaveBeenNthCalledWith(1, created.bot.sessionId, { projectionMode: 'none' })
-      expect(observeSession).toHaveBeenNthCalledWith(2, created.bot.sessionId, { projectionMode: 'none' })
-      expect(disposeObservation).toHaveBeenCalledTimes(2)
+      expect(observeSession).toHaveBeenNthCalledWith(2, created.bot.sessionId, { projectionMode: 'none', signal: active.signal })
+      const interrupted = new AbortController()
+      observeSession.mockImplementationOnce(async () => {
+        interrupted.abort()
+        return { events: storedEvents, [Symbol.dispose]: disposeObservation }
+      })
+      await expect(h.service.readLibrary(request, interrupted.signal)).rejects.toMatchObject({ name: 'AbortError' })
+      expect(observeSession).toHaveBeenCalledTimes(3)
+      expect(disposeObservation).toHaveBeenCalledTimes(3)
     } finally {
       await close(h.ctx)
     }

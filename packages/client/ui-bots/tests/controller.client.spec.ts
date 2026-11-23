@@ -161,7 +161,8 @@ describe('BotWorkspaceController', () => {
     const value = { botId: existing.id, items: [] }
     const readLibrary = vi.fn<NonNullable<BotWorkspaceRemote['readLibrary']>>().mockResolvedValue({ ok: true, value })
     const remote = remoteFixture([existing])
-    const client = new BotWorkspaceController({ ...remote, readLibrary }, sessionsFixture().sessions, () => 'unexpected response')
+    const connected: BotWorkspaceRemote = { ...remote, readLibrary }
+    const client = new BotWorkspaceController(connected, sessionsFixture().sessions, () => 'unexpected response')
     const read = client.face().readLibrary
     if (read === undefined) throw new Error('Library reader is unavailable.')
     expect(client.face().readLibrary).toBe(read)
@@ -171,7 +172,10 @@ describe('BotWorkspaceController', () => {
     expect(readLibrary.mock.calls).toEqual([[{ botId: existing.id }], [{ botId: existing.id, before }]])
     readLibrary.mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'unavailable', {}) })
     await expect(read(existing.id)).rejects.toThrow('unavailable')
-    expect(new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response').face().readLibrary).toBeUndefined()
+    delete connected.readLibrary
+    expect(client.face().readLibrary).toBeUndefined()
+    await expect(read(existing.id)).rejects.toThrow('The Bot Library is unavailable.')
+    expect(readLibrary).toHaveBeenCalledTimes(3)
   })
 
   it('routes shared app grants through the owner remote with the current revision', async () => {
