@@ -6,6 +6,7 @@ type View =
   | { readonly kind: 'list' }
   | { readonly kind: 'package'; readonly name: string }
   | { readonly kind: 'item'; readonly id: string }
+  | { readonly kind: 'catalog-link'; readonly id: string }
   | { readonly kind: 'row'; readonly name: string; readonly rowId: string }
 
 type NavigationState = { view: View }

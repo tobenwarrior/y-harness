@@ -1433,7 +1433,7 @@ describe('desktop main startup', () => {
     harness.app.emit('open-url', event, 'dsh://bots/prompt?id=bot-scout&text=Review%20the%20queue')
     await vi.waitFor(() => {
       expect(window.webContents.send).toHaveBeenCalledWith(
-        DESKTOP_IPC.botPromptNavigation, '#/bots/prompt?id=bot-scout&text=Review%20the%20queue',
+        DESKTOP_IPC.workspaceLinkNavigation, '#/bots/prompt?id=bot-scout&text=Review%20the%20queue',
       )
     })
     expect(event.preventDefault).toHaveBeenCalledOnce()
@@ -1451,9 +1451,9 @@ describe('desktop main startup', () => {
     vi.stubGlobal('process', { ...process, platform, argv: ['desktop', first] })
     await readyWorkspace()
     const window = harness.windows[0]!
-    expect(window.webContents.send).toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, '#/bots/prompt?id=bot-scout&text=First')
+    expect(window.webContents.send).toHaveBeenCalledWith(DESKTOP_IPC.workspaceLinkNavigation, '#/bots/prompt?id=bot-scout&text=First')
     harness.app.emit('second-instance', {}, ['desktop', '--original-process-start-time=123', second])
-    expect(window.webContents.send).toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, '#/bots/prompt?text=Second')
+    expect(window.webContents.send).toHaveBeenCalledWith(DESKTOP_IPC.workspaceLinkNavigation, '#/bots/prompt?text=Second')
     expect(window.urls).toEqual(['dsh-app://app/'])
   })
 
@@ -1461,15 +1461,15 @@ describe('desktop main startup', () => {
     vi.stubGlobal('process', { ...process, platform: 'darwin', argv: ['desktop', 'dsh://bots/prompt?text=First'] })
     const cloud = await import('../src/cloud-workspace.ts')
     const showMac = vi.spyOn(cloud.DesktopCloudWorkspace.prototype, 'showMac')
-    const openBotPrompt = vi.spyOn(cloud.DesktopCloudWorkspace.prototype, 'openBotPrompt').mockImplementation(() => {})
+    const openWorkspaceLink = vi.spyOn(cloud.DesktopCloudWorkspace.prototype, 'openWorkspaceLink').mockImplementation(() => {})
     vi.spyOn(cloud.DesktopCloudWorkspace.prototype, 'isCloudSelected').mockReturnValue(true)
     await readyWorkspace()
     const window = harness.windows[0]!
-    expect(openBotPrompt).toHaveBeenCalledWith('#/bots/prompt?text=First')
+    expect(openWorkspaceLink).toHaveBeenCalledWith('#/bots/prompt?text=First')
     harness.app.emit('open-url', { preventDefault: vi.fn() }, 'dsh://bots/prompt?id=bot-scout&text=Second')
-    expect(openBotPrompt).toHaveBeenCalledWith('#/bots/prompt?id=bot-scout&text=Second')
+    expect(openWorkspaceLink).toHaveBeenCalledWith('#/bots/prompt?id=bot-scout&text=Second')
     expect(showMac).not.toHaveBeenCalled()
-    expect(window.webContents.send).not.toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, expect.any(String))
+    expect(window.webContents.send).not.toHaveBeenCalledWith(DESKTOP_IPC.workspaceLinkNavigation, expect.any(String))
     expect(window.urls).toEqual(['dsh-app://app/'])
   })
 

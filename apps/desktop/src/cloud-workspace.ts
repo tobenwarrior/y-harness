@@ -59,7 +59,7 @@ export class DesktopCloudWorkspace {
   private authenticated = false
   private readonly flights = new Set<Promise<void>>()
   private pending: AbortController | undefined
-  private pendingBotPrompt: { readonly target: string; readonly fragment: string } | undefined
+  private pendingWorkspaceLink: { readonly target: string; readonly fragment: string } | undefined
   private saved: CloudPreference | undefined
   private target: string | undefined
   private selected = false
@@ -100,13 +100,13 @@ export class DesktopCloudWorkspace {
   isCloudSelected(): boolean { return this.selected }
 
   /**
-   * Deliver a Bot link to the selected Cloud workspace when its document is ready.
-   * @param fragment - prompt fragment admitted by native URL routing.
+   * Deliver a link to the selected Cloud workspace when its document is ready.
+   * @param fragment - workspace-link fragment admitted by native URL routing.
    */
-  openBotPrompt(fragment: string): void {
+  openWorkspaceLink(fragment: string): void {
     if (!this.selected || this.target === undefined) return
-    this.pendingBotPrompt = { target: this.target, fragment }
-    this.deliverBotPrompt()
+    this.pendingWorkspaceLink = { target: this.target, fragment }
+    this.deliverWorkspaceLink()
   }
 
   /** Open Cloud or its first-time setup in the existing window. */
@@ -128,7 +128,7 @@ export class DesktopCloudWorkspace {
     this.selected = true
     this.onShowCloud?.()
     this.resetWorkspace()
-    this.pendingBotPrompt = undefined
+    this.pendingWorkspaceLink = undefined
     this.target = undefined
     this.invalidTarget = false
     this.status = 'setup'
@@ -139,7 +139,7 @@ export class DesktopCloudWorkspace {
   showMac(): void {
     this.vault.close()
     this.selected = false
-    this.pendingBotPrompt = undefined
+    this.pendingWorkspaceLink = undefined
     if (this.status !== 'online') {
       this.stopConnection()
       if (!this.remoteReady) this.dropRemote()
@@ -183,7 +183,7 @@ export class DesktopCloudWorkspace {
   async dispose(): Promise<void> {
     const owner = this.owner
     this.owner = undefined
-    this.pendingBotPrompt = undefined
+    this.pendingWorkspaceLink = undefined
     owner?.off('resize', this.layout)
     owner?.off('enter-full-screen', this.syncChrome)
     owner?.off('leave-full-screen', this.syncChrome)
@@ -218,18 +218,18 @@ export class DesktopCloudWorkspace {
     }
   }
 
-  private deliverBotPrompt = (): void => {
-    const { pendingBotPrompt, connection, remote } = this
+  private deliverWorkspaceLink = (): void => {
+    const { pendingWorkspaceLink, connection, remote } = this
     if (!this.selected || this.status !== 'online' || !this.authenticated || !this.remoteReady
-      || pendingBotPrompt === undefined || pendingBotPrompt.target !== this.target
+      || pendingWorkspaceLink === undefined || pendingWorkspaceLink.target !== this.target
       || connection === undefined || remote === undefined) return
     const contents = remote.webContents
     if (contents.isDestroyed() || contents.isLoadingMainFrame()) return
     const root = `${connection.origin}/`
     const url = contents.getURL()
     if (url !== root && !url.startsWith(`${root}#`)) return
-    this.pendingBotPrompt = undefined
-    contents.send(DESKTOP_IPC.botPromptNavigation, pendingBotPrompt.fragment)
+    this.pendingWorkspaceLink = undefined
+    contents.send(DESKTOP_IPC.workspaceLinkNavigation, pendingWorkspaceLink.fragment)
   }
 
   private release(view: WebContentsView | undefined, owner = this.owner): void {
@@ -368,7 +368,7 @@ export class DesktopCloudWorkspace {
       || this.pending !== undefined || this.connection !== undefined) return
     if (this.target !== target) {
       this.resetWorkspace()
-      this.pendingBotPrompt = undefined
+      this.pendingWorkspaceLink = undefined
     }
     this.clearRetry()
     this.target = target
@@ -415,7 +415,7 @@ export class DesktopCloudWorkspace {
       this.retryDelay = RETRY_MS
       if (this.saved?.target !== target || this.saved.selected !== this.selected) this.save(target)
       this.render()
-      this.deliverBotPrompt()
+      this.deliverWorkspaceLink()
     } catch {
       // Raw SSH and Electron errors can contain the destination or sign-in URL.
     } finally {
@@ -451,7 +451,7 @@ export class DesktopCloudWorkspace {
     remote.setVisible(false)
     const contents = remote.webContents
     contents.on('did-finish-load', this.syncChrome)
-    contents.on('did-finish-load', this.deliverBotPrompt)
+    contents.on('did-finish-load', this.deliverWorkspaceLink)
     contents.setWindowOpenHandler(() => ({ action: 'deny' }))
     contents.on('will-frame-navigate', (event) => {
       if (!cloudRequestAllowed(origin, event.url)) event.preventDefault()

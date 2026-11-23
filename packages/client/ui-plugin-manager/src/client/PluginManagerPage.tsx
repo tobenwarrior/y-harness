@@ -15,15 +15,17 @@ import type { PluginInstallFailureKind, Registry } from '@yharness/api-remotes/c
 import {
   Button, IconCheckCircleFillRegular, IconChevronDownOutlineRegular, IconChevronLeftOutlineMedium,
   IconChevronRightOutlineRegular, IconCloseOutlineMedium,
-  IconDownloadOutlineRegular, IconInfoOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular, IconTrashOutlineRegular,
+  IconDownloadOutlineRegular, IconInfoOutlineRegular, IconLinkOutlineRegular, IconPlusOutlineRegular,
+  IconRefreshOutlineRegular, IconTrashOutlineRegular,
   IconWarningOutlineRegular, Input, Menu, MenuItemButton, Modal, pointerModality,
   PluginArtworkDefault, PluginArtworkLoop, PluginArtworkSearch, PluginArtworkSubagent, PluginArtworkTerminal,
-  StateDot, Switch, Tag, TerminalBlock, Toast, Tooltip, useAnchoredPosition, useDismissOnOutsidePointer,
+  StateDot, Switch, Tag, TerminalBlock, Toast, Tooltip, isDarwinDesktop, useAnchoredPosition, useDismissOnOutsidePointer, writeClipboard,
   type IconProps, type StateDotState, type TerminalBlockLabels,
 } from '@yharness/client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore } from '@yharness/client-ui-slots'
 import type { createNavigationStore } from './navigation-store.ts'
 import { rowConfigKey, type OfficialItem } from './config-ledger.ts'
+import { isOfficialPluginLinkId, officialPluginLink } from './plugin-link.ts'
 import { INSTALL_GIT_EXAMPLE, INSTALL_PATH_EXAMPLE, type PluginManagerLocaleKey } from './locales.ts'
 import {
   asksMirror, githubRecoveryRegistry, isInstallPending, offeredRegistries, rowKey,
@@ -519,17 +521,29 @@ function packageRef(pkg: PackageView): PluginPackageRef {
   }
 }
 
+function PluginLinkButton({ id, t, onCopy }: {
+  readonly id: string
+  readonly t: Translate
+  readonly onCopy: (id: string) => void
+}): ReactNode {
+  if (!isOfficialPluginLinkId(id)) return null
+  return <Button variant="ghost" size="sm" icon={<IconLinkOutlineRegular size={14} />} onClick={() => { onCopy(id) }}>
+    {t('copyLink')}
+  </Button>
+}
+
 /**
  * An official plugin's page: the crumb back to the cards, its icon with the
  * contributed actions, its title with the contributed badges over its
  * one-liner, the form the entry renders, and the contributed sections.
  */
-function ItemDetail({ item, t, onBack, renderSlot, form }: {
+function ItemDetail({ item, t, onBack, renderSlot, form, onCopyLink }: {
   readonly item: OfficialItem
   readonly t: Translate
   readonly onBack: () => void
   readonly renderSlot: RenderConfig
   readonly form: ConfigPageForm | undefined
+  readonly onCopyLink: (id: string) => void
 }): ReactNode {
   const subject: PluginsSubject = { kind: 'item', id: item.id }
   return (
@@ -539,7 +553,10 @@ function ItemDetail({ item, t, onBack, renderSlot, form }: {
         crumbText={t('crumbRoot')}
         onBack={onBack}
         icon={itemArtwork(item.id)}
-        actions={<div className={css.detailActions}>{renderSlot('plugins.detail.actions', { subject })}</div>}
+        actions={<div className={css.detailActions}>
+          {!item.id.startsWith('@') && <PluginLinkButton id={item.id} t={t} onCopy={onCopyLink} />}
+          {renderSlot('plugins.detail.actions', { subject })}
+        </div>}
       />
       <div className={css.detailMain}>
         <div className={css.titleRow}>
@@ -612,7 +629,7 @@ function RowDetail({ pkg, row, t, resolveText, onBack, renderSlot, form }: {
  */
 function PackageDetail({
   pkg, t, resolveText, busy, rowBusy, configured, configure, renderSlot,
-  onBack, onSetEnabled, onUninstall, onSetRowEnabled,
+  onBack, onSetEnabled, onUninstall, onSetRowEnabled, onCopyLink,
 }: {
   readonly pkg: PackageView
   readonly t: Translate
@@ -628,6 +645,7 @@ function PackageDetail({
   readonly onSetEnabled: (enabled: boolean) => void
   readonly onUninstall: () => void
   readonly onSetRowEnabled: (row: PackageRow, enabled: boolean) => void
+  readonly onCopyLink: (id: string) => void
 }): ReactNode {
   const { title, description, beta } = packageText(pkg, resolveText)
   const status = packageStatus(pkg)
@@ -641,6 +659,7 @@ function PackageDetail({
         icon={<PackageArtwork key={pkg.meta?.icon} src={pkg.meta?.icon} />}
         actions={(
           <div className={css.detailActions}>
+            {pkg.optional && <PluginLinkButton id={pkg.name} t={t} onCopy={onCopyLink} />}
             {renderSlot('plugins.detail.actions', { subject })}
             {pkg.installed || pkg.removable
               ? (
@@ -1351,6 +1370,16 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
   // What is open; a package that leaves the list (uninstalled) drops back to the cards.
   const view = props.useStore(state => state.view), { setView } = props.actions
   const [activation, setActivation] = useState<string | null>(null)
+  const [linkNotice, setLinkNotice] = useState<{ sequence: number; copied: boolean } | null>(null)
+  const copySequence = useRef(0)
+  const copyLink = (id: string): void => {
+    const sequence = ++copySequence.current
+    const url = new URL(window.location.href)
+    const link = officialPluginLink(url, id, url.protocol === 'dsh-app:' || isDarwinDesktop())
+    void writeClipboard(link).then((copied) => {
+      if (copySequence.current === sequence) setLinkNotice({ sequence, copied })
+    })
+  }
   useEffect(() => { ensure() }, [ensure])
   // A package an install just enabled: scroll it into view and mark it for a moment.
   const { highlight, clearHighlight } = { highlight: state.highlight, clearHighlight: props.clearHighlight }
@@ -1372,8 +1401,12 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
   const official = listed.filter(pkg => pkg.optional && !pkg.installed)
   const loaded = state.status === 'ready' || state.status === 'error'
   const refreshing = state.refreshStatus === 'refreshing'
-  const openPkg = view.kind === 'package' || view.kind === 'row' ? listed.find(pkg => pkg.name === view.name) : undefined
-  const openItem = view.kind === 'item' ? ledger.items.find(item => item.id === view.id) : undefined
+  const openPkg = view.kind === 'catalog-link'
+    ? listed.find(pkg => pkg.optional && pkg.name === view.id)
+    : view.kind === 'package' || view.kind === 'row' ? listed.find(pkg => pkg.name === view.name) : undefined
+  const openItem = view.kind === 'item' || (view.kind === 'catalog-link' && !view.id.startsWith('@'))
+    ? ledger.items.find(item => item.id === view.id)
+    : undefined
   const openRow = view.kind === 'row' && openPkg !== undefined ? openPkg.rows.find(row => row.rowId === view.rowId) : undefined
   const showsCards = openPkg === undefined && openItem === undefined
   const activated = listed.find(pkg => pkg.name === activation && pkg.enabled && !state.busy.includes(pkg.name))
@@ -1451,6 +1484,13 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
         )
         : null}
       {showsCards && state.status === 'loading' ? <ListSkeleton label={t('loading')} /> : null}
+      {view.kind === 'catalog-link' && showsCards && state.status === 'ready'
+        ? <p className={css.status} role="status">{t('linkUnavailable')}</p>
+        : null}
+      {linkNotice !== null && <Toast key={linkNotice.sequence}
+        text={t(linkNotice.copied ? 'linkCopied' : 'linkCopyFailed')}
+        {...(linkNotice.copied ? { tone: 'success' as const } : { icon: <IconWarningOutlineRegular /> })}
+        onDone={() => { setLinkNotice(null) }} />}
       {showsCards && state.status === 'unavailable' ? (
         <p className={`${css.status} ${css.statusWithDot}`} role="status">
           <StateDot state="idle" />{t('unavailable')}
@@ -1505,11 +1545,13 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
             onSetEnabled={(enabled) => { props.setEnabled(openPkg.name, enabled) }}
             onUninstall={() => { props.uninstall(openPkg.name) }}
             onSetRowEnabled={setRowEnabled}
+            onCopyLink={copyLink}
           />
         )
         : null}
       {loaded && openItem !== undefined
-        ? <ItemDetail form={formFor(openItem.id)} item={openItem} t={t} renderSlot={renderSlot} onBack={() => { setView({ kind: 'list' }) }} />
+        ? <ItemDetail form={formFor(openItem.id)} item={openItem} t={t} renderSlot={renderSlot}
+          onBack={() => { setView({ kind: 'list' }) }} onCopyLink={copyLink} />
         : null}
       {loaded && showsCards
         ? officialCards.length === 0 && mine.length === 0 && state.status !== 'error'

@@ -1,8 +1,7 @@
-/** Desktop transport admission for Bot links. */
+/** Desktop transport admission for workspace links. */
 
-/** Protocol route used by other applications to address a Bot prompt. */
-export const DESKTOP_BOT_PROMPT_PROTOCOL = 'dsh:'
-/** Host and path reserved for Bot prompt links. */
+const DESKTOP_LINK_PROTOCOL = 'dsh:'
+/** Host and path reserved for Desktop workspace links. */
 export const DESKTOP_BOT_PROMPT_ROUTE = 'dsh://bots/prompt'
 /** Maximum encoded query size admitted before the renderer validates its fields. */
 export const DESKTOP_BOT_PROMPT_QUERY_LIMIT = 16_384
@@ -14,20 +13,19 @@ export const DESKTOP_BOT_PROMPT_QUERY_LIMIT = 16_384
  */
 export function desktopOpenUrlFromArgs(argv: readonly string[]): string | undefined {
   return argv.find(url => url.startsWith('dsh://') && (url === 'dsh://open' || url === 'dsh://open/'
-    || routeDesktopBotPrompt(url) !== undefined))
+    || routeDesktopWorkspaceLink(url) !== undefined))
 }
 
 /**
- * Convert one external Bot link into the private application URL consumed by the renderer.
+ * Convert one external workspace link into the private application URL consumed by the renderer.
  *
- * The desktop shell admits only the transport route and the two renderer-owned
- * query keys. The renderer remains the semantic authority for Bot ids, primary
- * selection, prompt length, and draft preservation. No link is submitted here.
+ * The shell admits the transport route and renderer-owned query keys. The
+ * renderer resolves the Bot or official plugin under the active account.
  *
  * @param value - External URL supplied by the operating system.
  * @returns A private `dsh-app` URL, or `undefined` when the transport is invalid.
  */
-export function routeDesktopBotPrompt(value: string): string | undefined {
+export function routeDesktopWorkspaceLink(value: string): string | undefined {
   let source: URL
   try {
     source = new URL(value)
@@ -35,8 +33,10 @@ export function routeDesktopBotPrompt(value: string): string | undefined {
     void error
     return undefined
   }
-  if (source.protocol !== DESKTOP_BOT_PROMPT_PROTOCOL || source.hostname !== 'bots'
-    || source.port !== '' || (source.pathname !== '/prompt' && source.pathname !== '/open')
+  const bot = source.hostname === 'bots' && (source.pathname === '/prompt' || source.pathname === '/open')
+  const plugin = source.hostname === 'plugins' && source.pathname === '/add'
+  if (source.protocol !== DESKTOP_LINK_PROTOCOL || (!bot && !plugin)
+    || source.port !== ''
     || source.username !== '' || source.password !== '' || source.hash !== '') return undefined
   if (source.search.length > DESKTOP_BOT_PROMPT_QUERY_LIMIT) return undefined
 
@@ -53,6 +53,6 @@ export function routeDesktopBotPrompt(value: string): string | undefined {
   const target = new URL('dsh-app://app/')
   // Fragments stay out of Host requests and access logs; the renderer consumes
   // this route once it has booted and removes it from the visible URL.
-  target.hash = `/bots${source.pathname}${source.search}`
+  target.hash = `/${source.hostname}${source.pathname}${source.search}`
   return target.href
 }

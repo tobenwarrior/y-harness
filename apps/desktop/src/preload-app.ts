@@ -9,7 +9,7 @@ import { syncNativeTheme } from './preload-theme.ts'
 import { syncWindowsAppearance } from './preload-windows.ts'
 import { installMandatoryUpdateOverlay } from './preload-mandatory-overlay.ts'
 import { createDesktopBrowserBridge } from './preload-browser.ts'
-import { installBotPromptNavigation } from './preload-bot-prompt.ts'
+import { installWorkspaceLinkNavigation } from './preload-workspace-link.ts'
 
 function createProductApi(): DshDesktopProductApi {
   return {
@@ -60,7 +60,7 @@ function createProductApi(): DshDesktopProductApi {
 }
 
 if (location.protocol === `${SCHEME}:` && location.hostname === 'app') {
-  installBotPromptNavigation()
+  installWorkspaceLinkNavigation()
   contextBridge.exposeInMainWorld('dshOnboarding', {
     hasApiKey: () => ipcRenderer.invoke(DESKTOP_IPC.onboardingApiKey) as Promise<boolean>,
     setActive: (active: boolean) => { ipcRenderer.send(DESKTOP_IPC.onboardingActive, active) },

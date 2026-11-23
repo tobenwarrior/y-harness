@@ -1,4 +1,5 @@
 - button "Back to plugins": Plugins
+- button "Copy link"
 - heading "Subagent" [level=3]
 - paragraph: Set Subagent recursion depth, count, and models.
 - region "Limits":
