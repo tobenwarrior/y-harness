@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
-import { BotId, type BotLibraryItem } from '@yharness/bots/client'
+import { BotId, type BotLibraryItem, type BotLibraryValue } from '@yharness/bots/client'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import { SessionId } from '@yharness/session/types'
 import { BotDetail } from '../src/client/BotWorkspace.tsx'
@@ -30,10 +30,15 @@ it('loads only when opened, filters, and appends older deliveries using the prov
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date(2026, 10, 25, 12))
   const read = vi.fn<ReadBotLibrary>()
-    .mockResolvedValueOnce({ botId, items: [row(), row({ eventSeq: 6, label: 'chart.png', category: 'image' })], nextBefore: archive })
+    .mockResolvedValueOnce({ botId, items: [
+      row(),
+      row({ eventSeq: 6, label: 'chart.png', category: 'image' }),
+      row({ eventSeq: 7, label: 'weekly.md', createdAt: new Date(2026, 10, 24, 9).getTime() }),
+    ], nextBefore: archive })
     .mockResolvedValueOnce({ botId, items: [row({ eventSeq: 4, label: 'older.md', createdAt: new Date(2026, 10, 22).getTime() })] })
   openLibrary(read)
   await screen.findByRole('heading', { name: en.libraryToday })
+  expect(screen.getByRole('heading', { name: en.libraryThisWeek })).toBeTruthy()
   expect(read).toHaveBeenNthCalledWith(1, botId, undefined)
   expect(screen.getByRole('link', { name: 'Download notes.md' }).getAttribute('href'))
     .toBe('api/present.download?sessionId=bot-session-fixture&seq=5&index=2')
@@ -72,4 +77,24 @@ it('continues past an empty page when earlier messages remain', async () => {
   fireEvent.click(screen.getByRole('button', { name: en.libraryShowMore }))
   expect(await screen.findByRole('link', { name: 'Download notes.md' })).toBeTruthy()
   expect(screen.queryByText(en.libraryPageEmpty)).toBeNull()
+})
+
+it.each(['success', 'error'] as const)('ignores a late %s from a closed Library request', async (settlement) => {
+  const firstPage = Promise.withResolvers<BotLibraryValue>()
+  const read = vi.fn<ReadBotLibrary>()
+    .mockReturnValueOnce(firstPage.promise)
+    .mockResolvedValueOnce({ botId, items: [row({ eventSeq: 7, label: 'current.md' })] })
+  openLibrary(read)
+  fireEvent.click(screen.getByRole('button', { name: en.close }))
+  fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
+  fireEvent.click(screen.getByRole('menuitem', { name: en.libraryTitle }))
+  await screen.findByRole('link', { name: 'Download current.md' })
+  await act(async () => {
+    if (settlement === 'success') firstPage.resolve({ botId, items: [row({ label: 'stale.md' })] })
+    else firstPage.reject(new Error('stale read failed'))
+    await Promise.allSettled([firstPage.promise])
+  })
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(screen.queryByText('stale.md')).toBeNull()
+  expect(screen.getByRole('link', { name: 'Download current.md' })).toBeTruthy()
 })
