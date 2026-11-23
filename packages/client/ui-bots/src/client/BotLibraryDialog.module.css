@@ -68,9 +68,8 @@
 }
 
 .download,
-.linkHost,
-.notice,
-.fileText time {
+.fileMeta,
+.notice {
   color: var(--yh-alias-label-secondary);
 }
 
@@ -80,6 +79,13 @@
   min-inline-size: 0;
   gap: 3px;
   font-size: 13px;
+}
+
+.fileMeta {
+  display: flex;
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  gap: 2px 8px;
 }
 
 .label,

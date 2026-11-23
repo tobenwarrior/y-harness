@@ -178,6 +178,28 @@ describe('BotWorkspaceController', () => {
     expect(readLibrary).toHaveBeenCalledTimes(3)
   })
 
+  it('reads imported Library pages with the owner Bot and the archive cursor', async () => {
+    const existing = bot('bot-archive-library', 'session-archive-library')
+    const value = { botId: existing.id, items: [] }
+    const readGrokLibrary = vi.fn<NonNullable<BotWorkspaceRemote['readGrokLibrary']>>()
+      .mockResolvedValue({ ok: true, value })
+    const connected: BotWorkspaceRemote = { ...remoteFixture([existing]), readGrokLibrary }
+    const client = new BotWorkspaceController(connected, sessionsFixture().sessions, () => 'unexpected response')
+    const read = client.face().readGrokLibrary
+    if (read === undefined) throw new Error('Imported Library reader is unavailable.')
+    expect(client.face().readGrokLibrary).toBe(read)
+    await expect(read(existing.id)).resolves.toEqual(value)
+    const before = { sourceId: 'primary', sourceSequence: 6, itemIndex: 1, createdAt: null }
+    await expect(read(existing.id, before)).resolves.toEqual(value)
+    expect(readGrokLibrary.mock.calls).toEqual([[{ botId: existing.id }], [{ botId: existing.id, before }]])
+    readGrokLibrary.mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'unavailable', {}) })
+    await expect(read(existing.id)).rejects.toThrow('unavailable')
+    delete connected.readGrokLibrary
+    expect(client.face().readGrokLibrary).toBeUndefined()
+    await expect(read(existing.id)).rejects.toThrow('The imported Bot Library is unavailable.')
+    expect(readGrokLibrary).toHaveBeenCalledTimes(3)
+  })
+
   it('routes shared app grants through the owner remote with the current revision', async () => {
     const existing = bot('bot-shared-apps', 'session-shared-apps')
     const access = { botId: existing.id, revision: 3, apps: [{ id: 'github', name: 'GitHub', allowed: false }] }

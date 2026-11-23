@@ -88,6 +88,22 @@ describe('Grok history attachment vault', () => {
     await expect(download!.data[Symbol.asyncIterator]().next()).rejects.toMatchObject({ name: 'AbortError' })
   })
 
+  it('checks only the attachment candidates supplied by the current Library page', async () => {
+    const supplemental = { ...target, sourceId: 'supplement' }
+    await manifest([
+      entry,
+      { ...entry, ...supplemental },
+    ])
+    await writeFile(join(root, sha256), file)
+    const vault = await GrokHistoryAttachmentVault.load(root)
+    await expect(vault.available(botId, archive, undefined, [supplemental])).resolves.toEqual([{
+      sourceId: supplemental.sourceId, sourceSequence: supplemental.sourceSequence,
+    }])
+    await expect(vault.available(botId, archive, undefined, [target])).resolves.toEqual([{
+      sourceId: target.sourceId, sourceSequence: target.sourceSequence,
+    }])
+  })
+
   it.each([
     { byteLength: 24 * 1024 * 1024, available: true },
     { byteLength: 24 * 1024 * 1024 + 1, available: false },

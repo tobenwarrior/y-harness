@@ -8,6 +8,8 @@ import type {
   BotGroupImageAdmissionRequest,
   BotGrokHistoryView,
   BotGrokHistoryRequest,
+  BotGrokLibraryRequest,
+  BotGrokLibraryValue,
   BotLibraryRequest,
   BotLibraryValue,
   BotAvatar,
@@ -89,7 +91,7 @@ import type {
   BotSharedGroupDeliveryFenceView,
   BotPrincipalId as BotPrincipalIdType,
 } from '@yharness/bots/client'
-import type { ReadBotLibrary } from './BotLibraryDialog.tsx'
+import type { ReadBotLibrary, ReadGrokBotLibrary } from './BotLibraryDialog.tsx'
 import type {
   AvatarGenerationRequest,
   AvatarGenerationCommitValue,
@@ -121,6 +123,7 @@ export interface BotWorkspaceRemote {
   rename(request: { readonly botId: BotIdType; readonly name: string }): Promise<RemoteResult<{ readonly bot: BotView }>>
   updateProfile?: (request: BotProfileUpdateRequest) => Promise<RemoteResult<BotProfileUpdateValue>>
   readLibrary?: (request: BotLibraryRequest) => Promise<RemoteResult<BotLibraryValue>>
+  readGrokLibrary?: (request: BotGrokLibraryRequest) => Promise<RemoteResult<BotGrokLibraryValue>>
   readGrokHistory?: (request: BotGrokHistoryRequest) => Promise<RemoteResult<BotGrokHistoryView | null>>
   updateOrganization?: (request: BotOrganizationUpdateRequest) => Promise<RemoteResult<BotOrganizationUpdateValue>>
 
@@ -298,6 +301,8 @@ export interface BotWorkspaceFace {
   readonly setConnectedAppAccess?: (botId: string, appId: string, allowed: boolean) => Promise<void>
   /** Read one page of Bot-delivered files. */
   readonly readLibrary?: ReadBotLibrary
+  /** Read verified files and links from the imported archive. */
+  readonly readGrokLibrary?: ReadGrokBotLibrary
   readonly readGrokHistory?: (botId: string) => Promise<BotGrokHistoryView | null>
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>
   readonly avatarEditor?: BotAvatarEditorActions
@@ -587,6 +592,14 @@ export class BotWorkspaceController {
     return result.value
   }
 
+  private readonly readGrokLibraryPage: ReadGrokBotLibrary = async (id, before) => {
+    const read = this.remote.readGrokLibrary
+    if (read === undefined) throw new Error('The imported Bot Library is unavailable.')
+    const result = await read({ botId: brandString<BotIdType>(id), ...(before === undefined ? {} : { before }) })
+    if (!result.ok) throw new Error(result.error.message)
+    return result.value
+  }
+
   /** Build the narrow data-and-callback face consumed by the panel.
    * @returns The panel-facing roster state and callbacks.
    */
@@ -657,6 +670,7 @@ export class BotWorkspaceController {
         ? {}
         : { setConnectedAppAccess: (id: string, appId: string, allowed: boolean) => this.setConnectedAppAccess(id, appId, allowed) }),
       ...(this.remote.readLibrary === undefined ? {} : { readLibrary: this.readLibraryPage }),
+      ...(this.remote.readGrokLibrary === undefined ? {} : { readGrokLibrary: this.readGrokLibraryPage }),
       ...(readGrokHistory === undefined ? {} : { readGrokHistory: async (id: string) => {
         const result = await readGrokHistory({ botId: brandString<BotIdType>(id) })
         if (!result.ok) throw new Error(result.error.message)

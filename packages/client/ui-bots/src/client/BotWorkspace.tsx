@@ -33,7 +33,7 @@ import { compactGroupQuote, GROUP_REACTION_OPTIONS } from './group-interactions.
 import { BotMemoryManager } from './BotMemoryManager.tsx'
 import { BotSkillsManager } from './BotSkillsManager.tsx'
 import { BotRoutineManager } from './BotRoutineManager.tsx'
-import { BotLibraryDialog, type ReadBotLibrary } from './BotLibraryDialog.tsx'
+import { BotLibraryDialog, type ReadBotLibrary, type ReadGrokBotLibrary } from './BotLibraryDialog.tsx'
 import { GrokHistoryDialog } from './GrokHistoryAction.tsx'
 import type { BotGrokHistoryView } from '@yharness/bots/client'
 import css from './BotWorkspace.module.css'
@@ -1179,13 +1179,14 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
 
 export function BotDetail({
   bot, children, headerActions, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, routineManager,
-  skillManager, routineRevision = 0, loading, workspaceActions = [], readGrokHistory, readLibrary, downloadLibraryFile,
+  skillManager, routineRevision = 0, loading, workspaceActions = [], readGrokHistory, readLibrary, readGrokLibrary, downloadLibraryFile,
 }: {
   bot: BotSummary | undefined
   children: ReactNode
   headerActions?: ReactNode
   workspaceActions?: readonly BotToolbarItem[]
   readLibrary?: ReadBotLibrary | undefined
+  readGrokLibrary?: ReadGrokBotLibrary | undefined
   downloadLibraryFile?: PresentedFileDownloads['url'] | undefined
   readGrokHistory?: ((id: string) => Promise<BotGrokHistoryView | null>) | undefined
   t: BotWorkspaceViewProps['t']
@@ -1325,7 +1326,8 @@ export function BotDetail({
           onClose={() => { setShareTarget(null) }} t={t} />
       )}
       {readLibrary !== undefined && downloadLibraryFile !== undefined && libraryTarget === bot.id && (
-        <BotLibraryDialog key={`library:${bot.id}`} botId={bot.id} botName={bot.name} read={readLibrary} downloadUrl={downloadLibraryFile}
+        <BotLibraryDialog key={`library:${bot.id}`} botId={bot.id} botName={bot.name} read={readLibrary}
+          readImported={readGrokLibrary} downloadUrl={downloadLibraryFile}
           onClose={() => { setLibraryTarget(null) }} t={t} />
       )}
       {readGrokHistory !== undefined && (

@@ -952,6 +952,67 @@ export interface BotLibraryValue {
   readonly nextBefore?: BotLibraryCursor
 }
 
+/** Stable position used to continue reading one imported Grok Library page. */
+export interface BotGrokLibraryCursor {
+  /** Primary source or the stable id of a supplemental imported source. */
+  readonly sourceId: string
+  /** Source transcript sequence containing the imported item. */
+  readonly sourceSequence: number
+  /** Zero-based link position within the source message. */
+  readonly itemIndex: number
+  /** Immutable imported timestamp used when available for stable newest-first ordering. */
+  readonly createdAt?: number | null
+}
+
+interface BotGrokLibraryItemFields extends BotGrokLibraryCursor {
+  /** Bot whose owner-authorized archive produced this item. */
+  readonly botId: BotId
+  /** Archive source of this imported item. */
+  readonly origin: 'grok-history'
+  /** Human-readable supplemental source label, when the source supplied one. */
+  readonly sourceLabel?: string
+  /** Owner-facing label that never contains an archive path. */
+  readonly label: string
+  /** Source message timestamp, or null when the imported source did not provide one. */
+  readonly createdAt: number | null
+}
+
+/** One verified attachment or bounded link from an imported Grok archive. */
+export interface BotGrokLibraryFileItem extends BotGrokLibraryItemFields {
+  /** Safe media or file category for the existing archive download route. */
+  readonly category: Exclude<BotLibraryItemCategory, 'link'>
+}
+
+/** One validated web destination contained in an imported Grok reply. */
+export interface BotGrokLibraryLinkItem extends BotGrokLibraryItemFields {
+  readonly category: 'link'
+  /** Absolute HTTP(S) destination; no network request is performed by the Host. */
+  readonly url: string
+}
+
+/** An owner-visible verified attachment or link from an imported Grok archive. */
+export type BotGrokLibraryItem = BotGrokLibraryFileItem | BotGrokLibraryLinkItem
+
+/** Owner request for a bounded page of imported Grok Library items. */
+export interface BotGrokLibraryRequest {
+  /** Bot whose imported archive should be listed. */
+  readonly botId: BotId
+  /** Number of newest imported items to return; the Host applies a bounded default. */
+  readonly limit?: number
+  /** Exclusive source/item cursor returned by the previous page. */
+  readonly before?: BotGrokLibraryCursor
+}
+
+/** Owner response for one bounded imported Grok Library page. */
+export interface BotGrokLibraryValue {
+  /** Bot whose imported archive produced these items. */
+  readonly botId: BotId
+  /** Newest-first imported attachments and links. */
+  readonly items: readonly BotGrokLibraryItem[]
+  /** Cursor to pass as `before` when older imported items remain. */
+  readonly nextBefore?: BotGrokLibraryCursor
+}
+
 /** Import data from a Grok Bot export into an existing, operator-owned Bot. */
 export interface BotGrokImportRequest {
   /** Destination Bot with the Session and roster placement to preserve. */
