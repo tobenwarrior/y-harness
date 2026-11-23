@@ -188,6 +188,9 @@ import type {
   BotListValue,
   BotMessageSearchRequest,
   BotMessageSearchValue,
+  BotPrimaryReadRequest,
+  BotPrimarySetRequest,
+  BotPrimaryValue,
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
   BotProfileUpdateRequest,
@@ -238,13 +241,14 @@ import type {
 import {
   BOT_APPEARANCE_MIGRATION_VERSION,
   botDomain,
+  botPrimaryDomain,
   botEventRoutineSchema,
   botPendingMemoryUpdateSchema,
   botRecordSchema,
   botSkillPolicySchema,
   imageAttachmentRefSchema,
 } from './storage.ts'
-import type { BotStoredRecord } from './storage.ts'
+import type { BotPrimaryStoredRecord, BotStoredRecord } from './storage.ts'
 import {
   SHARED_BOT_ENDPOINTS,
   SharedBotService,
@@ -361,7 +365,7 @@ export type {
   BotMemoryRecord,
   BotMemoryRememberRequest,
 } from './memory.ts'
-export { botDomain, botRecordSchema } from './storage.ts'
+export { botDomain, botPrimaryDomain, botPrimaryRecordSchema, botRecordSchema } from './storage.ts'
 export {
   BotAttachmentGrantError,
   BotAttachmentGrantId,
@@ -1618,6 +1622,26 @@ function normalizeOwnerId(value: string | undefined): string {
     throw new Error('Bot template ownerId must be a non-empty trimmed string of at most 128 characters')
   }
   return value
+}
+
+/** Reject a stale owner preference revision without changing the selected Bot. */
+function primaryRevisionConflict(expectedRevision: number, actualRevision: number): RemoteError<'bot/primary-conflict'> {
+  return new RemoteError(
+    'bot/primary-conflict',
+    'The primary Bot changed before this replacement committed.',
+    { expectedRevision, actualRevision },
+  )
+}
+
+/** Increment a primary preference revision without allowing unsafe integers. */
+function nextPrimaryRevision(revision: number): number {
+  if (revision >= Number.MAX_SAFE_INTEGER) throw primaryRevisionConflict(revision, revision)
+  return revision + 1
+}
+
+/** Advance primary preference timestamps even when the clock does not move. */
+function nextPrimaryTimestamp(previous: number): number {
+  return Math.max(Date.now(), previous + 1)
 }
 
 function normalizeTemplateId(value: BotTemplateId): BotTemplateId {
@@ -2934,6 +2958,7 @@ export class BotService extends TypertRemoteService {
   static Config = Config
 
   private readonly ready: Promise<Domain<typeof botDomain>>
+  private readonly primaryDomain: Promise<Domain<typeof botPrimaryDomain>>
   private readonly grokHistoryDomain: Promise<Domain<typeof botGrokHistoryDomain>>
   private grokHistoryAttachmentVault: GrokHistoryAttachmentVault | undefined
   private readonly groupDomain: Promise<Domain<typeof botGroupDomain>>
@@ -3040,6 +3065,7 @@ export class BotService extends TypertRemoteService {
       ? ctx.storageDomain.open(botMutationIntentDomain)
       : Promise.resolve(undefined)
     this.sharedConfig = resolveSharedConfig(config.shared)
+    this.primaryDomain = ctx.storageDomain.open(botPrimaryDomain)
     this.ready = ctx.storageDomain.open(botDomain).then(async (domain) => {
       const seenSessions = new Set<string>()
       for (const [key, record] of domain.table('bots').entries()) {
@@ -3071,6 +3097,14 @@ export class BotService extends TypertRemoteService {
       }
       for (const [, record] of domain.table('bots').entries()) this.recordsBySession.set(String(record.sessionId), record)
       return domain
+    })
+    ctx.on('domain/changed', (change) => {
+      if (change.domain !== botDomain.name || change.table !== 'bots' || change.operation !== 'deleted') return
+      if (!BOT_ID_PATTERN.test(change.key)) return
+      void this.clearDeletedPrimary(BotId(change.key)).catch((error: unknown) => {
+        if (this.stopping) return
+        ctx.logger.warn(`bots: primary Bot cleanup failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
     })
     const collaborationHostBase: BotCollaborationHost = {
       listBots: async () => (await this.list({ includeHidden: true })).bots,
@@ -3626,6 +3660,7 @@ export class BotService extends TypertRemoteService {
     })
     this.initialized = ctx.effect(async () => {
       let domain: Domain<typeof botDomain> | undefined
+      let primaryDomain: Domain<typeof botPrimaryDomain> | undefined
       let noCredentialIntent: Domain<typeof botMutationIntentDomain> | undefined
       let grokHistoryDomain: Domain<typeof botGrokHistoryDomain> | undefined
       let groupDomain: Domain<typeof botGroupDomain> | undefined
@@ -3637,6 +3672,7 @@ export class BotService extends TypertRemoteService {
       let cleanup: () => Promise<void>
       try {
         domain = await this.ready
+        primaryDomain = await this.primaryDomain
         noCredentialIntent = await this.noCredentialIntentReady
         grokHistoryDomain = await this.grokHistoryDomain
         groupDomain = await this.groupDomain
@@ -3644,6 +3680,7 @@ export class BotService extends TypertRemoteService {
         templateDomain = await this.templateDomain
         duplicateDomain = await this.duplicateDomain
         const openedDomain = domain
+        const openedPrimaryDomain = primaryDomain
         const openedNoCredentialIntent = noCredentialIntent
         const openedGrokHistoryDomain = grokHistoryDomain
         const openedGroupDomain = groupDomain
@@ -3674,6 +3711,7 @@ export class BotService extends TypertRemoteService {
             ...skillPolicyFibers.map(fiber => fiber.dispose()),
             ...this.promptDisposals,
             openedDomain.close(),
+            openedPrimaryDomain.close(),
             openedGrokHistoryDomain.close(),
             openedGroupDomain.close(),
             openedAttachmentDomain.close(),
@@ -3690,6 +3728,7 @@ export class BotService extends TypertRemoteService {
         await this.waitForAttachmentUploads()
         await Promise.all([
           ...(domain === undefined ? [] : [domain.close()]),
+          ...(primaryDomain === undefined ? [] : [primaryDomain.close()]),
           ...(grokHistoryDomain === undefined ? [] : [grokHistoryDomain.close()]),
           ...(groupDomain === undefined ? [] : [groupDomain.close()]),
           ...(attachmentDomain === undefined ? [] : [attachmentDomain.close()]),
@@ -6767,6 +6806,26 @@ export class BotService extends TypertRemoteService {
     return { items, hasMore: page.nextCursor !== undefined }
   }
 
+  /**
+   * Read the explicit owner-scoped primary Bot without inferring one from the roster.
+   * @param _request - Empty request reserved for future selection filters.
+   * @returns The selected Bot id and its compare-and-swap revision.
+   */
+  @Remote('readPrimary')
+  async readPrimary(_request: BotPrimaryReadRequest): Promise<BotPrimaryValue> {
+    return this.serialize(() => this.readPrimaryValue())
+  }
+
+  /**
+   * Replace or clear the explicit owner-scoped primary Bot choice.
+   * @param request - Existing owner Bot id (or null) and the observed preference revision.
+   * @returns The committed primary Bot id and its next compare-and-swap revision.
+   */
+  @Remote('setPrimary')
+  async setPrimary(request: BotPrimarySetRequest): Promise<BotPrimaryValue> {
+    return this.serialize(() => this.setPrimaryValue(request))
+  }
+
   private async listFromDomain(
     request: BotListRequest,
     domain: Domain<typeof botDomain>,
@@ -9593,6 +9652,144 @@ export class BotService extends TypertRemoteService {
   private async getDomain(): Promise<Domain<typeof botDomain>> {
     await this.initialized
     return this.ready
+  }
+
+  /** Read the owner preference and repair a deleted primary Bot when possible. */
+  private async readPrimaryValue(): Promise<BotPrimaryValue> {
+    const primaryDomain = await this.getPrimaryDomain()
+    const botDomain = await this.getDomain()
+    const preferences = primaryDomain.table('preferences')
+    await primaryDomain.refresh()
+    await botDomain.refresh()
+    const current = preferences.get(this.ownerId)
+    if (current === undefined) return { primaryBotId: null, revision: 0 }
+    this.assertPrimaryOwner(current)
+    if (current.primaryBotId === null) return this.primaryValue(current)
+    const bot = botDomain.table('bots').get(current.primaryBotId)
+    if (bot !== undefined && bot.ownerId === this.ownerId) return this.primaryValue(current)
+    this.requirePrimaryCoordination(preferences, 'primary-read-repair', current.primaryBotId)
+    const repaired = await preferences.update(this.ownerId, (latest) => {
+      this.assertPrimaryOwner(latest)
+      if (latest.revision !== current.revision || latest.primaryBotId !== current.primaryBotId) return latest
+      return this.clearPrimaryRecord(latest)
+    })
+    this.emitChanged()
+    return this.primaryValue(repaired)
+  }
+
+  /** Commit one explicit owner preference with a durable CAS revision. */
+  private async setPrimaryValue(request: BotPrimarySetRequest): Promise<BotPrimaryValue> {
+    if (!isRequestObject(request)) return badRequest('Bot primary request must be an object')
+    const normalizedBotId = request.botId === null ? null : normalizeBotId(request.botId)
+    if (normalizedBotId === undefined) return badRequest('Bot id is required')
+    const botId: BotId | null = normalizedBotId
+    const expectedRevision = request.expectedRevision
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      return badRequest('Bot primary expectedRevision must be a non-negative integer')
+    }
+    const rosterDomain = await this.getDomain()
+    await rosterDomain.refresh()
+    if (botId !== null) await this.readOwnedBot(botId)
+    const primaryDomain = await this.getPrimaryDomain()
+    const preferences = primaryDomain.table('preferences')
+    this.requirePrimaryCoordination(preferences, 'primary-set', botId ?? undefined)
+    await primaryDomain.refresh()
+    const current = preferences.get(this.ownerId)
+    if (current === undefined) {
+      if (expectedRevision !== 0) throw primaryRevisionConflict(expectedRevision, 0)
+      const next: BotPrimaryStoredRecord = {
+        ownerId: this.ownerId,
+        primaryBotId: botId,
+        revision: 1,
+        updatedAt: Date.now(),
+      }
+      if (!await preferences.insert(this.ownerId, next)) {
+        await primaryDomain.refresh()
+        const actual = preferences.get(this.ownerId)?.revision ?? 0
+        throw primaryRevisionConflict(expectedRevision, actual)
+      }
+      return this.finishPrimaryWrite(next)
+    }
+    this.assertPrimaryOwner(current)
+    if (current.revision !== expectedRevision) throw primaryRevisionConflict(expectedRevision, current.revision)
+    const next = await preferences.update(this.ownerId, (latest) => {
+      this.assertPrimaryOwner(latest)
+      if (latest.revision !== expectedRevision) throw primaryRevisionConflict(expectedRevision, latest.revision)
+      return {
+        ownerId: this.ownerId,
+        primaryBotId: botId,
+        revision: nextPrimaryRevision(latest.revision),
+        updatedAt: nextPrimaryTimestamp(latest.updatedAt),
+      }
+    })
+    return this.finishPrimaryWrite(next)
+  }
+
+  /** Settle a preference write against any roster deletion that raced the mutation. */
+  private async finishPrimaryWrite(written: BotPrimaryStoredRecord): Promise<BotPrimaryValue> {
+    const value = written.primaryBotId === null ? this.primaryValue(written) : await this.readPrimaryValue()
+    if (value.revision === written.revision) this.emitChanged()
+    if (value.primaryBotId !== written.primaryBotId) throw primaryRevisionConflict(written.revision, value.revision)
+    return value
+  }
+
+  /** Clear a deleted Bot's primary preference after its roster row commits. */
+  private async clearDeletedPrimary(botId: BotId): Promise<void> {
+    await this.serialize(async () => {
+      const primaryDomain = await this.getPrimaryDomain()
+      const preferences = primaryDomain.table('preferences')
+      await primaryDomain.refresh()
+      const current = preferences.get(this.ownerId)
+      if (current === undefined || current.primaryBotId !== botId) return
+      this.requirePrimaryCoordination(preferences, 'primary-delete-repair', botId)
+      const cleared = await preferences.update(this.ownerId, (latest) => {
+        this.assertPrimaryOwner(latest)
+        if (latest.revision !== current.revision || latest.primaryBotId !== botId) return latest
+        return this.clearPrimaryRecord(latest)
+      })
+      if (cleared.primaryBotId === null) this.emitChanged()
+    })
+  }
+
+  /** Resolve the owner preference domain after service initialization. */
+  private async getPrimaryDomain(): Promise<Domain<typeof botPrimaryDomain>> {
+    await this.initialized
+    return this.primaryDomain
+  }
+
+  /** Reject a malformed or cross-owner preference row before using it. */
+  private assertPrimaryOwner(record: BotPrimaryStoredRecord): void {
+    if (record.ownerId === this.ownerId) return
+    throw new RemoteError('gateway/internal', 'Bot primary preference owner does not match this Host.', {})
+  }
+
+  /** Reject a backend that cannot coordinate primary replacement across Hosts. */
+  private requirePrimaryCoordination(
+    preferences: KvTable<string, BotPrimaryStoredRecord>,
+    operation: string,
+    botId?: BotId,
+  ): void {
+    if (preferences.supportsDurableCoordination) return
+    throw new RemoteError(
+      'bot/profile-coordination-unavailable',
+      'Bot primary selection requires a storage backend with cross-process coordination.',
+      { operation, ...(botId === undefined ? {} : { botId }) },
+    )
+  }
+
+  /** Project a stored preference without assigning a fallback Bot. */
+  private primaryValue(record: BotPrimaryStoredRecord): BotPrimaryValue {
+    return { primaryBotId: record.primaryBotId, revision: record.revision }
+  }
+
+  /** Build the durable cleared state while retaining its monotonic revision. */
+  private clearPrimaryRecord(record: BotPrimaryStoredRecord): BotPrimaryStoredRecord {
+    return {
+      ownerId: this.ownerId,
+      primaryBotId: null,
+      revision: nextPrimaryRevision(record.revision),
+      updatedAt: nextPrimaryTimestamp(record.updatedAt),
+    }
   }
 
   /** Reject profile writes when the routed medium cannot fence other Hosts. */

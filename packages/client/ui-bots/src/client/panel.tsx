@@ -100,12 +100,13 @@ function statusOf(bot: BotView, statuses: SessionStatusSnapshot): BotStatus | un
   return undefined
 }
 
-function summaryOf(bot: BotView, statuses: SessionStatusSnapshot): BotSummary {
+function summaryOf(bot: BotView, statuses: SessionStatusSnapshot, primaryBotId: string | null | undefined): BotSummary {
   const status = statusOf(bot, statuses)
   return {
     id: bot.id,
     updatedAt: bot.updatedAt,
     name: bot.name,
+    ...(bot.id === primaryBotId ? { primary: true } : {}),
     ...(bot.description === undefined ? {} : { description: bot.description }),
     ...(bot.persona === undefined ? {} : { persona: bot.persona }),
     ...(bot.capabilities === undefined ? {} : { capabilities: bot.capabilities }),
@@ -150,7 +151,7 @@ export function BotsRoster({
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
   const searchOpen = useMessageSearchOpen(value => value)
-  const bots = state.bots.map(bot => summaryOf(bot, statuses))
+  const bots = state.bots.map(bot => summaryOf(bot, statuses, state.primary?.primaryBotId))
   return (
     <>
       <BotRoster
@@ -192,14 +193,14 @@ export function BotsRoster({
 export function BotsPanel({
   useWorkspace, useSessionStatus, reference, retryGroup, updateGroup, sendGroupMessage,
   sendGroupMessageWithAttachments, reactGroupMessage, groupsAvailable, loadAvatar,
-  rename, duplicate, updateProfile, memoryManager, readGrokHistory,
+  rename, duplicate, setPrimary, updateProfile, memoryManager, readGrokHistory,
   routineManager, skillManager, SessionProvider, renderSlot, t, share, computer, useComputerAvailability,
   setComputerTarget, useComputerTarget, useComputerIdentity, useComputerSignIn, openWorkspaceTab, useTerminalAvailable, useFilesAvailable,
   useSharedFilesAvailable, refreshComputerAvailability,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
-  const bots = state.bots.map(bot => summaryOf(bot, statuses))
+  const bots = state.bots.map(bot => summaryOf(bot, statuses, state.primary?.primaryBotId))
   const availability = useComputerAvailability(value => value)
   const computerIdentity = useComputerIdentity(value => value)
   const computerTarget = useComputerTarget(value => value)
@@ -287,6 +288,8 @@ export function BotsPanel({
         loadAvatar={loadAvatar}
         onRename={rename}
         onDuplicate={duplicate}
+        onSetPrimary={setPrimary}
+        primaryRevision={state.primary?.revision}
         onUpdateProfile={updateProfile}
         {...(share === undefined ? {} : { share })}
         memoryManager={memoryManager}

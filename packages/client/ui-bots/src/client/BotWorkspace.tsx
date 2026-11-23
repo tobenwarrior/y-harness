@@ -270,6 +270,11 @@ function BotActionsMenu({ bot, groups, onOrganize, onSetSection, onOpenConnected
   )
 }
 
+function botRowLabel(bot: BotSummary, t: BotWorkspaceViewProps['t']): string {
+  return [bot.name, bot.primary === true ? t('primaryBot') : undefined,
+    bot.status === undefined ? undefined : statusLabel(bot.status, t)].filter(text => text !== undefined).join(', ')
+}
+
 function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, onSetSection, onOpenConnectedApps }: {
   bot: BotSummary
   selected: boolean
@@ -293,7 +298,7 @@ function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, on
         data-bot-id={bot.id}
         data-accent={bot.accent ?? 'violet'}
         aria-current={selected ? 'page' : undefined}
-        aria-label={status === undefined ? bot.name : `${bot.name}, ${statusLabel(status, t)}`}
+        aria-label={botRowLabel(bot, t)}
         onClick={onSelect}
       >
         <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar}
@@ -305,7 +310,9 @@ function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, on
             {unread && <span className={css.unreadDot} aria-label={t('unread', { count: unreadCount })}>{unreadCount}</span>}
           </span>
           {summary !== undefined && summary !== '' && <span className={css.botPreview}>{summary}</span>}
-          {(status !== undefined || bot.activity !== undefined) && <span className={css.botMeta}>
+          {(bot.primary === true || status !== undefined || bot.activity !== undefined) && <span className={css.botMeta}>
+            {bot.primary === true && <span>{t('primaryBot')}</span>}
+            {bot.primary === true && status === undefined && bot.activity !== undefined && <span className={css.metaDivider}>·</span>}
             {status !== undefined && <><StateDot state={statusState(status)} size={8} /><span>{statusLabel(status, t)}</span></>}
             {status !== undefined && bot.activity !== undefined && <span className={css.metaDivider}>·</span>}
             {bot.activity !== undefined && <span>{bot.activity}</span>}
@@ -1235,9 +1242,59 @@ function DuplicateBotDialog({ bot, onDuplicate, onClose, t }: {
   )
 }
 
+type PrimaryBotChange = {
+  readonly botId: string
+  readonly clear: boolean
+  readonly expectedRevision: number
+}
+
+function PrimaryBotDialog({ name, change, currentRevision, onSave, onClose, t }: {
+  name: string
+  change: PrimaryBotChange
+  currentRevision: number
+  onSave: (botId: string | null, expectedRevision: number) => Promise<void>
+  onClose: () => void
+  t: BotWorkspaceViewProps['t']
+}) {
+  const [pending, setPending] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const inFlight = useRef(false)
+  const stale = change.expectedRevision !== currentRevision
+  const error = stale ? t('primaryBotChanged') : failed ? t('primaryBotFailed') : undefined
+  const close = () => { if (!inFlight.current) onClose() }
+
+  const save = async () => {
+    if (inFlight.current || stale) return
+    inFlight.current = true
+    setPending(true)
+    setFailed(false)
+    try {
+      await onSave(change.clear ? null : change.botId, change.expectedRevision)
+      onClose()
+    } catch {
+      setFailed(true)
+    } finally {
+      inFlight.current = false
+      setPending(false)
+    }
+  }
+
+  return (
+    <Modal open onClose={close} closeLabel={t('cancel')}
+      title={t(change.clear ? 'clearPrimaryBot' : 'makePrimaryBot')}
+      description={t(change.clear ? 'clearPrimaryBotDescription' : 'makePrimaryBotDescription', { name })}
+      footer={<>
+        <Button variant="ghost" disabled={pending} onClick={close}>{t('cancel')}</Button>
+        <Button variant="primary" disabled={pending || stale} onClick={() => { void save() }}>{t('savePrimaryBot')}</Button>
+      </>}>
+      {error !== undefined && !pending ? <div className={css.dialogNotice} role="alert">{error}</div> : undefined}
+    </Modal>
+  )
+}
+
 export function BotDetail({
   bot, sessionId, children, headerActions, t, loadAvatar, onEditAvatar, onRename, onDuplicate, onUpdateProfile, share, memoryManager,
-  routineManager, skillManager, routineRevision = 0, loading, workspaceActions = [], readGrokHistory,
+  routineManager, skillManager, routineRevision = 0, loading, workspaceActions = [], readGrokHistory, onSetPrimary, primaryRevision,
 }: {
   bot: BotSummary | undefined
   /** Session selected by the Bots panel, used by session-scoped toolbar actions. */
@@ -1251,6 +1308,8 @@ export function BotDetail({
   onEditAvatar?: (() => void) | undefined
   onRename?: ((id: string, name: string) => Promise<void>) | undefined
   onDuplicate?: ((id: string, name: string) => Promise<void>) | undefined
+  onSetPrimary?: ((id: string | null, expectedRevision: number) => Promise<void>) | undefined
+  primaryRevision?: number | undefined
   onUpdateProfile?: ((id: string, profile: BotProfileUpdate) => Promise<void>) | undefined
   share?: BotShareActions | undefined
   memoryManager?: BotMemoryManagerActions | undefined
@@ -1295,7 +1354,11 @@ export function BotDetail({
   const [shareTarget, setShareTarget] = useState<string | null>(null)
   const [historyTarget, setHistoryTarget] = useState<string | null>(null)
   const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null)
-  useEffect(() => { setDuplicateTarget(null) }, [bot?.id])
+  const [primaryChange, setPrimaryChange] = useState<PrimaryBotChange | null>(null)
+  useEffect(() => {
+    setDuplicateTarget(null)
+    setPrimaryChange(null)
+  }, [bot?.id])
   if (bot === undefined) {
     if (loading) {
       return (
@@ -1341,6 +1404,10 @@ export function BotDetail({
       id: 'duplicate', label: t('duplicateBot'), icon: <IconCopyOutlineRegular size={16} />,
       run: () => { setDuplicateTarget(bot.id) },
     }]),
+    ...(onSetPrimary === undefined || primaryRevision === undefined || bot.status === 'preparing' ? [] : [{
+      id: 'primary-bot', label: t(bot.primary === true ? 'clearPrimaryBot' : 'makePrimaryBot'),
+      run: () => { setPrimaryChange({ botId: bot.id, clear: bot.primary === true, expectedRevision: primaryRevision }) },
+    }]),
     ...(share === undefined ? [] : [{
       id: 'share', label: t('shareBot'), icon: <IconShareOutlineRegular size={16} />, run: () => { setShareTarget(bot.id) },
     }]),
@@ -1376,6 +1443,8 @@ export function BotDetail({
           <span className={css.detailIdentityCopy}>
             <span className={css.detailName}>{bot.name}</span>
             <span className={css.detailMeta}>
+              {bot.primary === true && <span className={css.detailRole}>{t('primaryBot')}</span>}
+              {bot.primary === true && bot.description !== undefined && bot.description !== '' && <span className={css.metaDivider}>·</span>}
               {bot.status !== undefined && bot.status !== 'idle' && (
                 <span className={css.detailStatus}>
                   <StateDot state={statusState(bot.status)} size={8} />
@@ -1398,6 +1467,10 @@ export function BotDetail({
       {onDuplicate !== undefined && duplicateTarget === bot.id && (
         <DuplicateBotDialog key={`duplicate:${bot.id}`} bot={bot}
           onDuplicate={onDuplicate} onClose={() => { setDuplicateTarget(null) }} t={t} />
+      )}
+      {onSetPrimary !== undefined && primaryRevision !== undefined && primaryChange?.botId === bot.id && (
+        <PrimaryBotDialog key={`primary:${bot.id}`} name={bot.name} change={primaryChange} currentRevision={primaryRevision}
+          onSave={onSetPrimary} onClose={() => { setPrimaryChange(null) }} t={t} />
       )}
       {readGrokHistory !== undefined && (
         <GrokHistoryDialog key={`history:${bot.id}`} botId={bot.id} botName={bot.name} read={readGrokHistory}
@@ -2041,8 +2114,7 @@ export function BotRoster({
             </Tooltip>
             <BotToolbarMenu items={rosterActions} label={t('rosterMenu')} compact />
             {visibleBots.map((bot) => {
-              const status = bot.status
-              const label = status === undefined ? bot.name : `${bot.name}, ${statusLabel(status, t)}`
+              const label = botRowLabel(bot, t)
               return (
                 <Tooltip key={bot.id} label={label} side="right" delayMs={500}>
                   <button

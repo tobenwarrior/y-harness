@@ -49,6 +49,8 @@ export interface BotSummary {
   readonly updatedAt?: number
   /** Human-facing name displayed in the roster and conversation header. */
   readonly name: string
+  /** The owner's designated main contact. */
+  readonly primary?: boolean
   /** Optional description persisted with the Bot record. */
   readonly description?: string
   /** Optional model-facing persona persisted with the Bot record. */

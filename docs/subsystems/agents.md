@@ -162,6 +162,20 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('searchMessages') async searchMessages(request: BotMessageSearchRequest): Promise<BotMessageSearchValue>
 
 /**
+ * Read the explicit owner-scoped primary Bot without inferring one from the roster.
+ * @param _request - Empty request reserved for future selection filters.
+ * @returns The selected Bot id and its compare-and-swap revision.
+ */
+@Remote('readPrimary') async readPrimary(_request: BotPrimaryReadRequest): Promise<BotPrimaryValue>
+
+/**
+ * Replace or clear the explicit owner-scoped primary Bot choice.
+ * @param request - Existing owner Bot id (or null) and the observed preference revision.
+ * @returns The committed primary Bot id and its next compare-and-swap revision.
+ */
+@Remote('setPrimary') async setPrimary(request: BotPrimarySetRequest): Promise<BotPrimaryValue>
+
+/**
  * List published Bot configuration snapshots, including revoked rows.
  * @param _request - Empty list request reserved for future cursor paging.
  * @returns Published template rows in stable creation order.

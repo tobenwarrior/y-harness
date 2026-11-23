@@ -663,6 +663,25 @@ export interface BotMessageSearchValue {
   readonly hasMore: boolean
 }
 
+/** Empty owner-scoped request to read the durable primary Bot choice. */
+export interface BotPrimaryReadRequest {}
+
+/** Durable owner-scoped primary Bot choice and its compare-and-swap revision. */
+export interface BotPrimaryValue {
+  /** Explicitly selected Bot, or null when the owner has not selected one. */
+  readonly primaryBotId: BotId | null
+  /** Monotonic revision used by replacement calls. */
+  readonly revision: number
+}
+
+/** Owner request to replace or clear the primary Bot choice. */
+export interface BotPrimarySetRequest {
+  /** Existing owner Bot to designate, or null to clear the choice. */
+  readonly botId: BotId | null
+  /** Revision returned by the preceding read or write; zero means no row exists. */
+  readonly expectedRevision: number
+}
+
 /** Rename one Bot without changing its Session binding. */
 export interface BotRenameRequest {
   /** Bot identity to rename. */
@@ -1067,6 +1086,8 @@ declare module '@yharness/typert-protocol' {
     'bot/app-not-found': { readonly botId: BotId; readonly appId: string }
     /** The configured storage backend cannot fence Bot profile writers. */
     'bot/profile-coordination-unavailable': { readonly botId?: BotId; readonly operation: string }
+    /** A primary Bot replacement was based on an older owner preference revision. */
+    'bot/primary-conflict': { readonly expectedRevision: number; readonly actualRevision: number }
     /** A Bot skill policy replacement was based on an older revision. */
     'bot/skill-policy-conflict': {
       readonly botId: BotId
