@@ -326,9 +326,9 @@ describe('VPS Bot file provider', () => {
       await expect(fs.installSkill('linked', content, false)).rejects.toThrow(/symbolic link directory/)
       await rm(join(root, '.agents'))
 
-      await mkdir(join(root, '.agents', 'skills', 'linked'), { recursive: true })
       const outside = join(root, 'outside.md')
       await writeFile(outside, 'outside')
+      await mkdir(join(root, '.agents', 'skills', 'linked'), { recursive: true })
       await symlink(outside, join(root, '.agents', 'skills', 'linked', 'SKILL.md'))
       await expect(fs.installSkill('linked', content, false)).rejects.toThrow(/symbolic link file/)
     } finally {
@@ -363,8 +363,21 @@ describe('VPS Bot file provider', () => {
     try {
       const fs = new VpsBotFileSystem(ctx, runtime, SESSION_ID)
       await expect(fs.installSkill('readback', content, false)).resolves.toBe(true)
+      await expect(fs.skillExists('readback')).resolves.toBe(true)
+      await expect(fs.readSkill('readback')).resolves.toBe(content)
+      await expect(fs.skillExists('missing')).resolves.toBe(false)
+      await expect(fs.readSkill('missing')).resolves.toBeUndefined()
       await writeFile(join(root, '.agents', 'skills', 'readback', 'SKILL.md'), 'tampered')
       await expect(fs.installSkill('readback', content, false)).rejects.toThrow(/already exists with different content/)
+      const outside = join(root, 'outside.md')
+      await writeFile(outside, 'outside')
+      await mkdir(join(root, '.agents', 'skills', 'linked'), { recursive: true })
+      await symlink(outside, join(root, '.agents', 'skills', 'linked', 'SKILL.md'))
+      await expect(fs.readSkill('linked')).rejects.toMatchObject({ code: 'FS_SANDBOX_DENIED' })
+      await rm(join(root, '.agents', 'skills', 'linked'), { recursive: true, force: true })
+      await mkdir(join(root, '.agents', 'skills', 'large'), { recursive: true })
+      await writeFile(join(root, '.agents', 'skills', 'large', 'SKILL.md'), Buffer.alloc(8 * 1024 * 1024 + 1, 120))
+      await expect(fs.readSkill('large')).rejects.toMatchObject({ code: 'FS_TOO_LARGE' })
     } finally {
       await ctx.fiber.dispose()
       await runtime.dispose()

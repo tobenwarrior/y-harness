@@ -559,6 +559,17 @@ interface BotWorkspaces {
    * @returns true when the file was published, or false when identical content already exists.
    */
   installSkill(sessionId: SessionId, botId: BotId, name: string, content: string, preview: boolean, signal?: AbortSignal): Promise<boolean>
+  /**
+   * Read one canonical Bot-owned skill body from a managed Computer.
+   * @param sessionId - exact source Bot Session whose private workspace is read.
+   * @param botId - exact Bot roster id selecting the workspace provider.
+   * @param name - canonical workspace skill name.
+   * @param signal - duplicate cancellation.
+   * @returns the complete UTF-8 body, or undefined when the selected skill is not installed.
+   */
+  readonly readSkill?: (sessionId: SessionId, botId: BotId, name: string, signal?: AbortSignal) => Promise<string | undefined>
+  /** Check whether one canonical Bot-owned skill file exists without reading its body. */
+  readonly skillExists?: (sessionId: SessionId, botId: BotId, name: string, signal?: AbortSignal) => Promise<boolean>
   /** Select only the exact Bot ids assigned to an isolated workspace. */
   managed?(botId: string): boolean
   /** Select a dedicated desktop that retains the Bot's existing shell execution. */
@@ -633,6 +644,25 @@ export interface BotSharedVaultRequests {
 
 function managedBotWorkspace(workspaces: BotWorkspaces | undefined, botId: string): workspaces is BotWorkspaces {
   return workspaces !== undefined && workspaces.managed?.(botId) !== false
+}
+
+function explicitlyManagedBotWorkspace(workspaces: BotWorkspaces | undefined, botId: string): boolean {
+  return workspaces?.managed?.(botId) === true
+}
+
+function requireManagedSkillWorkspace(
+  workspaces: BotWorkspaces | undefined,
+  sourceBotId: string,
+  targetBotId: string,
+): BotWorkspaces {
+  if (workspaces?.readSkill === undefined) {
+    return badRequest('Selected managed skills require a managed Bot workspace provider.')
+  }
+  if (!explicitlyManagedBotWorkspace(workspaces, sourceBotId)
+    || !explicitlyManagedBotWorkspace(workspaces, targetBotId)) {
+    return badRequest('Selected managed skills require both Bots to be assigned managed Computers.')
+  }
+  return workspaces
 }
 
 function botWorkspace(
@@ -1661,8 +1691,10 @@ function duplicateDigest(sourceBotId: BotId, operationId: BotDuplicateOperationI
   return createHash('sha256').update(String(sourceBotId)).update('\0').update(String(operationId)).digest('hex')
 }
 
+const BOT_DUPLICATE_ID_PREFIX = 'bot-duplicate-'
+
 function duplicateBotId(sourceBotId: BotId, operationId: BotDuplicateOperationId): BotId {
-  return BotId(`bot-duplicate-${duplicateDigest(sourceBotId, operationId).slice(0, 48)}`)
+  return BotId(`${BOT_DUPLICATE_ID_PREFIX}${duplicateDigest(sourceBotId, operationId).slice(0, 48)}`)
 }
 
 function duplicateOperationKey(sourceBotId: BotId, operationId: BotDuplicateOperationId): string {
@@ -7669,10 +7701,16 @@ export class BotService extends TypertRemoteService {
    * Duplicate one owner Bot's safe configuration into a fresh Bot and Session.
    *
    * The operation identity deterministically selects the target Bot, so a
-   * retry after a partial provisioning or routine copy resumes the same
-   * target instead of allocating another Bot. Conversations, memories,
-   * credentials, approvals, delivery history, and connected-app state are
-   * deliberately not copied. Every copied routine starts paused.
+   * retry after a partial provisioning, skill publication, or routine copy
+   * resumes the same target instead of allocating another Bot. Conversations,
+   * memories, credentials, approvals, delivery history, and connected-app
+   * state are deliberately not copied. Explicitly selected installed skill
+   * bodies are copied only between providers that identify both source and
+   * target as managed Computers. Global and plugin-provided skill references
+   * remain in the copied policy without requiring a file body. A selected
+   * managed skill file present at snapshot time that disappears before
+   * publication rejects the operation before the new Bot becomes active. Every
+   * copied routine starts paused.
    *
    * @param request - Owner Bot, retry identity, and optional replacement name.
    * @param signal - Optional cancellation between durable copy steps.
@@ -7744,6 +7782,10 @@ export class BotService extends TypertRemoteService {
       if (storedTarget !== undefined && storedTarget.ownerId !== this.ownerId) {
         return badRequest('The Bot duplicate target belongs to another owner')
       }
+      const managedSkillNames = operation.managedSkillNames ?? []
+      if (managedSkillNames.length > 0) {
+        requireManagedSkillWorkspace(this.ctx.get('botWorkspaces'), String(operation.sourceBotId), String(targetId))
+      }
       const existingTarget = storedTarget === undefined
         ? undefined
         : await this.freshBotRecord(bots, targetId, 'bot-duplicate')
@@ -7753,6 +7795,12 @@ export class BotService extends TypertRemoteService {
         signal?.throwIfAborted()
         preparedAvatar = await this.prepareImportedAvatar(targetId, portableAvatar)
       }
+      const currentOperation = operation
+      const copySkillsBeforeActivation = managedSkillNames.length === 0
+        ? undefined
+        : async (record: BotRecord, copySignal?: AbortSignal): Promise<void> => {
+          await this.duplicateManagedSkills(currentOperation, record, copySignal)
+        }
       const created = await this.createRecord({
         id: targetId,
         ...displayProfileOf({
@@ -7765,7 +7813,10 @@ export class BotService extends TypertRemoteService {
         ...(operation.profile.persona === undefined ? {} : { persona: operation.profile.persona }),
         ...(operation.profile.capabilities === undefined ? {} : { capabilities: operation.profile.capabilities }),
         ...(operation.profile.skillPolicy === undefined ? {} : { skillPolicy: operation.profile.skillPolicy }),
-      }, signal, preparedAvatar, operation.profile.modelSelection)
+      }, signal, preparedAvatar, operation.profile.modelSelection, copySkillsBeforeActivation)
+      if (existingTarget?.state === 'active') {
+        await this.duplicateManagedSkills(operation, created.bot, signal)
+      }
       await this.duplicateRoutineDefinitions(operation, created.bot, signal)
       operation = await duplicateOperations.update(operationKey, (current) => {
         if (current.completedAt !== undefined) return current
@@ -7789,6 +7840,8 @@ export class BotService extends TypertRemoteService {
   ): Promise<BotDuplicateStoredRecord> {
     const routines: BotDuplicateStoredRecord['routines'][number][] = []
     const skippedRoutines: BotDuplicateStoredRecord['skippedRoutines'][number][] = []
+    const workspaces = this.ctx.get('botWorkspaces')
+    const managedSkillNames = await this.snapshotManagedSkillNames(source, workspaces, signal)
     const schedule = this.ctx.get('schedule')
     if (schedule !== undefined) {
       const entries = (await schedule.catalog()).filter(entry => entry.sessionId === source.sessionId)
@@ -7840,9 +7893,55 @@ export class BotService extends TypertRemoteService {
         }),
         ...(modelSelection === undefined ? {} : { modelSelection }),
       },
+      ...(managedSkillNames === undefined ? {} : { managedSkillNames }),
       routines,
       skippedRoutines,
       createdAt: Date.now(),
+    }
+  }
+
+  /** Snapshot only selected skill files explicitly installed in the source Computer. */
+  private async snapshotManagedSkillNames(
+    source: BotStoredRecord,
+    workspaces: BotWorkspaces | undefined,
+    signal?: AbortSignal,
+  ): Promise<string[] | undefined> {
+    const policy = source.skillPolicy
+    if (policy?.mode !== 'selected') return undefined
+    const selectedNames = policy.enabled.filter(name => !policy.disabled.includes(name))
+    const skillExists = workspaces?.skillExists
+    if (selectedNames.length === 0 || !explicitlyManagedBotWorkspace(workspaces, String(source.id))) {
+      return undefined
+    }
+    if (skillExists === undefined) return badRequest('Selected managed skills require a managed Bot workspace provider.')
+    const names: string[] = []
+    for (const name of selectedNames) {
+      signal?.throwIfAborted()
+      if (await skillExists(source.sessionId, source.id, name, signal)) names.push(name)
+    }
+    return names.length === 0 ? undefined : names
+  }
+
+  /** Publish selected skill bodies one at a time using the destination Computer's idempotent installer. */
+  private async duplicateManagedSkills(
+    operation: BotDuplicateStoredRecord,
+    target: Pick<BotRecord, 'id' | 'sessionId'>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const names = operation.managedSkillNames ?? []
+    if (names.length === 0) return
+    const workspaces = requireManagedSkillWorkspace(
+      this.ctx.get('botWorkspaces'), String(operation.sourceBotId), String(target.id),
+    )
+    const readSkill = workspaces.readSkill
+    if (readSkill === undefined) return badRequest('Selected managed skills require a managed Bot workspace provider.')
+    const source = await this.readOwnedBot(operation.sourceBotId)
+    if (source.state !== 'active') return badRequest('Wait for the source Bot to finish setup.')
+    for (const name of names) {
+      signal?.throwIfAborted()
+      const content = await readSkill(source.sessionId, source.id, name, signal)
+      if (content === undefined) return badRequest(`Selected managed skill '${name}' is missing from the source Computer.`)
+      await workspaces.installSkill(target.sessionId, target.id, name, content, false, signal)
     }
   }
 
@@ -7945,6 +8044,7 @@ export class BotService extends TypertRemoteService {
     signal?: AbortSignal,
     avatar?: ImageAttachmentRef,
     modelSelection?: BotDuplicateModelSelection,
+    beforeActivate?: (record: BotRecord, signal?: AbortSignal) => Promise<void>,
   ): Promise<BotCreateValue> {
     let normalized = normalizeCreate(request)
     const workspaces = this.ctx.get('botWorkspaces')
@@ -7956,6 +8056,18 @@ export class BotService extends TypertRemoteService {
     const existing = storedExisting === undefined
       ? undefined
       : applyProfileSnapshot(storedExisting, profileState.profiles[String(id)])
+    const inOwnerScope = existing === undefined || existing.ownerId === this.ownerId
+    if (inOwnerScope && existing?.state !== 'active' && beforeActivate === undefined
+      && id.startsWith(BOT_DUPLICATE_ID_PREFIX)) {
+      const duplicates = await this.duplicateDomain
+      await duplicates.refresh()
+      for (const [, operation] of duplicates.table('operations').entries()) {
+        if (operation.targetBotId === id && operation.completedAt === undefined
+          && (operation.managedSkillNames?.length ?? 0) > 0) {
+          return badRequest('Retry this Bot using the original duplicate operation.')
+        }
+      }
+    }
     if (existing !== undefined) {
       if (existing.ownerId !== this.ownerId) {
         throw new RemoteError('bot/id-conflict', `Bot "${id}" already exists`, { botId: id })
@@ -7999,7 +8111,7 @@ export class BotService extends TypertRemoteService {
         ? existing
         : await this.commitBotMutation(id, current => ({ ...current, avatar }), existing.updatedAt, signal)
       if (pendingRecord !== existing) this.recordsBySession.set(String(pendingRecord.sessionId), pendingRecord)
-      const active = await this.provision(pendingRecord, signal, modelSelection)
+      const active = await this.provision(pendingRecord, signal, modelSelection, beforeActivate)
       return { bot: this.view(active) }
     }
 
@@ -8037,7 +8149,7 @@ export class BotService extends TypertRemoteService {
     await this.commitNewBot(record, signal)
     this.recordsBySession.set(String(record.sessionId), record)
     this.emitChanged()
-    const active = await this.provision(record, signal, modelSelection)
+    const active = await this.provision(record, signal, modelSelection, beforeActivate)
     return { bot: this.view(active) }
   }
 
@@ -8355,6 +8467,7 @@ export class BotService extends TypertRemoteService {
     record: BotRecord,
     signal?: AbortSignal,
     modelSelection?: BotDuplicateModelSelection,
+    beforeActivate?: (record: BotRecord, signal?: AbortSignal) => Promise<void>,
   ): Promise<BotRecord> {
     try {
       const workspaces = this.ctx.get('botWorkspaces')
@@ -8375,6 +8488,7 @@ export class BotService extends TypertRemoteService {
           signal,
         )
       }
+      if (beforeActivate !== undefined) await beforeActivate(record, signal)
     } catch (error: unknown) {
       const detail = remoteErrorOf(error)
       const message = detail === undefined ? String(error) : detail.message

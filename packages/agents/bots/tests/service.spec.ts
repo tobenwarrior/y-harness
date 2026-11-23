@@ -1093,6 +1093,273 @@ describe('durable Bot roster', () => {
     expect(parsed.success).toBe(false)
   })
 
+  it('copies only explicitly selected installed skills between managed Computers', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-duplicate-skills-'))
+    const workspace = (sessionId: SessionId): string => join(root, String(sessionId))
+    const prepare = vi.fn(async (sessionId: SessionId) => {
+      await mkdir(workspace(sessionId), { recursive: true })
+    })
+    const readSkill = vi.fn(async (sessionId: SessionId, _botId: BotId, name: string) => {
+      if (name !== 'research') return undefined
+      if (!prepare.mock.calls.some(([prepared]) => prepared === sessionId)) throw new Error('Source Computer was not prepared')
+      return '---\nname: research\ndescription: "Fixture"\n---\n\nRead the source Computer.\n'
+    })
+    const skillExists = vi.fn(async (_sessionId: SessionId, _botId: BotId, name: string) => name === 'research')
+    const installSkill = vi.fn(async () => true)
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', {
+          workspace,
+          prepare,
+          installSkill,
+          readSkill,
+          skillExists,
+          managed: () => true,
+        })
+      },
+    })
+    try {
+      const source = (await h.service.create({
+        name: 'Managed source',
+        skillPolicy: { mode: 'selected', enabled: ['research', 'missing'], disabled: ['missing'] },
+      })).bot
+      const copy = await h.service.duplicate({
+        sourceBotId: source.id,
+        operationId: BotDuplicateOperationId('duplicate-managed-skills'),
+      })
+      expect(readSkill).toHaveBeenCalledExactlyOnceWith(source.sessionId, source.id, 'research', undefined)
+      expect(installSkill).toHaveBeenCalledExactlyOnceWith(
+        copy.bot.sessionId,
+        copy.bot.id,
+        'research',
+        '---\nname: research\ndescription: "Fixture"\n---\n\nRead the source Computer.\n',
+        false,
+        undefined,
+      )
+    } finally {
+      await close(h.ctx)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not read all-policy or disabled managed skill names during duplication', async () => {
+    const readSkill = vi.fn(async () => 'content')
+    const installSkill = vi.fn(async () => true)
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', {
+          workspace: sessionId => String(sessionId),
+          prepare: async () => {},
+          installSkill,
+          readSkill,
+          managed: () => true,
+        })
+      },
+    })
+    try {
+      const all = (await h.service.create({ name: 'All skills' })).bot
+      const selected = (await h.service.create({
+        name: 'Disabled skill',
+        skillPolicy: { mode: 'selected', enabled: ['blocked'], disabled: ['blocked'] },
+      })).bot
+      await h.service.duplicate({ sourceBotId: all.id, operationId: BotDuplicateOperationId('duplicate-all-policy') })
+      await h.service.duplicate({ sourceBotId: selected.id, operationId: BotDuplicateOperationId('duplicate-disabled-skill') })
+      expect(readSkill).not.toHaveBeenCalled()
+      expect(installSkill).not.toHaveBeenCalled()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('does not copy skill bodies when a workspace provider cannot prove managed ownership', async () => {
+    const readSkill = vi.fn(async () => 'content')
+    const installSkill = vi.fn(async () => true)
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', {
+          workspace: sessionId => String(sessionId),
+          prepare: async () => {},
+          installSkill,
+          readSkill,
+        })
+      },
+    })
+    try {
+      const source = (await h.service.create({
+        name: 'Unclassified source',
+        skillPolicy: { mode: 'selected', enabled: ['research'], disabled: [] },
+      })).bot
+      await h.service.duplicate({ sourceBotId: source.id, operationId: BotDuplicateOperationId('unclassified-skills') })
+      expect(readSkill).not.toHaveBeenCalled()
+      expect(installSkill).not.toHaveBeenCalled()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('keeps selected references to built-in skills without requiring a managed file body', async () => {
+    const readSkill = vi.fn(async () => 'content')
+    const installSkill = vi.fn(async () => true)
+    const skillExists = vi.fn(async () => false)
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', {
+          workspace: sessionId => String(sessionId),
+          prepare: async () => {},
+          installSkill,
+          readSkill,
+          skillExists,
+          managed: () => true,
+        })
+      },
+    })
+    try {
+      const source = (await h.service.create({
+        name: 'Built-in source',
+        skillPolicy: { mode: 'selected', enabled: ['web-search'], disabled: [] },
+      })).bot
+      const copy = await h.service.duplicate({
+        sourceBotId: source.id,
+        operationId: BotDuplicateOperationId('duplicate-built-in-skill'),
+      })
+      expect(copy.skillPolicy).toEqual({ mode: 'selected', enabled: ['web-search'], disabled: [] })
+      expect(skillExists).toHaveBeenCalledExactlyOnceWith(source.sessionId, source.id, 'web-search', undefined)
+      expect(readSkill).not.toHaveBeenCalled()
+      expect(installSkill).not.toHaveBeenCalled()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('rejects a selected managed skill when the destination Computer is not allowlisted', async () => {
+    const managedBotIds = new Set<string>()
+    const readSkill = vi.fn(async () => 'content')
+    const installSkill = vi.fn(async () => true)
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', {
+          workspace: sessionId => String(sessionId),
+          prepare: async () => {},
+          installSkill,
+          readSkill,
+          skillExists: async () => true,
+          managed: (botId: string) => managedBotIds.has(botId),
+        })
+      },
+    })
+    try {
+      const source = (await h.service.create({
+        name: 'Allowlisted source',
+        skillPolicy: { mode: 'selected', enabled: ['research'], disabled: [] },
+      })).bot
+      managedBotIds.add(String(source.id))
+      await expect(h.service.duplicate({
+        sourceBotId: source.id,
+        operationId: BotDuplicateOperationId('missing-managed-destination'),
+      })).rejects.toThrow('both Bots to be assigned managed Computers')
+      expect(readSkill).not.toHaveBeenCalled()
+      expect(installSkill).not.toHaveBeenCalled()
+      await expect(h.service.list({ includeHidden: true })).resolves.toMatchObject({
+        bots: [{ id: source.id }],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('rejects a selected managed skill when its source body is missing', async () => {
+    const readSkill = vi.fn(async () => undefined)
+    const skillExists = vi.fn(async () => true)
+    const installSkill = vi.fn(async () => true)
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', {
+          workspace: sessionId => String(sessionId),
+          prepare: async () => {},
+          installSkill,
+          readSkill,
+          skillExists,
+          managed: () => true,
+        })
+      },
+    })
+    try {
+      const source = (await h.service.create({
+        name: 'Missing skill source',
+        skillPolicy: { mode: 'selected', enabled: ['research'], disabled: [] },
+      })).bot
+      await expect(h.service.duplicate({
+        sourceBotId: source.id,
+        operationId: BotDuplicateOperationId('missing-managed-source'),
+      })).rejects.toThrow("Selected managed skill 'research' is missing")
+      expect(readSkill).toHaveBeenCalledExactlyOnceWith(source.sessionId, source.id, 'research', undefined)
+      expect(installSkill).not.toHaveBeenCalled()
+      await expect(h.service.list({ includeHidden: true })).resolves.toMatchObject({
+        bots: [{ id: source.id }, { state: 'provisioning' }],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('retries a partially published managed skill without allocating another Bot', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-duplicate-skill-retry-'))
+    const workspace = (sessionId: SessionId): string => join(root, String(sessionId))
+    const prepare = vi.fn(async (sessionId: SessionId) => {
+      await mkdir(workspace(sessionId), { recursive: true })
+    })
+    const content = '---\nname: research\ndescription: "Fixture"\n---\n\nRetry this skill.\n'
+    const readSkill = vi.fn(async () => content)
+    const skillExists = vi.fn(async () => true)
+    type InstallSkill = (
+      sessionId: SessionId, botId: BotId, name: string, value: string, preview: boolean, signal?: AbortSignal,
+    ) => Promise<boolean>
+    const installSkill = vi.fn<InstallSkill>()
+      .mockRejectedValueOnce(new Error('fixture skill interruption'))
+      .mockResolvedValue(true)
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', {
+          workspace,
+          prepare,
+          installSkill,
+          readSkill,
+          skillExists,
+          managed: () => true,
+        })
+      },
+    })
+    try {
+      const source = (await h.service.create({
+        name: 'Retry source',
+        skillPolicy: { mode: 'selected', enabled: ['research'], disabled: [] },
+      })).bot
+      const request = { sourceBotId: source.id, operationId: BotDuplicateOperationId('managed-skill-retry') }
+      await expect(h.service.duplicate(request)).rejects.toThrow('fixture skill interruption')
+      const firstTarget = (await h.service.list({ includeHidden: true })).bots.find(bot => bot.name === 'Retry source copy')
+      if (firstTarget === undefined) throw new Error('The partial target Bot was not retained')
+      expect(firstTarget.state).toBe('provisioning')
+      await expect(h.service.create({
+        id: firstTarget.id,
+        name: firstTarget.name,
+        identity: firstTarget.identity,
+        accent: firstTarget.accent,
+        skillPolicy: { mode: 'selected', enabled: ['research'], disabled: [] },
+      })).rejects.toThrow('Retry this Bot using the original duplicate operation.')
+      expect((await h.service.list({ includeHidden: true })).bots.find(bot => bot.id === firstTarget.id)?.state)
+        .toBe('provisioning')
+      const recovered = await h.service.duplicate(request)
+      expect(recovered.bot.id).toBe(firstTarget.id)
+      expect(h.create).toHaveBeenCalledTimes(3)
+      expect(readSkill).toHaveBeenCalledTimes(2)
+      expect(installSkill).toHaveBeenCalledTimes(2)
+      expect(recovered.bot.state).toBe('active')
+    } finally {
+      await close(h.ctx)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps a suggested duplicate name valid when the source uses supplementary characters', async () => {
     const h = await routineHarness(undefined, undefined, undefined, [], true)
     try {

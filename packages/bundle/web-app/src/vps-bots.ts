@@ -289,6 +289,42 @@ export function mountVpsBots(
       if (files === undefined) throw new Error('The managed Bot workspace filesystem was not initialized.')
       return files.installSkill(name, content, preview, signal)
     },
+    readSkill: async (sessionId, botId, name, signal) => {
+      if (!isManagedBot(String(botId))) throw new Error('Bot skill reads require a managed Bot workspace.')
+      const key = String(sessionId)
+      let files = importFiles.get(key)
+      if (files === undefined) {
+        await ctx.plugin((scope) => {
+          const created = new VpsBotFileSystem(scope.isolate('fs'), runtimeFor(String(botId)), sessionId)
+          importFiles.set(key, created)
+          return () => {
+            /* v8 ignore else -- Cordis disposes this child before the owning mount can clear its cache. */
+            if (importFiles.get(key) === created) importFiles.delete(key)
+          }
+        })
+        files = importFiles.get(key)
+      }
+      if (files === undefined) throw new Error('The managed Bot workspace filesystem was not initialized.')
+      return files.readSkill(name, signal)
+    },
+    skillExists: async (sessionId, botId, name, signal) => {
+      if (!isManagedBot(String(botId))) throw new Error('Bot skill checks require a managed Bot workspace.')
+      const key = String(sessionId)
+      let files = importFiles.get(key)
+      if (files === undefined) {
+        await ctx.plugin((scope) => {
+          const created = new VpsBotFileSystem(scope.isolate('fs'), runtimeFor(String(botId)), sessionId)
+          importFiles.set(key, created)
+          return () => {
+            /* v8 ignore else -- Cordis disposes this child before the owning mount can clear its cache. */
+            if (importFiles.get(key) === created) importFiles.delete(key)
+          }
+        })
+        files = importFiles.get(key)
+      }
+      if (files === undefined) throw new Error('The managed Bot workspace filesystem was not initialized.')
+      return files.skillExists(name, signal)
+    },
     managed: (botId: string) => isManagedBot(botId),
     desktopOnly: isDesktopOnly,
   })

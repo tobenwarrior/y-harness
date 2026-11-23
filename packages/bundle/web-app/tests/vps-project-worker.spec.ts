@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -63,6 +63,32 @@ describe.skipIf(process.platform === 'win32')('VPS project file worker', () => {
       })).resolves.toMatchObject({ error: 'FS_SANDBOX_DENIED' })
       await expect(request(root, outside, { operation: 'stat' })).resolves.toMatchObject({ error: 'FS_SANDBOX_DENIED' })
       expect(await readFile(outside, 'utf8')).toBe('another workspace')
+    } finally {
+      await rm(base, { recursive: true, force: true })
+    }
+  })
+
+  it('reads only canonical installed skill files', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'yh-project-skills-'))
+    const root = await mkdtemp(join(base, 'project-'))
+    const skill = join(root, '.agents', 'skills', 'research', 'SKILL.md')
+    try {
+      await mkdir(join(root, '.agents', 'skills', 'research'), { recursive: true })
+      await writeFile(skill, '---\nname: research\n---\n\nUse the source Computer.\n')
+      await expect(request(root, '.agents/skills/research/SKILL.md', {
+        operation: 'read-skill',
+      })).resolves.toEqual({ value: { content: '---\nname: research\n---\n\nUse the source Computer.\n' } })
+      await expect(request(root, '.agents/skills/missing/SKILL.md', {
+        operation: 'read-skill',
+      })).resolves.toEqual({ value: { content: null } })
+      await expect(request(root, '.agents/skills/research/SKILL.md', {
+        operation: 'skill-exists',
+      })).resolves.toEqual({ value: { exists: true } })
+      await expect(request(root, '.agents/skills/missing/SKILL.md', {
+        operation: 'skill-exists',
+      })).resolves.toEqual({ value: { exists: false } })
+      await expect(request(root, join(root, 'other.txt'), { operation: 'read-skill' }))
+        .resolves.toMatchObject({ error: 'FS_SANDBOX_DENIED' })
     } finally {
       await rm(base, { recursive: true, force: true })
     }

@@ -384,10 +384,16 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
  * Duplicate one owner Bot's safe configuration into a fresh Bot and Session.
  *
  * The operation identity deterministically selects the target Bot, so a
- * retry after a partial provisioning or routine copy resumes the same
- * target instead of allocating another Bot. Conversations, memories,
- * credentials, approvals, delivery history, and connected-app state are
- * deliberately not copied. Every copied routine starts paused.
+ * retry after a partial provisioning, skill publication, or routine copy
+ * resumes the same target instead of allocating another Bot. Conversations,
+ * memories, credentials, approvals, delivery history, and connected-app
+ * state are deliberately not copied. Explicitly selected installed skill
+ * bodies are copied only between providers that identify both source and
+ * target as managed Computers. Global and plugin-provided skill references
+ * remain in the copied policy without requiring a file body. A selected
+ * managed skill file present at snapshot time that disappears before
+ * publication rejects the operation before the new Bot becomes active. Every
+ * copied routine starts paused.
  *
  * @param request - Owner Bot, retry identity, and optional replacement name.
  * @param signal - Optional cancellation between durable copy steps.

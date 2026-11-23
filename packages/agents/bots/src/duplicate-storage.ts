@@ -1,15 +1,18 @@
 /** Durable owner-local snapshots for retryable Bot duplication operations. */
 
 import { defineDomain, domainTable } from '@yharness/storage-domain'
+import { isSkillName } from '@yharness/skill'
 import { z } from 'zod'
 import { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId } from './types.ts'
 import { botSkillPolicySchema, imageAttachmentRefSchema } from './storage.ts'
+import { BOT_SKILL_NAME_LIMIT, BOT_SKILL_NAME_MAX_LENGTH } from './skills.ts'
 
 const operationIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
 const ownerIdSchema = z.string().min(1).max(128).refine(value => value.trim() === value)
 const botIdSchema = z.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId)
 const boundedText = (max: number) => z.string().min(1).max(max).refine(value => value.trim() === value)
 const optionalText = (max: number) => z.string().max(max).refine(value => value.trim() === value).optional()
+const managedSkillName = z.string().max(BOT_SKILL_NAME_MAX_LENGTH).refine(isSkillName)
 
 const modelSelectionSchema = z.object({
   provider: boundedText(160),
@@ -106,6 +109,8 @@ export const botDuplicateOperationSchema = z.object({
   requestedName: z.string().max(80).refine(value => value.trim() === value).nullable(),
   targetName: boundedText(80),
   profile: profileSchema,
+  /** Explicitly selected skill names whose bodies may be copied from the source Computer. */
+  managedSkillNames: z.array(managedSkillName).max(BOT_SKILL_NAME_LIMIT).optional(),
   routines: z.array(routineSchema).max(512),
   skippedRoutines: z.array(skippedRoutineSchema).max(512),
   createdAt: z.number().int().nonnegative(),
