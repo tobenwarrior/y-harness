@@ -291,6 +291,7 @@ export function mountVpsBots(
     },
     managed: (botId: string) => isManagedBot(botId),
     desktopOnly: isDesktopOnly,
+    managedExecution: agent => managedBotExecutionFor({ agent }) !== undefined,
   })
   ctx.effect(() => async () => {
     lifetime.abort(new Error('VPS Bot Computer scope is closed'))

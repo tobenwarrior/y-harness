@@ -121,7 +121,12 @@ import type {
   BotGroupReactionValue,
 } from './group-chat.ts'
 import type { BotAttachmentGrantValue } from './attachment-grants.ts'
-import { createBotNativeToolProvider, VPS_COMPUTER_TOOL, VPS_VAULT_REQUEST_TOOL } from './native-tools.ts'
+import {
+  createBotNativeToolProvider,
+  MANAGED_BOT_SHELL_TOOL,
+  VPS_COMPUTER_TOOL,
+  VPS_VAULT_REQUEST_TOOL,
+} from './native-tools.ts'
 import type { BotNativeTool, BotNativeToolHost, BotRoutineCreateResolution, BotRoutineCreateReservation, BotVpsJournalReader } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
 import { installBotRoutineTools } from './routine-tools.ts'
@@ -538,6 +543,8 @@ interface BotWorkspaces {
   managed?(botId: string): boolean
   /** Select a dedicated desktop that retains the Bot's existing shell execution. */
   desktopOnly?(botId: string): boolean
+  /** Return true only while this exact Agent has a managed workspace execution binding. */
+  managedExecution?(agent: Agent): boolean
 }
 
 interface BotVpsJournal {
@@ -3203,20 +3210,28 @@ export class BotService extends TypertRemoteService {
       return { bot, agent }
     }
     const scopedVpsTool = async (
-      name: typeof VPS_COMPUTER_TOOL | typeof VPS_VAULT_REQUEST_TOOL,
+      name: typeof VPS_COMPUTER_TOOL | typeof VPS_VAULT_REQUEST_TOOL | typeof MANAGED_BOT_SHELL_TOOL,
       sessionId: SessionId,
     ): Promise<Omit<BotNativeTool, 'name'> | undefined> => {
       const owner = await liveNativeOwner(sessionId)
-      if (owner === undefined || (name === VPS_COMPUTER_TOOL
-        && ctx.get('botWorkspaces')?.desktopOnly?.(owner.bot.id) !== true)) return undefined
-      const tool = ctx.tools.get(name, owner.agent)
+      if (owner === undefined) return undefined
+      if (name !== VPS_VAULT_REQUEST_TOOL) {
+        const workspaces = ctx.get('botWorkspaces')
+        const desktopOnly = name === VPS_COMPUTER_TOOL && workspaces?.desktopOnly?.(owner.bot.id) === true
+        const managed = workspaces?.managed?.(owner.bot.id) === true && workspaces.managedExecution?.(owner.agent) === true
+        if (!desktopOnly && !managed) return undefined
+      }
+      const registeredName = name === MANAGED_BOT_SHELL_TOOL ? 'bash' : name
+      const tool = ctx.tools.get(registeredName, owner.agent)
       if (tool === undefined) return undefined
       return {
-        description: tool.description,
+        description: name === MANAGED_BOT_SHELL_TOOL
+          ? 'Run a command in this Bot’s managed VPS workspace with its scoped Bash tool, sandbox and worker.'
+          : tool.description,
         inputSchema: tool.parameters,
         execute: async (args, context) => {
           const result = await ctx.tools.execute({
-            callId: ToolCallId(context.callId), name, arguments: args,
+            callId: ToolCallId(context.callId), name: registeredName, arguments: args,
             agent: owner.agent, signal: context.signal,
           })
           const image = name === VPS_COMPUTER_TOOL ? result.content.find(block => block.type === 'image')?.attachment : undefined
@@ -3257,9 +3272,10 @@ export class BotService extends TypertRemoteService {
         const owner = await liveNativeOwner(sessionId)
         return owner === undefined ? undefined : ctx.get('botVpsJournal')?.forBot(owner.bot.id)
       },
-      vpsComputer: sessionId => ctx.get('botWorkspaces')?.desktopOnly === undefined
+      vpsComputer: sessionId => ctx.get('botWorkspaces') === undefined
         ? Promise.resolve(undefined) : scopedVpsTool(VPS_COMPUTER_TOOL, sessionId),
       vpsVaultRequest: sessionId => scopedVpsTool(VPS_VAULT_REQUEST_TOOL, sessionId),
+      managedBotShell: sessionId => scopedVpsTool(MANAGED_BOT_SHELL_TOOL, sessionId),
       manage: this.manageBots = async (action, args, context) => {
         const text = (key: string): string | undefined => {
           const value = args[key]
