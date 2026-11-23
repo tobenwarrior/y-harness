@@ -110,6 +110,14 @@ function isCodexContext(message: RequestMessage): boolean {
   return source.form === 'instructions' || source.form === 'catalog' || source.form === 'snapshot' || source.form === 'recall'
 }
 
+const SCHEDULED_ROUTINE_GUIDANCE = [
+  '## Scheduled routine',
+  '',
+  'Handle the current occurrence below. If it asks you to execute a command or use a tool, do that work with the available tools and follow the existing approval policy.',
+  'Report completion and measured results only from tool results in this turn. If you could not run the work, say what prevented it.',
+  'Earlier occurrences in the quoted transcript are history.',
+].join('\n')
+
 /**
  * Text-and-image history seed, visibly separated from the current user message.
  * Every image also leaves a placeholder in the text, so a quoted transcript
@@ -886,6 +894,9 @@ export class CodexBackendRuntime {
     if (currentUser !== undefined) {
       const currentContext = suffix.slice(requestIndex + 1).map(entry => entry.text).filter(Boolean).join('\n\n')
       if (currentContext !== '') texts.push(`## Current Harness context\n\n${currentContext}`)
+      const request = historyMessages[start + requestIndex]
+      const sourceKind: string | undefined = request?.source?.kind
+      if (sourceKind === 'schedule') texts.push(SCHEDULED_ROUTINE_GUIDANCE)
       texts.push(texts.length === 0 ? currentUser.text : `## Current user request\n\n${currentUser.text}`)
     }
     const promptInputs = texts.map(entryText => ({ type: 'text', text: entryText, text_elements: [] }))

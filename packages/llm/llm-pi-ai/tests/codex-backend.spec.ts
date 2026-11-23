@@ -403,6 +403,13 @@ describe('Codex native backend', () => {
       expect(f.request.mock.calls.find(call => call[0] === 'turn/start')?.[1]).toHaveProperty('input', [
         { type: 'text', text: 'Conversation context from Harness (quoted transcript; retain each role):\n[{"role":"user","text":"earlier request"}]', text_elements: [] },
         { type: 'text', text: `## Current Harness context\n\n${stepTime}`, text_elements: [] },
+        { type: 'text', text: [
+          '## Scheduled routine',
+          '',
+          'Handle the current occurrence below. If it asks you to execute a command or use a tool, do that work with the available tools and follow the existing approval policy.',
+          'Report completion and measured results only from tool results in this turn. If you could not run the work, say what prevented it.',
+          'Earlier occurrences in the quoted transcript are history.',
+        ].join('\n'), text_elements: [] },
         { type: 'text', text: `## Current user request\n\n${routine}`, text_elements: [] },
       ])
     } finally {
