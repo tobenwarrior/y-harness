@@ -12,6 +12,11 @@ import type {
 
 const t = makeTranslate(en)
 
+function chooseBotOption(name: string, menu: string = en.botMenu): void {
+  fireEvent.click(screen.getByRole('button', { name: menu }))
+  fireEvent.click(screen.getByRole('menuitem', { name }))
+}
+
 const botA: BotSummary = {
   id: 'research', name: 'Research partner', description: 'Source scout', group: 'Research',
   identity: 'browse', accent: 'teal', status: 'working', preview: 'Comparing sources',
@@ -460,13 +465,13 @@ describe('BotWorkspace supported lifecycle coverage', () => {
       bot={{ ...botA, persona: 'Be precise', capabilities: ['chat', 'research'], updatedAt: 4 }} loading={false}
       loadAvatar={undefined} onUpdateProfile={save} t={t}
     ><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     let dialog = screen.getByRole('dialog', { name: 'Edit bot profile' })
     fireEvent.click(within(dialog).getAllByRole('button', { name: 'Cancel' })[0]!)
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     dialog = screen.getByRole('dialog', { name: 'Edit bot profile' })
     fireEvent.click(within(dialog).getAllByRole('button', { name: 'Cancel' })[1]!)
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     dialog = screen.getByRole('dialog', { name: 'Edit bot profile' })
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Research lead' } })
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'What it does' }), { target: { value: '  Plans releases  ' } })
@@ -486,14 +491,14 @@ describe('BotWorkspace supported lifecycle coverage', () => {
     const conflict = vi.fn().mockRejectedValue(Object.assign(new Error('conflict'), { name: 'BotProfileConflictError' }))
     cleanup()
     render(<BotDetail bot={botA} loading={false} loadAvatar={undefined} onUpdateProfile={conflict} t={t}><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
     expect((await screen.findByRole('alert')).textContent).toContain('changed elsewhere')
 
     const failed = vi.fn().mockRejectedValue(new Error('profile offline'))
     cleanup()
     render(<BotDetail bot={botA} loading={false} loadAvatar={undefined} onUpdateProfile={failed} t={t}><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
     expect((await screen.findByRole('alert')).textContent).toContain('could not be saved')
 
@@ -501,10 +506,10 @@ describe('BotWorkspace supported lifecycle coverage', () => {
     const pendingSave = vi.fn().mockReturnValue(pending.promise)
     cleanup()
     render(<BotDetail bot={botA} loading={false} loadAvatar={undefined} onUpdateProfile={pendingSave} t={t}><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     const pendingDialog = screen.getByRole('dialog', { name: 'Edit bot profile' })
     fireEvent.click(within(pendingDialog).getAllByRole('button', { name: 'Cancel' })[1]!)
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     const savingDialog = screen.getByRole('dialog', { name: 'Edit bot profile' })
     fireEvent.click(within(savingDialog).getByRole('button', { name: 'Save profile' }))
     fireEvent.click(savingDialog.parentElement?.querySelector('[aria-hidden="true"]') as HTMLElement)
@@ -518,7 +523,7 @@ describe('BotWorkspace supported lifecycle coverage', () => {
     const raceView = render(<BotDetail
       bot={botA} loading={false} loadAvatar={undefined} onUpdateProfile={raceSave} t={t}
     ><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
     raceView.rerender(<BotDetail bot={botB} loading={false} loadAvatar={undefined} onUpdateProfile={raceSave} t={t}><span /></BotDetail>)
     race.resolve(undefined)
@@ -527,7 +532,7 @@ describe('BotWorkspace supported lifecycle coverage', () => {
 
     cleanup()
     render(<BotDetail bot={botC} loading={false} loadAvatar={undefined} onUpdateProfile={vi.fn()} t={t}><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     const sparseDialog = screen.getByRole('dialog', { name: 'Edit bot profile' })
     expect(within(sparseDialog).getByRole('textbox', { name: 'What it does' })).toHaveProperty('value', '')
     expect(within(sparseDialog).getByRole('textbox', { name: 'Instructions' })).toHaveProperty('value', '')
@@ -689,19 +694,19 @@ describe('BotWorkspace supported lifecycle coverage', () => {
       routineManager={routineActions} t={t}
     ><span /></BotDetail>)
     expect(screen.getByRole('status').textContent).toContain('Working now')
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar')
     expect(editAvatar).toHaveBeenCalledOnce()
-    fireEvent.click(screen.getByRole('button', { name: 'Rename bot' }))
+    chooseBotOption('Rename bot')
     const renameDialog = screen.getByRole('dialog', { name: 'Rename bot' })
     fireEvent.click(within(renameDialog).getAllByRole('button', { name: 'Cancel' })[0]!)
-    fireEvent.click(screen.getByRole('button', { name: 'Rename bot' }))
+    chooseBotOption('Rename bot')
     const reopenedRenameDialog = screen.getByRole('dialog', { name: 'Rename bot' })
     fireEvent.click(within(reopenedRenameDialog).getAllByRole('button', { name: 'Cancel' })[1]!)
-    fireEvent.click(screen.getByRole('button', { name: 'Rename bot' }))
+    chooseBotOption('Rename bot')
     fireEvent.change(screen.getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Activity lead' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }))
     await waitFor(() => { expect(rename).toHaveBeenCalledWith('activity', 'Activity lead') })
-    fireEvent.click(screen.getByRole('button', { name: 'Manage routines' }))
+    chooseBotOption('Manage routines')
     const routines = await screen.findByRole('dialog', { name: 'Bot routines' })
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Bot routines' })).toBeNull() })
@@ -711,7 +716,7 @@ describe('BotWorkspace supported lifecycle coverage', () => {
     const pendingRename = Promise.withResolvers<undefined>()
     const renameWhileSaving = vi.fn().mockReturnValue(pendingRename.promise)
     render(<BotDetail bot={activityBot} loading={false} loadAvatar={undefined} onRename={renameWhileSaving} t={t}><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Rename bot' }))
+    chooseBotOption('Rename bot')
     const savingRenameDialog = screen.getByRole('dialog', { name: 'Rename bot' })
     fireEvent.click(within(savingRenameDialog).getByRole('button', { name: 'Save name' }))
     fireEvent.click(within(savingRenameDialog).getAllByRole('button', { name: 'Cancel' })[0]!)
@@ -736,14 +741,14 @@ describe('BotWorkspace supported lifecycle coverage', () => {
       sharedClient={sharedClient} templates={templateState} templateActions={actions} expandSidebar={expand} wide={false} t={t}
     />)
     await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledOnce() })
-    fireEvent.click(screen.getByRole('button', { name: 'Create a shared group' }))
+    chooseBotOption('Create a shared group', en.rosterMenu)
     expect(expand).toHaveBeenCalled()
     expect(await screen.findByRole('dialog', { name: 'Shared with you' })).toBeTruthy()
     fireEvent.keyDown(document, { key: 'Escape' })
     fireEvent.click(screen.getByRole('button', { name: 'New bot group' }))
     expect(screen.getByRole('dialog', { name: 'Create a bot group' })).toBeTruthy()
     fireEvent.keyDown(document, { key: 'Escape' })
-    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    chooseBotOption('Bot templates', en.rosterMenu)
     expect(screen.getByRole('dialog', { name: 'Bot templates' })).toBeTruthy()
     fireEvent.keyDown(document, { key: 'Escape' })
     fireEvent.click(screen.getByRole('button', { name: 'Local room' }))
@@ -766,10 +771,10 @@ describe('BotWorkspace supported lifecycle coverage', () => {
       sharedClient={sharedRailClient(wideCapability)} t={t}
     />)
     await waitFor(() => { expect(wideCapability).toHaveBeenCalledOnce() })
-    fireEvent.click(screen.getByRole('button', { name: 'Join a shared bot' }))
+    chooseBotOption('Join a shared bot', en.rosterMenu)
     expect(await screen.findByRole('dialog', { name: 'Shared with you' })).toBeTruthy()
     fireEvent.keyDown(document, { key: 'Escape' })
-    fireEvent.click(screen.getByRole('button', { name: 'Create a shared group' }))
+    chooseBotOption('Create a shared group', en.rosterMenu)
     expect(await screen.findByRole('dialog', { name: 'Shared with you' })).toBeTruthy()
   })
 
@@ -812,7 +817,8 @@ describe('BotWorkspace supported lifecycle coverage', () => {
       sharedClient={sharedRailClient(currentFailure)} t={t}
     />)
     await waitFor(() => { expect(currentFailure).toHaveBeenCalledOnce() })
-    await waitFor(() => { expect(screen.getByRole('button', { name: 'Create a shared group' })).toHaveProperty('disabled', true) })
+    fireEvent.click(screen.getByRole('button', { name: en.rosterMenu }))
+    await waitFor(() => { expect(screen.getByRole('menuitem', { name: 'Create a shared group' })).toHaveProperty('disabled', true) })
 
     cleanup()
     const collapsedFailure = vi.fn<NonNullable<SharedBotsClient['getOwnerCapability']>>()
@@ -822,7 +828,8 @@ describe('BotWorkspace supported lifecycle coverage', () => {
       sharedClient={sharedRailClient(collapsedFailure)} wide={false} t={t}
     />)
     await waitFor(() => { expect(collapsedFailure).toHaveBeenCalledOnce() })
-    expect(screen.getByRole('button', { name: 'Create a shared group' })).toHaveProperty('disabled', true)
+    fireEvent.click(screen.getByRole('button', { name: en.rosterMenu }))
+    expect(screen.getByRole('menuitem', { name: 'Create a shared group' })).toHaveProperty('disabled', true)
   })
 
   it('filters local groups and exposes selected-group load failures', () => {
@@ -852,7 +859,7 @@ describe('BotWorkspace supported lifecycle coverage', () => {
       revokeMember: vi.fn(),
     }
     render(<BotDetail bot={botA} loading={false} loadAvatar={undefined} share={share} t={t}><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Share bot' }))
+    chooseBotOption('Share bot')
     expect(await screen.findByRole('dialog', { name: 'Share this bot' })).toBeTruthy()
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: 'Share this bot' })).toBeNull()

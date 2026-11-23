@@ -144,7 +144,8 @@ describe('web e2e: owner-only Grok history attachments', () => {
       const row = roster.locator(`[data-bot-id="${secondBot.id}"]`)
       await row.click()
       const detail = page.locator(`section[aria-label="${secondBot.name}"]`)
-      await detail.getByRole('button', { name: 'Imported Grok chat', exact: true }).click()
+      await detail.getByRole('button', { name: 'Bot options', exact: true }).click()
+      await page.getByRole('menuitem', { name: 'Imported Grok chat', exact: true }).click()
       return page.getByRole('dialog', { name: 'Imported Grok chat' })
     }
     const downloadName = `Download ${ATTACHMENT_NAME}`

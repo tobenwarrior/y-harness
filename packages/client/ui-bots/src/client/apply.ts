@@ -101,7 +101,8 @@ export function apply(ctx: Context): void {
         const files = selected?.files === true && scope.sidebarRightTabs.get('computer-files') !== undefined
         const sharedFiles = files && selected.sharedFiles === true
           && scope.sidebarRightTabs.get('computer-shared-files') !== undefined
-        scope.sidebarRight.selectPanelSession(PANEL_ID, terminal || files || sharedFiles ? sessionId : undefined)
+        const agents = scope.sidebarRightTabs.get('subagentchat') !== undefined
+        scope.sidebarRight.selectPanelSession(PANEL_ID, terminal || files || agents ? sessionId : undefined)
         terminalAvailable.set(terminal)
         filesAvailable.set(files)
         sharedFilesAvailable.set(sharedFiles)
@@ -184,7 +185,10 @@ export function apply(ctx: Context): void {
       name: 'main',
       key: PANEL_ID,
       locale: 'bots',
-      children: { 'bots.conversation': { kind: 'single', scope: 'session-maybe' } },
+      children: {
+        'bots.conversation': { kind: 'single', scope: 'session-maybe' },
+        'conversation.session.header.agents': { kind: 'single', scope: 'session' },
+      },
       inject: () => {
         const face = controller.face()
         return {

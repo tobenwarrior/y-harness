@@ -152,6 +152,15 @@ declare module '@yharness/client-ui-slots' {
       scope: 'session'
       owner: ConversationHeaderLineageOwnerProps
     }
+    /** Agent activity control in an embedded Session header. */
+    'conversation.session.header.agents': {
+      kind: 'single'
+      scope: 'session'
+      owner: {
+        /** Clear a panel occupying the sidebar space before a child chat opens. */
+        beforeOpen?: () => void
+      }
+    }
     /** Title-adjacent Session actions in ascending order. */
     'conversation.session.header.actions': {
       kind: 'list'

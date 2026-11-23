@@ -9,6 +9,7 @@ import {
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
   IconSidebarSkillsOutlineRegular,
   IconUnarchiveOutlineRegular, IconUsersOutlineRegular, Input, Menu, MenuSurface, Modal, StateDot, Tag, Tooltip, connectedAppGlyph,
+  type MenuItem,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import { randomUUID } from '@yharness/util-crypto'
@@ -31,6 +32,8 @@ import { compactGroupQuote, GROUP_REACTION_OPTIONS } from './group-interactions.
 import { BotMemoryManager } from './BotMemoryManager.tsx'
 import { BotSkillsManager } from './BotSkillsManager.tsx'
 import { BotRoutineManager } from './BotRoutineManager.tsx'
+import { GrokHistoryDialog } from './GrokHistoryAction.tsx'
+import type { BotGrokHistoryView } from '@yharness/bots/client'
 import css from './BotWorkspace.module.css'
 import type {
   BotAccent, BotConnectedAppAccess, BotGroupAttachmentDraft, BotGroupCreation, BotGroupDeliverySummary,
@@ -88,16 +91,6 @@ function statusKey(status: BotStatus): 'status.idle' | 'status.working' | 'statu
   }
 }
 
-function statusTone(status: BotStatus): 'info' | 'neutral' {
-  switch (status) {
-    case 'working': return 'info'
-    case 'preparing': return 'info'
-    case 'idle':
-    case 'offline':
-      return 'neutral'
-  }
-}
-
 function groupBots(bots: readonly BotSummary[], fallback: string): readonly [string, readonly BotSummary[]][] {
   const groups = new Map<string, BotSummary[]>()
   for (const bot of bots) {
@@ -149,6 +142,46 @@ function sectionItemId(index: number): string {
 
 function statusLabel(status: BotStatus, t: BotWorkspaceViewProps['t']): string {
   return t(statusKey(status))
+}
+
+type BotToolbarItem = MenuItem & { run: () => void }
+
+function BotToolbarMenu({ items, label, compact }: {
+  readonly items: readonly BotToolbarItem[]
+  readonly label: string
+  readonly compact?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  if (items.length === 0) return null
+  return (
+    <Menu
+      open={open}
+      onClose={() => { setOpen(false) }}
+      items={items}
+      onSelect={(id) => {
+        setOpen(false)
+        items.find(item => item.id === id)?.run()
+      }}
+      align={compact === true ? 'start' : 'end'}
+      autoFocus
+      dense
+      portal
+      anchor={(
+        <Tooltip label={label} side={compact === true ? 'right' : 'bottom'} portal>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={compact === true ? css.botRailAction : css.toolbarMore}
+            icon={<IconEllipsisOutlineRegular size={18} />}
+            aria-label={label}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            onClick={() => { setOpen(value => !value) }}
+          />
+        </Tooltip>
+      )}
+    />
+  )
 }
 
 function BotActionsMenu({ bot, groups, onOrganize, onSetSection, onOpenConnectedApps, t }: {
@@ -1144,11 +1177,13 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
 
 export function BotDetail({
   bot, children, headerActions, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, routineManager,
-  skillManager, routineRevision = 0, loading,
+  skillManager, routineRevision = 0, loading, workspaceActions = [], readGrokHistory,
 }: {
   bot: BotSummary | undefined
   children: ReactNode
   headerActions?: ReactNode
+  workspaceActions?: readonly BotToolbarItem[]
+  readGrokHistory?: ((id: string) => Promise<BotGrokHistoryView | null>) | undefined
   t: BotWorkspaceViewProps['t']
   loadAvatar: BotWorkspaceViewProps['loadAvatar']
   onEditAvatar?: (() => void) | undefined
@@ -1194,6 +1229,8 @@ export function BotDetail({
     setSkillsOpen(false)
   }, [bot?.id])
   const [routineOpen, setRoutineOpen] = useState(false)
+  const [shareTarget, setShareTarget] = useState<string | null>(null)
+  const [historyTarget, setHistoryTarget] = useState<string | null>(null)
   if (bot === undefined) {
     if (loading) {
       return (
@@ -1212,6 +1249,46 @@ export function BotDetail({
       </section>
     )
   }
+  const items: BotToolbarItem[] = [
+    ...(onUpdateProfile === undefined ? [] : [{
+      id: 'edit-profile',
+      label: t('editBotProfile'),
+      icon: <IconEditOutlineRegular size={16} />,
+      run: () => {
+        profileOperationGeneration.current += 1
+        setProfileName(bot.name)
+        setProfileDescription(bot.description ?? '')
+        setProfilePersona(bot.persona ?? '')
+        setProfileCapabilities(profileCapabilityText(bot.capabilities))
+        setProfileError(null)
+        setProfileRevision(bot.updatedAt)
+        setProfileTarget(bot.id)
+      },
+    }]),
+    ...(onUpdateProfile !== undefined || onRename === undefined ? [] : [{
+      id: 'rename', label: t('renameBot'), icon: <IconEditOutlineRegular size={16} />,
+      run: () => { setName(bot.name); setRenameError(false); setRenameTarget(bot.id) },
+    }]),
+    ...(onEditAvatar === undefined ? [] : [{
+      id: 'edit-avatar', label: t('editAvatar'), icon: <IconEditOutlineRegular size={16} />, run: onEditAvatar,
+    }]),
+    ...(share === undefined ? [] : [{
+      id: 'share', label: t('shareBot'), icon: <IconShareOutlineRegular size={16} />, run: () => { setShareTarget(bot.id) },
+    }]),
+    ...(memoryManager === undefined ? [] : [{
+      id: 'memory', label: t('manageMemories'), icon: <IconContextInjectionOutlineRegular size={16} />, run: () => { setMemoryOpen(true) },
+    }]),
+    ...(skillManager === undefined ? [] : [{
+      id: 'skills', label: t('manageSkills'), icon: <IconSidebarSkillsOutlineRegular size={16} />, run: () => { setSkillsOpen(true) },
+    }]),
+    ...(routineManager === undefined ? [] : [{
+      id: 'routines', label: t('manageRoutines'), icon: <IconClockOutlineRegular size={16} />, run: () => { setRoutineOpen(true) },
+    }]),
+    ...(readGrokHistory === undefined ? [] : [{
+      id: 'history', label: t('grokHistory'), icon: <IconArchiveOffOutlineRegular size={16} />, run: () => { setHistoryTarget(bot.id) },
+    }]),
+    ...workspaceActions,
+  ]
   return (
     <section className={css.detail} aria-label={bot.name}>
       <header className={css.detailHeader}>
@@ -1219,61 +1296,30 @@ export function BotDetail({
           <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} botId={bot.id} loadAvatar={loadAvatar} status={bot.status} size="large" />
           <span className={css.detailIdentityCopy}>
             <span className={css.detailName}>{bot.name}</span>
-            {bot.description !== undefined && bot.description !== '' && <span className={css.detailRole}>{bot.description}</span>}
+            <span className={css.detailMeta}>
+              {bot.status !== undefined && bot.status !== 'idle' && (
+                <span className={css.detailStatus}>
+                  <StateDot state={statusState(bot.status)} size={8} />
+                  {statusLabel(bot.status, t)}
+                </span>
+              )}
+              {bot.description !== undefined && bot.description !== '' && <span className={css.detailRole}>{bot.description}</span>}
+            </span>
           </span>
         </span>
         <span className={css.detailActions}>
           {headerActions}
-          {onUpdateProfile !== undefined && (
-            <Tooltip label={t('editBotProfile')} side="bottom" portal>
-              <Button variant="ghost" size="sm" aria-label={t('editBotProfile')} icon={<IconEditOutlineRegular size={14} />}
-                onClick={() => {
-                  profileOperationGeneration.current += 1
-                  setProfileName(bot.name)
-                  setProfileDescription(bot.description ?? '')
-                  setProfilePersona(bot.persona ?? '')
-                  setProfileCapabilities(profileCapabilityText(bot.capabilities))
-                  setProfileError(null)
-                  setProfileRevision(bot.updatedAt)
-                  setProfileTarget(bot.id)
-                }} />
-            </Tooltip>
-          )}
-          {onUpdateProfile === undefined && onRename !== undefined && (
-            <Tooltip label={t('renameBot')} side="bottom" portal>
-              <Button variant="ghost" size="sm" aria-label={t('renameBot')} icon={<IconEditOutlineRegular size={14} />}
-                onClick={() => { setName(bot.name); setRenameError(false); setRenameTarget(bot.id) }} />
-            </Tooltip>
-          )}
-          {share !== undefined && <BotShareButton bot={bot} actions={share} t={t} />}
-          {memoryManager !== undefined && (
-            <Tooltip label={t('manageMemories')} side="bottom" portal>
-              <Button variant="ghost" size="sm" aria-label={t('manageMemories')} icon={<IconContextInjectionOutlineRegular size={14} />} onClick={() => { setMemoryOpen(true) }} />
-            </Tooltip>
-          )}
-          {skillManager !== undefined && (
-            <Tooltip label={t('manageSkills')} side="bottom" portal>
-              <Button variant="ghost" size="sm" aria-label={t('manageSkills')} icon={<IconSidebarSkillsOutlineRegular size={14} />} onClick={() => { setSkillsOpen(true) }} />
-            </Tooltip>
-          )}
-          {routineManager !== undefined && (
-            <Tooltip label={t('manageRoutines')} side="bottom" portal>
-              <Button variant="ghost" size="sm" aria-label={t('manageRoutines')} icon={<IconClockOutlineRegular size={14} />} onClick={() => { setRoutineOpen(true) }} />
-            </Tooltip>
-          )}
-          {onEditAvatar !== undefined && (
-            <Tooltip label={t('editAvatar')} side="bottom" portal>
-              <Button variant="ghost" size="sm" aria-label={t('editAvatar')} icon={<IconEditOutlineRegular size={14} />} onClick={onEditAvatar} />
-            </Tooltip>
-          )}
-          {bot.status !== undefined && (
-            <Tag tone={statusTone(bot.status)}>
-              <StateDot state={statusState(bot.status)} size={8} />
-              {statusLabel(bot.status, t)}
-            </Tag>
-          )}
+          <BotToolbarMenu key={bot.id} items={items} label={t('botMenu')} />
         </span>
       </header>
+      {share !== undefined && (
+        <BotShareDialog key={bot.id} bot={bot} actions={share} open={shareTarget === bot.id}
+          onClose={() => { setShareTarget(null) }} t={t} />
+      )}
+      {readGrokHistory !== undefined && (
+        <GrokHistoryDialog key={bot.id} botId={bot.id} botName={bot.name} read={readGrokHistory}
+          open={historyTarget === bot.id} onClose={() => { setHistoryTarget(null) }} t={t} />
+      )}
       {bot.status === 'working' && (bot.preview !== undefined || bot.activity !== undefined) && (
         <div className={css.activityBanner} role="status">
           <StateDot state="ongoing" size={14} />
@@ -1731,8 +1777,6 @@ export function BotRoster({
     setNewBotOpen(true)
   }
   const openAvatarEditor = (): void => {
-    /* v8 ignore next -- the avatar-editor button is rendered only in the wide header. */
-    if (!wide) expandSidebar?.()
     setAvatarEditorOpen(true)
   }
   const openNewGroup = (): void => {
@@ -1770,6 +1814,23 @@ export function BotRoster({
   const connectedAppsAction = canOpenConnectedApps
     ? openConnectedApps
     : undefined
+  const rosterActions: BotToolbarItem[] = [
+    ...(selectedBot === undefined || avatarEditor === undefined ? [] : [{
+      id: 'avatar', label: t('editAvatar'), icon: <IconEditOutlineRegular size={16} />, run: openAvatarEditor,
+    }]),
+    ...(templates === undefined || templateActions === undefined ? [] : [{
+      id: 'templates', label: t('templates'), icon: <IconSidebarSkillsOutlineRegular size={16} />,
+      run: () => { setTemplatesOpen(true) },
+    }]),
+    ...(sharedClient === undefined ? [] : [{
+      id: 'join', label: t('joinBot'), icon: <IconLinkOutlineRegular size={16} />, run: openSharedBots,
+    }]),
+    ...(!sharedOwnerAvailable && !sharedOwnerUnsupported ? [] : [{
+      id: 'create-shared-group', label: t('createSharedGroup'), icon: <IconUsersOutlineRegular size={16} />,
+      ...(sharedOwnerUnsupported ? { disabled: true, description: t('sharedOwnerSetupUnavailable') } : {}),
+      run: openSharedOwner,
+    }]),
+  ]
 
   return (
     <aside className={css.roster} aria-label={t('title')}>
@@ -1781,36 +1842,13 @@ export function BotRoster({
                 <span className={css.brandCopy}>
                   <span className={css.brandTitle}>{t('panel')}</span>
                 </span>
-                {selectedBot !== undefined && avatarEditor !== undefined && (
-                  <Tooltip label={t('editAvatar')} side="bottom" portal>
-                    <Button variant="ghost" size="sm" aria-label={t('editAvatar')} icon={<IconEditOutlineRegular size={15} />} onClick={openAvatarEditor} />
+                <div className={css.rosterToolbar}>
+                  <Tooltip label={t('newBot')} side="bottom" portal>
+                    <Button variant="ghost" size="sm" className={css.toolbarMore} aria-label={t('newBot')}
+                      icon={<IconPlusOutlineRegular size={18} />} onClick={openNewBot} />
                   </Tooltip>
-                )}
-                {templates !== undefined && templateActions !== undefined && (
-                  <Tooltip label={t('templates')} side="bottom" portal>
-                    <Button variant="ghost" size="sm" aria-label={t('templates')} icon={<IconShareOutlineRegular size={15} />} onClick={() => { setTemplatesOpen(true) }} />
-                  </Tooltip>
-                )}
-                <Button variant="ghost" size="sm" aria-label={t('newBot')} icon={<IconSidebarBotAddOutlineRegular size={16} />} onClick={openNewBot} />
-                {sharedClient !== undefined && (
-                  <>
-                    <Tooltip label={t('joinBot')} side="bottom" portal>
-                      <Button variant="ghost" size="sm" aria-label={t('joinBot')} icon={<IconShareOutlineRegular size={16} />} onClick={openSharedBots} />
-                    </Tooltip>
-                    {sharedOwnerAvailable && (
-                      <Tooltip label={t('createSharedGroup')} side="bottom" portal>
-                        <Button variant="ghost" size="sm" aria-label={t('createSharedGroup')} icon={<IconUsersOutlineRegular size={16} />} onClick={openSharedOwner} />
-                      </Tooltip>
-                    )}
-                    {sharedOwnerUnsupported && (
-                      <Tooltip label={t('sharedOwnerSetupUnavailable')} side="bottom" portal>
-                        <span>
-                          <Button variant="ghost" size="sm" aria-label={t('createSharedGroup')} title={t('sharedOwnerSetupUnavailable')} icon={<IconUsersOutlineRegular size={16} />} disabled />
-                        </span>
-                      </Tooltip>
-                    )}
-                  </>
-                )}
+                  <BotToolbarMenu items={rosterActions} label={t('rosterMenu')} />
+                </div>
               </div>
               <Input
                 /* v8 ignore next -- the CSS module always exports the search class. */
@@ -1915,52 +1953,7 @@ export function BotRoster({
                 onClick={openNewBot}
               />
             </Tooltip>
-            {sharedClient !== undefined && (
-              <>
-                <Tooltip label={t('joinBot')} side="right" delayMs={500}>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={css.botRailAction}
-                    aria-label={t('joinBot')}
-                    icon={<IconShareOutlineRegular size={18} />}
-                    onClick={openSharedBots}
-                  />
-                </Tooltip>
-                {sharedOwnerAvailable && (
-                  <Tooltip label={t('createSharedGroup')} side="right" delayMs={500}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className={css.botRailAction}
-                      aria-label={t('createSharedGroup')}
-                      icon={<IconUsersOutlineRegular size={18} />}
-                      onClick={openSharedOwner}
-                    />
-                  </Tooltip>
-                )}
-                {sharedOwnerUnsupported && (
-                  <Tooltip label={t('sharedOwnerSetupUnavailable')} side="right" delayMs={500}>
-                    <span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={css.botRailAction}
-                        aria-label={t('createSharedGroup')}
-                        title={t('sharedOwnerSetupUnavailable')}
-                        icon={<IconUsersOutlineRegular size={18} />}
-                        disabled
-                      />
-                    </span>
-                  </Tooltip>
-                )}
-              </>
-            )}
-            {templates !== undefined && templateActions !== undefined && (
-              <Tooltip label={t('templates')} side="right" delayMs={500}>
-                <Button variant="ghost" size="sm" className={css.botRailAction} aria-label={t('templates')} icon={<IconShareOutlineRegular size={17} />} onClick={() => { setTemplatesOpen(true) }} />
-              </Tooltip>
-            )}
+            <BotToolbarMenu items={rosterActions} label={t('rosterMenu')} compact />
             {visibleBots.map((bot) => {
               const status = bot.status
               const label = status === undefined ? bot.name : `${bot.name}, ${statusLabel(status, t)}`
@@ -2046,21 +2039,5 @@ export function BotRoster({
         />
       )}
     </aside>
-  )
-}
-
-function BotShareButton({ bot, actions, t }: {
-  readonly bot: BotSummary
-  readonly actions: BotShareActions
-  readonly t: BotWorkspaceViewProps['t']
-}) {
-  const [open, setOpen] = useState(false)
-  return (
-    <>
-      <Tooltip label={t('shareBot')} side="bottom" portal>
-        <Button variant="ghost" size="sm" aria-label={t('shareBot')} icon={<IconShareOutlineRegular size={15} />} onClick={() => { setOpen(true) }} />
-      </Tooltip>
-      <BotShareDialog bot={bot} actions={actions} open={open} onClose={() => { setOpen(false) }} t={t} />
-    </>
   )
 }

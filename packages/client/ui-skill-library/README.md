@@ -40,7 +40,7 @@ Open **Project learning** from the toolbar to authorize creation before any skil
 
 ### Decision settings
 
-Settings → Models includes a separate Decision footer. Choose an available response-only API model, select any declared reasoning effort and processing tier explicitly, then save the opt-in against the current configuration. Native Codex routes remain visibly unavailable. The main chat model and authority stay unchanged. Choose a registered project and query to preview candidate order deliberately; ordinary Skills or Models browsing makes no advisory model call. Results preserve deterministic candidate membership and explicit choices, and failures use deterministic order. The Host owns request, token, deadline and log limits; the preview discloses these and cannot establish model quality.
+Expand **Decision advice** under **Settings → Models** to configure the advisory model. Choose an available response-only API model, select any declared reasoning effort and processing tier, then save the opt-in. The preview runs when you choose a registered project, enter a query, and request candidate ordering. Results preserve deterministic candidate membership and explicit choices. Failures use deterministic order. The preview displays the Host request, token, deadline, and log limits.
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
