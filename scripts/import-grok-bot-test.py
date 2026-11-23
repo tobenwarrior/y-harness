@@ -25,6 +25,95 @@ class FakeConnection:
 
 
 class ImporterTests(unittest.TestCase):
+    def test_discovery_lists_source_labels_and_target_access_without_writes(self):
+        calls = []
+
+        def fake_invoke(_connection, _cookie, endpoint, **arguments):
+            calls.append((endpoint, arguments))
+            if endpoint == 'bots/list':
+                return {'bots': [{'id': 'bot-destination', 'name': 'Destination'}]}
+            if endpoint == 'bots/importGrokConnectedApps':
+                return {
+                    'updatedAt': 42,
+                    'mappings': [{
+                        'sourceIndex': 0,
+                        'sourceLabel': 'GitHub workspace',
+                        'resolution': 'unmapped',
+                    }],
+                    'changedAppIds': [],
+                    'catalogAvailable': True,
+                }
+            if endpoint == 'bots/listConnectedApps':
+                return {
+                    'bot': {'id': 'bot-destination'},
+                    'apps': [
+                        {'id': 'github', 'name': 'GitHub', 'allowed': True},
+                        {'id': 'offline', 'name': 'Offline', 'description': 'not printed', 'allowed': False},
+                        {'id': '', 'name': '', 'allowed': False},
+                    ],
+                }
+            raise AssertionError(f'unexpected endpoint {endpoint}')
+
+        with tempfile.TemporaryDirectory() as directory:
+            export = Path(directory) / 'export.json'
+            export.write_text(json.dumps({
+                'format': 'grok-bot-export',
+                'version': 1,
+                'bots': [{'name': 'Source', 'apps': ['GitHub workspace']}],
+            }), encoding='utf-8')
+            old_connect = MODULE.connect
+            old_invoke = MODULE.invoke
+            old_argv = sys.argv
+            try:
+                MODULE.connect = lambda: (FakeConnection(), 'cookie')
+                MODULE.invoke = fake_invoke
+                sys.argv = [str(MODULE_PATH), str(export), '--bot', 'Destination', '--source-name', 'Source',
+                            '--discover-connected-apps']
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    MODULE.main()
+            finally:
+                MODULE.connect = old_connect
+                MODULE.invoke = old_invoke
+                sys.argv = old_argv
+
+        self.assertEqual([call[0] for call in calls], [
+            'bots/list', 'bots/importGrokConnectedApps', 'bots/listConnectedApps',
+        ])
+        preview_request = calls[1][1]['request']
+        self.assertEqual(preview_request['mappings'], [])
+        self.assertTrue(preview_request['preview'])
+        self.assertNotIn('expectedUpdatedAt', preview_request)
+        self.assertEqual(json.loads(output.getvalue()), {
+            'mode': 'connected-app-discovery',
+            'updatedAt': 42,
+            'catalogAvailable': True,
+            'sourceApps': [{'sourceIndex': 0, 'sourceLabel': 'GitHub workspace'}],
+            'targets': [
+                {'targetServerName': 'github', 'name': 'GitHub', 'accessStatus': 'allowed'},
+                {'targetServerName': 'offline', 'name': 'Offline', 'accessStatus': 'denied'},
+                {'targetServerName': '', 'name': '', 'accessStatus': 'denied'},
+            ],
+        })
+
+    def test_discovery_rejects_apply_and_revision_before_connecting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            export = Path(directory) / 'export.json'
+            export.write_text('{}', encoding='utf-8')
+            old_connect = MODULE.connect
+            old_argv = sys.argv
+            try:
+                MODULE.connect = lambda: (_ for _ in ()).throw(AssertionError('discovery connected unexpectedly'))
+                for extra in (['--apply'], ['--expected-updated-at', '42']):
+                    sys.argv = [str(MODULE_PATH), str(export), '--bot', 'Destination',
+                                '--discover-connected-apps', *extra]
+                    with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                        MODULE.main()
+                    self.assertEqual(error.exception.code, 1)
+            finally:
+                MODULE.connect = old_connect
+                sys.argv = old_argv
+
     def test_map_requires_exact_reviewed_fields_and_unique_indexes(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'map.json'

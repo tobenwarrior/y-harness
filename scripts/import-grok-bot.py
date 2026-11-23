@@ -19,6 +19,49 @@ class ImportErrorDetail(Exception):
     """Error safe to print without printing the export or sign-in link."""
 
 
+def format_connected_app_discovery(preview, catalog):
+    """Return a credential-free source-label and target-access projection."""
+    if not isinstance(preview, dict):
+        raise ImportErrorDetail('The connected-app preview returned an unexpected response.')
+    updated_at = preview.get('updatedAt')
+    source_rows = preview.get('mappings')
+    catalog_available = preview.get('catalogAvailable')
+    if (isinstance(updated_at, bool) or not isinstance(updated_at, int) or updated_at < 0
+            or not isinstance(source_rows, list) or not isinstance(catalog_available, bool)):
+        raise ImportErrorDetail('The connected-app preview returned an unexpected response.')
+    source_apps = []
+    for row in source_rows:
+        if not isinstance(row, dict) or not isinstance(row.get('sourceIndex'), int) \
+                or isinstance(row['sourceIndex'], bool) or row['sourceIndex'] < 0 \
+                or not isinstance(row.get('sourceLabel'), str) \
+                or row['sourceLabel'] == '' or row.get('resolution') != 'unmapped':
+            raise ImportErrorDetail('The connected-app preview returned an unexpected response.')
+        source_apps.append({
+            'sourceIndex': row['sourceIndex'],
+            'sourceLabel': row['sourceLabel'],
+        })
+    if not isinstance(catalog, dict) or not isinstance(catalog.get('apps'), list):
+        raise ImportErrorDetail('The connected-app catalog returned an unexpected response.')
+    targets = []
+    for app in catalog['apps']:
+        if (not isinstance(app, dict) or not isinstance(app.get('id'), str)
+                or not isinstance(app.get('name'), str)
+                or not isinstance(app.get('allowed'), bool)):
+            raise ImportErrorDetail('The connected-app catalog returned an unexpected response.')
+        targets.append({
+            'targetServerName': app['id'],
+            'name': app['name'],
+            'accessStatus': 'allowed' if app['allowed'] else 'denied',
+        })
+    return {
+        'mode': 'connected-app-discovery',
+        'updatedAt': updated_at,
+        'catalogAvailable': catalog_available,
+        'sourceApps': source_apps,
+        'targets': targets,
+    }
+
+
 def read_connected_app_map(path):
     """Read an owner-reviewed exact connector map without inferring identities."""
     if not path.is_absolute() or not path.is_file():
@@ -110,11 +153,20 @@ def main():
     parser.add_argument('--source-name', help='Source Bot name for exports containing several Bots')
     parser.add_argument('--connected-app-map', type=Path,
                         help='Absolute JSON map for reviewed connected-app grants. This mode imports apps only.')
+    parser.add_argument('--discover-connected-apps', action='store_true',
+                        help='Read source app labels and visible target access entries without changing the Bot.')
     parser.add_argument('--expected-updated-at', type=int,
                         help='Revision printed by a reviewed connected-app preview. Required with --apply.')
     parser.add_argument('--apply', action='store_true', help='Write entries. By default, preview only.')
     options = parser.parse_args()
     try:
+        if options.discover_connected_apps:
+            if options.apply:
+                raise ImportErrorDetail('--discover-connected-apps cannot be combined with --apply.')
+            if options.connected_app_map is not None:
+                raise ImportErrorDetail('--discover-connected-apps cannot be combined with --connected-app-map.')
+            if options.expected_updated_at is not None:
+                raise ImportErrorDetail('--expected-updated-at is only valid with --apply and --connected-app-map.')
         with options.export.open('rb') as file:
             raw = file.read(MAX_DOCUMENT_BYTES + 1)
         if len(raw) > MAX_DOCUMENT_BYTES:
@@ -127,6 +179,16 @@ def main():
             matches = [bot for bot in bots if options.bot in (bot['id'], bot['name'])]
             if len(matches) != 1:
                 raise ImportErrorDetail('Choose exactly one existing destination Bot by name or id.')
+            if options.discover_connected_apps:
+                preview = invoke(connection, cookie, 'bots/importGrokConnectedApps', request={
+                    'botId': matches[0]['id'], 'document': document, 'preview': True, 'mappings': [],
+                    **({'sourceName': options.source_name} if options.source_name is not None else {}),
+                })
+                catalog = invoke(connection, cookie, 'bots/listConnectedApps', request={
+                    'botId': matches[0]['id'],
+                })
+                print(json.dumps(format_connected_app_discovery(preview, catalog), ensure_ascii=False))
+                return
             request = {'botId': matches[0]['id'], 'document': document, 'preview': not options.apply}
             if options.source_name is not None:
                 request['sourceName'] = options.source_name
