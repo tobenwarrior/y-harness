@@ -120,20 +120,14 @@ Tool results append to conversation history. Creating, listing, or deleting task
 
 #### What the model sees
 
-Due reminders enter as user-role messages with producer kind `schedule`. One-shot messages append `schedule_id_json`, `occurrence_at`, and `reminder_prompt_json` after the fixed text below; the id and prompt are JSON-encoded. Recurring batches append `reminders_json`, an array containing `schedule_id`, `occurrence_at`, and `reminder_prompt` for each latest due occurrence. The fixed text names the origin of the message; `schedule_create` still describes `prompt` to the model as content to present when the target becomes due, and `schedule_update` as new reminder content.
+Due reminders enter as user-role messages with producer kind `schedule`. One-shot messages start with `[SCHEDULE REMINDER]` and append `schedule_id_json`, `occurrence_at`, and `reminder_prompt_json` after the fixed instructions below. The id and prompt are JSON-encoded. Recurring batches start with `[SCHEDULE REMINDER BATCH]` and append `reminders_json`, an array containing `schedule_id`, `occurrence_at`, and `reminder_prompt` for each latest due occurrence. The Session records the instructions and payload together.
 
-##### One-shot framing
-
-```markdown
-[SCHEDULE REMINDER]
-This is a scheduled message from the user
-```
-
-##### Recurring batch framing
+##### Shared reminder instructions
 
 ```markdown
-[SCHEDULE REMINDER BATCH]
 This is a scheduled message from the user
+Handle the reminder prompts below as the current user requests. Use available tools and follow the existing approval policy when the work calls for them.
+Report results from this turn or explain what prevented the work. Earlier occurrences are conversation history.
 ```
 
 #### Token effect

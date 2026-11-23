@@ -25,8 +25,10 @@ const PROVIDER = 'bot-conversation-browser-test'
 const MODEL = 'reply'
 const USER_PROMPT = 'Summarize the release checklist.'
 const USER_REPLY = 'The release checklist is ready for review.'
-const SCHEDULE_PROMPT = 'Review the release checklist again.'
+const SCHEDULE_PROMPT = 'Run the fixture shell check for the release checklist.'
 const SCHEDULE_REPLY = 'Scheduled check: the release checklist is still ready.'
+const SCHEDULE_TOOL_CALL = ToolCallId('bot-conversation-scheduled-release-status')
+const SCHEDULE_TOOL_OUTPUT = 'fixture-scheduled-shell-ok'
 const WORK_NOTE = 'I will check the release status first.'
 const TOOL_LABEL = 'Read fixture release status'
 const REASONING_NOTE = 'Checking the release checklist.'
@@ -66,6 +68,7 @@ class BotConversationAdapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
   private readonly firstReply = Promise.withResolvers<undefined>()
   private toolRequested = false
+  private scheduledToolRequested = false
 
   finishFirstReply(): void {
     this.firstReply.resolve(undefined)
@@ -86,6 +89,16 @@ class BotConversationAdapter extends LlmAdapter {
       yield { type: 'block-start', index: 2, blockType: 'tool-call' }
       yield { type: 'tool-call-delta', index: 2, id: callId, name: 'bash', argumentsDelta: args }
       yield { type: 'block-end', index: 2, block: { type: 'tool-call', id: callId, name: 'bash', arguments: args } }
+      yield { type: 'usage', usage: { inputTokens: 80, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 18 } }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
+    if (scheduled && !this.scheduledToolRequested) {
+      this.scheduledToolRequested = true
+      const args = JSON.stringify({ command: `printf ${SCHEDULE_TOOL_OUTPUT}`, description: 'Run the scheduled fixture check' })
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield { type: 'tool-call-delta', index: 0, id: SCHEDULE_TOOL_CALL, name: 'bash', argumentsDelta: args }
+      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id: SCHEDULE_TOOL_CALL, name: 'bash', arguments: args } }
       yield { type: 'usage', usage: { inputTokens: 80, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 18 } }
       yield { type: 'finish', reason: { kind: 'tool-calls' } }
       return
@@ -248,8 +261,22 @@ describe.skipIf(MODE === 'record')('web e2e: Bot conversation presentation', () 
     await scaffold.ctx.schedule.create(bot.sessionId, {
       title: 'Release checklist reminder', prompt: SCHEDULE_PROMPT, after_seconds: 1,
     })
-    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(3)
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(4)
+    const scheduledRequest = adapter.requests[2]
+    if (scheduledRequest === undefined) throw new Error('the Bot received no scheduled request')
+    expect(latestUserText(scheduledRequest)).toContain('Handle the reminder prompts below as the current user requests.')
     await expect.poll(() => surface.getByText(SCHEDULE_REPLY, { exact: true }).count(), { timeout: 30_000 }).toBe(1)
+    const botSession = scaffold.ctx.sessions.get(bot.sessionId)
+    if (botSession === undefined) throw new Error('the original Bot Session is unavailable')
+    const events = botSession.snapshotEvents()
+    expect(events.filter(event => event.type === 'user/message' && event.data.source.kind === 'schedule')).toHaveLength(1)
+    const results = events.flatMap(event => event.type === 'tool/result' && event.data.message.toolCallId === SCHEDULE_TOOL_CALL
+      ? [event.data.message] : [])
+    expect(results).toHaveLength(1)
+    expect(results[0]?.isError).not.toBe(true)
+    expect(results[0]?.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'text', text: expect.stringContaining(SCHEDULE_TOOL_OUTPUT) }),
+    ]))
     const trigger = surface.locator('[data-turn-trigger]').filter({ hasText: 'Automation task' }).last()
     await expect.poll(() => trigger.count(), { timeout: 30_000 }).toBe(1)
     await expect.poll(() => trigger.getByRole('button').count()).toBeGreaterThan(0)

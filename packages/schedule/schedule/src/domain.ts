@@ -1857,8 +1857,12 @@ export function scheduleView(record: ScheduleRecord, now: number): ScheduleView 
   })
 }
 
-/** Fixed model-facing origin line shared by one-shot and recurring reminder delivery. */
-const SCHEDULED_MESSAGE_FRAMING = 'This is a scheduled message from the user'
+/** Fixed model-facing instructions shared by one-shot and recurring reminder delivery. */
+const SCHEDULED_MESSAGE_FRAMING = [
+  'This is a scheduled message from the user',
+  'Handle the reminder prompts below as the current user requests. Use available tools and follow the existing approval policy when the work calls for them.',
+  'Report results from this turn or explain what prevented the work. Earlier occurrences are conversation history.',
+].join('\n')
 
 /**
  * Render the fixed model framing for a due reminder.

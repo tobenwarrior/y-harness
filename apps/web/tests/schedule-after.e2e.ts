@@ -243,14 +243,22 @@ function requestText(options: GenerateOptions): string {
     .join('\n')
 }
 
-/** Require one assembled request to frame the reminder as a scheduled user message. */
-function expectReminderFraming(options: GenerateOptions): void {
+/** Compare the scheduled request sent to the model with the message saved in the Session. */
+function expectReminderFraming(options: GenerateOptions, handle: AgentHandle): void {
   const reminder = options.messages.find(message => (
     message.role === 'user' && message.source?.kind === 'schedule'
   ))
   expect(reminder?.role).toBe('user')
   const text = reminder?.content.find(block => block.type === 'text')?.text
   expect(text).toContain('This is a scheduled message from the user')
+  expect(text).toContain('Handle the reminder prompts below as the current user requests.')
+  expect(text).toContain('Earlier occurrences are conversation history.')
+  const deliveries = handle.agent.session.snapshotEvents().flatMap(event => (
+    event.type === 'user/message' && event.data.source.kind === 'schedule'
+      ? event.data.content.flatMap(block => block.type === 'text' ? [block.text] : [])
+      : []
+  ))
+  expect(deliveries).toContain(text)
 }
 
 /** Wait for and return one exact durable assistant reply. */
@@ -497,7 +505,7 @@ describe.skipIf(MODE === 'record')('web e2e: conversational reminders', () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-schedule-after'))
     const reminderRequest = afterAdapter.requests[0]
     if (reminderRequest === undefined) throw new Error('model did not receive the After reminder')
-    expectReminderFraming(reminderRequest)
+    expectReminderFraming(reminderRequest, afterHandle)
     const session = page.getByRole('treeitem', { name: /Scheduled After follow-up/ })
     await session.click()
     if (afterAssistantReply === undefined) throw new Error('After assistant reply was not captured')
@@ -586,7 +594,7 @@ describe.skipIf(MODE === 'record')('web e2e: conversational reminders', () => {
       expect(texts.some(text => text.includes(record.prompt))).toBe(true)
     }
     expect(everyAdapter.requests).toHaveLength(1)
-    for (const request of everyAdapter.requests) expectReminderFraming(request)
+    for (const request of everyAdapter.requests) expectReminderFraming(request, everyHandle)
     const active = await scaffold.ctx.schedule.list({ sessionId: everyHandle.agent.id })
     expect(active).toHaveLength(2)
     for (const record of active) {
@@ -722,7 +730,7 @@ describe.skipIf(MODE === 'record')('web e2e: conversational reminders', () => {
     expect(atAdapter.requests).toHaveLength(4)
     const reminderRequest = atAdapter.requests[3]
     if (reminderRequest === undefined) throw new Error('model did not receive the At reminder')
-    expectReminderFraming(reminderRequest)
+    expectReminderFraming(reminderRequest, atHandle)
 
     const session = page.getByRole('treeitem', { name: /Explicit local-time reminder/ })
     await session.click()
