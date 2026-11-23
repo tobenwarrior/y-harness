@@ -8,6 +8,8 @@ import type {
   BotGroupImageAdmissionRequest,
   BotGrokHistoryView,
   BotGrokHistoryRequest,
+  BotLibraryRequest,
+  BotLibraryValue,
   BotAvatar,
   BotAvatarUpdateValue,
   BotConnectedAppAccessRequest,
@@ -87,6 +89,7 @@ import type {
   BotSharedGroupDeliveryFenceView,
   BotPrincipalId as BotPrincipalIdType,
 } from '@yharness/bots/client'
+import type { ReadBotLibrary } from './BotLibraryDialog.tsx'
 import type {
   AvatarGenerationRequest,
   AvatarGenerationCommitValue,
@@ -117,6 +120,7 @@ export interface BotWorkspaceRemote {
 
   rename(request: { readonly botId: BotIdType; readonly name: string }): Promise<RemoteResult<{ readonly bot: BotView }>>
   updateProfile?: (request: BotProfileUpdateRequest) => Promise<RemoteResult<BotProfileUpdateValue>>
+  readLibrary?: (request: BotLibraryRequest) => Promise<RemoteResult<BotLibraryValue>>
   readGrokHistory?: (request: BotGrokHistoryRequest) => Promise<RemoteResult<BotGrokHistoryView | null>>
   updateOrganization?: (request: BotOrganizationUpdateRequest) => Promise<RemoteResult<BotOrganizationUpdateValue>>
 
@@ -292,6 +296,8 @@ export interface BotWorkspaceFace {
   readonly retryGroup: () => void
   readonly loadConnectedApps?: (botId: string) => Promise<readonly BotConnectedAppAccess[]>
   readonly setConnectedAppAccess?: (botId: string, appId: string, allowed: boolean) => Promise<void>
+  /** Read one page of Bot-delivered files. */
+  readonly readLibrary?: ReadBotLibrary
   readonly readGrokHistory?: (botId: string) => Promise<BotGrokHistoryView | null>
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>
   readonly avatarEditor?: BotAvatarEditorActions
@@ -573,6 +579,14 @@ export class BotWorkspaceController {
     return existing
   }
 
+  private readonly readLibraryPage: ReadBotLibrary = async (id, before) => {
+    const read = this.remote.readLibrary
+    if (read === undefined) throw new Error('The Bot Library is unavailable.')
+    const result = await read({ botId: brandString<BotIdType>(id), ...(before === undefined ? {} : { before }) })
+    if (!result.ok) throw new Error(result.error.message)
+    return result.value
+  }
+
   /** Build the narrow data-and-callback face consumed by the panel.
    * @returns The panel-facing roster state and callbacks.
    */
@@ -642,6 +656,7 @@ export class BotWorkspaceController {
       ...(this.remote.setConnectedAppAccess === undefined
         ? {}
         : { setConnectedAppAccess: (id: string, appId: string, allowed: boolean) => this.setConnectedAppAccess(id, appId, allowed) }),
+      ...(this.remote.readLibrary === undefined ? {} : { readLibrary: this.readLibraryPage }),
       ...(readGrokHistory === undefined ? {} : { readGrokHistory: async (id: string) => {
         const result = await readGrokHistory({ botId: brandString<BotIdType>(id) })
         if (!result.ok) throw new Error(result.error.message)

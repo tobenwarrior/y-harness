@@ -320,6 +320,17 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('readGrokHistory') async readGrokHistory(request: BotGrokHistoryRequest, signal?: AbortSignal): Promise<BotGrokHistoryView | null>
 
 /**
+ * Read a bounded owner-only Library page from durable Bot-presented files.
+ *
+ * Only `deliverables/presented` events are included. User uploads, imported
+ * Grok attachments, and arbitrary workspace files stay outside this view.
+ * @param request - Bot identity, page size, and optional older-item cursor.
+ * @param signal - Cancellation for storage reads.
+ * @returns Newest-first safe file labels and existing download coordinates.
+ */
+@Remote('readLibrary') async readLibrary(request: BotLibraryRequest, signal?: AbortSignal): Promise<BotLibraryValue>
+
+/**
  * Store a reviewed transcript without delivering it to the Bot or changing its Session.
  * @param request - Existing Bot and versioned transcript JSON.
  * @returns The total number of stored records across the primary and supplemental sources.

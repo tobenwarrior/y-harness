@@ -11,6 +11,7 @@ import { BotId } from '@yharness/bots/client'
 import { AttachmentId } from '@yharness/attachment'
 import { brandString } from '@yharness/brand'
 import { TestRemote } from '@yharness/client-test-runtime'
+import type { PresentedFileDownloads } from '@yharness/client-ui-deliverables/client'
 import type { InputTriggerPick, InputTriggerSource } from '@yharness/client-ui-input-trigger/client'
 import { SessionId } from '@yharness/session/types'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -274,6 +275,28 @@ describe('ui-bots composition', () => {
     expect(fixture.registered).toHaveLength(0)
     expect(fixture.inputSources).toHaveLength(0)
     expect(fixture.release).toHaveBeenCalled()
+  })
+
+  it('uses the attached download service with the exact delivery identity', async () => {
+    const fixture = await boot()
+    try {
+      const main = fixture.registered.find(entry => entry.options.name === 'main')!
+      expect(main.inject?.()).toHaveProperty('downloadLibraryFile', undefined)
+      const download = vi.fn<PresentedFileDownloads['url']>().mockReturnValue('api/present.download?fixture')
+      class DownloadService implements PresentedFileDownloads {
+        url(sessionId: SessionId, eventSeq: number, fileIndex: number): string {
+          expect(this).toBe(service)
+          return download(sessionId, eventSeq, fileIndex)
+        }
+      }
+      const service = new DownloadService()
+      fixture.ctx.provide('presentedFileDownloads', service)
+      const face = main.inject?.() as { readonly downloadLibraryFile: PresentedFileDownloads['url'] }
+      expect(face.downloadLibraryFile(fixture.currentBot.sessionId, 7, 3)).toBe('api/present.download?fixture')
+      expect(download.mock.calls).toEqual([[fixture.currentBot.sessionId, 7, 3]])
+    } finally {
+      await fixture.fiber.dispose()
+    }
   })
 
   it('opens available workspace tabs and accepts Computer mentions only for the selected Bot', async () => {

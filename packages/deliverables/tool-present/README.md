@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Use `present` to declare final files accessible through the Session filesystem, including files created through shell commands. Users can preview the result, download it from the workspace, or open the source on a Host desktop. The tool records paths and optional descriptions without copying file contents.
+Use `present` to declare final files accessible through the Session filesystem, including files created through shell commands. Users can preview the result, download it from the workspace, or open the source on a Host desktop. The tool records paths and optional descriptions without copying file contents. A named Bot’s Library uses these delivery records to offer the same authenticated download.
 
 ## Table of Contents
 

@@ -16,6 +16,7 @@ import SessionStore, { Session, SessionId, SessionSeq } from '@yharness/session'
 import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
 import SessionProjectionRegistry from '@yharness/session-projection'
 import type { SessionEvent } from '@yharness/session'
+import type {} from '@yharness/session-query'
 import type { ContextFormed } from '@yharness/llm'
 import type { UserMessage } from '@yharness/llm'
 import type { ToolSchema } from '@yharness/llm'
@@ -589,8 +590,8 @@ async function createHarness({
   }
   if (!options.realAgent) ctx.provide('sessions', sessions as never)
   ctx.provide('sessionController', { create, inspect, resolveAgent } as never)
-  if (!options.realAgent) ctx.provide('sessionPersistence', {} as never)
   options.beforeService?.(ctx)
+  if (!options.realAgent && ctx.get('sessionPersistence') === undefined) ctx.provide('sessionPersistence', {} as never)
   if (options.connection !== undefined) ctx.provide('connection', options.connection as never)
   if (scheduleEnabled) await ctx.plugin(ScheduleService)
   if (scheduleEnabled) await Promise.all(agents.map(agent => agent.ctx.inject(
@@ -16464,6 +16465,80 @@ describe('durable Bot roster', () => {
       expect(release).toHaveBeenCalledOnce()
     } finally {
       await preset.dispose()
+      await close(h.ctx)
+    }
+  })
+
+  it('reads a cold Bot Library through one live-preferred observation per page', async () => {
+    let storedEvents: readonly {
+      readonly seq: number
+      readonly time: number
+      readonly type: string
+      readonly data: unknown
+    }[] = []
+    const disposeObservation = vi.fn()
+    const observeSession = vi.fn(async () => ({
+      events: storedEvents,
+      [Symbol.dispose]: disposeObservation,
+    }))
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('sessionQuery', { observeSession } as never)
+      },
+    })
+    try {
+      await expect(h.service.readLibrary(null as never)).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.readLibrary({ botId: undefined as never })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.readLibrary({ botId: BotId('bot-library-cold'), limit: 0 })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.readLibrary({ botId: BotId('bot-library-cold'), before: { eventSeq: -1, fileIndex: 0 } }))
+        .rejects.toMatchObject({ code: 'gateway/bad-request' })
+      const created = await h.service.create({ id: BotId('bot-library-cold'), name: 'Cold Library', cwd: '/tmp' })
+      storedEvents = [
+        { seq: 0, time: 10, type: 'deliverables/presented', data: { files: [{ path: 'old.txt' }] } },
+        { seq: 1, time: 11, type: 'deliverables/presented', data: { files: [{ path: 'new.txt' }] } },
+      ]
+      await expect(h.service.readLibrary({ botId: created.bot.id, limit: 1 })).resolves.toMatchObject({
+        items: [{ eventSeq: 1, fileIndex: 0, label: 'new.txt' }],
+        nextBefore: { eventSeq: 1, fileIndex: 0 },
+      })
+      const request = { botId: created.bot.id, limit: 1, before: { eventSeq: 1, fileIndex: 0 } }
+      const active = new AbortController()
+      await expect(h.service.readLibrary(request, active.signal))
+        .resolves.toMatchObject({ items: [{ eventSeq: 0, label: 'old.txt' }] })
+      expect(observeSession).toHaveBeenNthCalledWith(1, created.bot.sessionId, { projectionMode: 'none' })
+      expect(observeSession).toHaveBeenNthCalledWith(2, created.bot.sessionId, { projectionMode: 'none', signal: active.signal })
+      const interrupted = new AbortController()
+      observeSession.mockImplementationOnce(async () => {
+        interrupted.abort()
+        return { events: storedEvents, [Symbol.dispose]: disposeObservation }
+      })
+      await expect(h.service.readLibrary(request, interrupted.signal)).rejects.toMatchObject({ name: 'AbortError' })
+      expect(observeSession).toHaveBeenCalledTimes(3)
+      expect(disposeObservation).toHaveBeenCalledTimes(3)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('does not expose another owner’s Bot Library', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool, undefined, undefined, [], new Map(), new Map(), { ownerId: 'library-owner-a' })
+    const created = await first.service.create({ id: BotId('bot-library-private'), name: 'Private Library', cwd: '/tmp' })
+    await close(first.ctx)
+    const second = await harness(pool, undefined, undefined, [], new Map(), new Map(), { ownerId: 'library-owner-b' })
+    try {
+      await expect(second.service.readLibrary({ botId: created.bot.id })).rejects.toMatchObject({ code: 'bot/not-found' })
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('fails closed when a cold Bot has no bounded storage reader', async () => {
+    const h = await harness()
+    try {
+      const created = await h.service.create({ id: BotId('bot-library-no-storage'), name: 'No Storage Library', cwd: '/tmp' })
+      await expect(h.service.readLibrary({ botId: created.bot.id })).rejects.toMatchObject({ code: 'gateway/internal' })
+    } finally {
       await close(h.ctx)
     }
   })
