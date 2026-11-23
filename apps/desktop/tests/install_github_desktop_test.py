@@ -99,6 +99,16 @@ class InstallerTest(unittest.TestCase):
                 self.assertTrue(path.is_symlink())
                 self.assertFalse(self.calls)
 
+    def test_existing_launcher_is_never_replaced(self):
+        app = self.home / "Applications/Y Harness GitHub.app"
+        app.mkdir(parents=True)
+        marker = app / "Contents"
+        marker.write_text("installed launcher")
+        with self.assertRaises(FileExistsError):
+            installer.install(self.home, self.source, self.compile, resolve_tool=self.which)
+        self.assertEqual(marker.read_text(), "installed launcher")
+        self.assertFalse(self.calls)
+
     def test_parent_symlink_and_source_symlink_are_rejected(self):
         (self.home / "Applications").symlink_to(self.root)
         with self.assertRaises(ValueError):

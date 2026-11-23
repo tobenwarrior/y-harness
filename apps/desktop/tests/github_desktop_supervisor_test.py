@@ -146,12 +146,18 @@ class Tests(unittest.TestCase):
     def test_open_url_admission_matches_desktop_transport_routes(self):
         valid = 'dsh://bots/prompt?id=bot-scout&text=Review%20the%20queue'
         self.assertEqual(supervisor.first_admitted_open_url(['https://example.test', valid]), valid)
+        chat = 'dsh://bots/open?id=bot-scout'
+        self.assertEqual(supervisor.first_admitted_open_url([chat]), chat)
         self.assertEqual(supervisor.first_admitted_open_url(['dsh://open/']), 'dsh://open/')
         for invalid in (
             'dsh://bots/prompt?text=',
             'dsh://bots/prompt?text=ok&text=again',
             'dsh://bots/prompt?text=ok&unknown=value',
             'dsh://bots/prompt?text=ok#fragment',
+            'dsh://bots/open?id=',
+            'dsh://bots/open?id=bot-scout&id=bot-other',
+            'dsh://bots/open?id=bot-scout&text=ignored',
+            'dsh://bots/open?unknown=value',
             'dsh://open?text=ok',
         ):
             with self.subTest(invalid=invalid):
