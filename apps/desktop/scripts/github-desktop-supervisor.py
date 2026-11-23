@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import threading
+from urllib.parse import parse_qsl, urlsplit
 
 _spec = importlib.util.spec_from_file_location('github_source_updater', Path(__file__).with_name('github-source-updater.py'))
 _engine = importlib.util.module_from_spec(_spec)
@@ -20,12 +21,57 @@ _spec.loader.exec_module(_engine)
 SUPPORT = Path.home() / 'Library/Application Support/Y Harness GitHub'
 COMMIT = re.compile(r'[0-9a-f]{40}\Z')
 RESTART_REQUEST = 'restart-request.json'
+DESKTOP_OPEN_URL_LIMIT = 16384
 ACTIVATE_SCRIPT = '''use framework "AppKit"
 on run argv
     set appPid to (item 1 of argv) as integer
     set targetApp to current application's NSRunningApplication's runningApplicationWithProcessIdentifier:appPid
     if targetApp is not missing value then targetApp's activateWithOptions:2
 end run'''
+
+
+def admitted_open_url(value):
+    """Keep only routes already admitted by the desktop URL transport."""
+    if not isinstance(value, str) or not value.startswith('dsh://') or len(value) > DESKTOP_OPEN_URL_LIMIT:
+        return None
+    try:
+        source = urlsplit(value)
+        port = source.port
+    except ValueError:
+        return None
+    if source.scheme != 'dsh' or source.username or source.password or port is not None or source.fragment:
+        return None
+    if source.hostname == 'open' and source.path in ('', '/') and not source.query:
+        return value
+    if source.hostname != 'bots' or source.path != '/prompt':
+        return None
+    if len(source.query) + 1 > DESKTOP_OPEN_URL_LIMIT:
+        return None
+    try:
+        pairs = parse_qsl(source.query, keep_blank_values=True, strict_parsing=True)
+    except ValueError:
+        return None
+    seen = set()
+    has_text = False
+    for key, query_value in pairs:
+        if key not in ('id', 'text') or key in seen:
+            return None
+        seen.add(key)
+        if key == 'text':
+            if query_value == '':
+                return None
+            has_text = True
+    return value if has_text else None
+
+
+def first_admitted_open_url(values):
+    """Return the first admitted route without logging or retaining rejected input."""
+    for value in values:
+        admitted = admitted_open_url(value)
+        if admitted is not None:
+            return admitted
+    return None
+
 
 def private_dir(path):
     path = Path(path).absolute()
@@ -247,7 +293,8 @@ class Supervisor:
                 current = commit
             return current, activated
 
-    def run_once(self, on_started=None):
+    def run_once(self, on_started=None, *, open_url=None):
+        open_url = admitted_open_url(open_url) if open_url is not None else None
         commit = self.prepare()
         home = private_dir(self.support / 'data/home')
         user_data = private_dir(self.support / 'data/electron-user-data')
@@ -258,17 +305,22 @@ class Supervisor:
                     'DSH_DESKTOP_GITHUB_RESTART': str(self.updater.root / RESTART_REQUEST),
                     'DSH_DESKTOP_GITHUB_BUILD_COMMIT': commit,
                     'DSH_DESKTOP_GITHUB_MANAGED': '1', 'DSH_DESKTOP_DISABLE_INSPECTORS': '1', 'DSH_DESKTOP_OPEN_DEVTOOLS': '0'})
+        command = [self.config['node'], self.config['pnpm'], 'run', 'start:desktop']
+        if open_url is not None:
+            command.extend(['--', open_url])
         with self.updater.run_guard():
-            child = self.popen([self.config['node'], self.config['pnpm'], 'run', 'start:desktop'],
+            child = self.popen(command,
                                cwd=str(self.updater.root / 'versions' / commit), env=env,
                                stdin=subprocess.DEVNULL, close_fds=True)
             if on_started is not None:
                 on_started()
             return child.wait()
 
-    def serve(self):
+    def serve(self, *, open_url=None):
         # Initial bootstrap must complete before the poller can use the updater.
+        open_url = admitted_open_url(open_url) if open_url is not None else None
         commit = self.prepare()
+        pending_open_url = open_url
         while True:
             worker = threading.Thread(target=self.poll_loop, daemon=True)
             started = False
@@ -283,7 +335,10 @@ class Supervisor:
                     log_error('update polling could not start')
 
             try:
-                result = self.run_once(start_worker)
+                result = self.run_once(start_worker, open_url=pending_open_url)
+                # An external link is delivered to only the first process start;
+                # update restarts must not replay a user prompt.
+                pending_open_url = None
             finally:
                 stop_requested = self.stop.is_set()
                 self.stop.set()
@@ -304,7 +359,8 @@ class Supervisor:
             self.stop = threading.Event()
 
 
-def focus_existing(support, *, owner_finder=None):
+def focus_existing(support, *, owner_finder=None, open_url=None):
+    open_url = admitted_open_url(open_url) if open_url is not None else None
     root = Path(support) / 'managed'
     commit = current_commit(root)
     if commit is None:
@@ -331,6 +387,11 @@ def focus_existing(support, *, owner_finder=None):
     user_data = Path(support) / 'data/electron-user-data'
     pid = owner_finder(str(executable), str(app_root), str(user_data))
     if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+        if open_url is not None:
+            subprocess.Popen([str(executable), f'--user-data-dir={user_data}', str(app_root), open_url],
+                             cwd=str(app_root), stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True, close_fds=True)
         subprocess.run(['/usr/bin/osascript', '-e', ACTIVATE_SCRIPT, str(pid)], stdin=subprocess.DEVNULL,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
 
@@ -340,7 +401,9 @@ def main(argv=None):
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--start', action='store_true')
     group.add_argument('--serve', action='store_true')
+    parser.add_argument('--open-url', action='append', default=[])
     args = parser.parse_args(argv)
+    open_url = first_admitted_open_url(args.open_url)
     try:
         support = private_dir(SUPPORT)
         if args.start:
@@ -350,7 +413,10 @@ def main(argv=None):
                 info = os.fstat(fd)
                 if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_nlink != 1:
                     raise ValueError('invalid log file')
-                subprocess.Popen([sys.executable, str(Path(__file__).absolute()), '--serve'],
+                child = [sys.executable, str(Path(__file__).absolute()), '--serve']
+                if open_url is not None:
+                    child.extend(['--open-url', open_url])
+                subprocess.Popen(child,
                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                  stderr=fd, start_new_session=True, close_fds=True)
             finally:
@@ -360,7 +426,10 @@ def main(argv=None):
         try:
             stack.enter_context(supervisor_lock(support))
         except BlockingIOError:
-            focus_existing(support)
+            if open_url is None:
+                focus_existing(support)
+            else:
+                focus_existing(support, open_url=open_url)
             return 0
         with stack:
             config = load_config(support)
@@ -373,7 +442,7 @@ def main(argv=None):
                          [pnpm, '--filter', '@yharness/desktop', 'run', 'prepare:primary-runtime']],
                 runner=lambda argv, cwd, timeout: runtime_run(argv, cwd, timeout, config, cancel))
             updater.bootstrap()
-            return Supervisor(updater, support, config, cancel=cancel).serve()
+            return Supervisor(updater, support, config, cancel=cancel).serve(open_url=open_url)
     except Exception:
         log_error('supervisor failed')
         return 1

@@ -2,12 +2,16 @@
 """Install the separate GitHub launcher; never modifies an existing installation."""
 import json
 import os
+import plistlib
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+
+LSREGISTER = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 
 def applescript_string(value):
@@ -21,13 +25,55 @@ def launcher_source(updater):
     path = applescript_string(str(updater))
     return '''use framework "Foundation"
 use scripting additions
-on run
+on run argv
+    my startSupervisor(argv)
+end run
+-- GURLGURL is the macOS open-location Apple event.
+on «event GURLGURL» openedURL
+    my startSupervisor({openedURL as text})
+end «event GURLGURL»
+on startSupervisor(opened)
+    set taskArguments to {%s, "--start"}
+    repeat with value in opened
+        set valueText to value as text
+        if valueText starts with "dsh://" then
+            set end of taskArguments to "--open-url"
+            set end of taskArguments to valueText
+        end if
+    end repeat
     set task to current application's NSTask's alloc()'s init()
     task's setLaunchPath:"/usr/bin/python3"
-    task's setArguments:{%s, "--start"}
+    task's setArguments:taskArguments
     task's |launch|()
-end run
+end startSupervisor
 ''' % path
+
+
+def register_dsh_scheme(bundle):
+    """Add the stable wrapper's URL type without changing its signed carrier."""
+    plist = Path(bundle) / "Contents" / "Info.plist"
+    if plist.is_symlink() or not plist.is_file():
+        raise ValueError("compiled launcher is missing a regular Info.plist")
+    try:
+        values = plistlib.loads(plist.read_bytes())
+    except (OSError, plistlib.InvalidFileException, ValueError) as exc:
+        raise ValueError("compiled launcher has an invalid Info.plist") from exc
+    if not isinstance(values, dict):
+        raise ValueError("compiled launcher has an invalid Info.plist")
+    url_types = values.get("CFBundleURLTypes", [])
+    if not isinstance(url_types, list):
+        raise ValueError("compiled launcher has invalid URL types")
+    for entry in url_types:
+        schemes = entry.get("CFBundleURLSchemes") if isinstance(entry, dict) else None
+        if isinstance(schemes, list) and "dsh" in schemes:
+            return
+    url_types.append({
+        "CFBundleURLName": "Y Harness",
+        "CFBundleURLSchemes": ["dsh"],
+        "CFBundleTypeRole": "Viewer",
+    })
+    values["CFBundleURLTypes"] = url_types
+    plist.write_bytes(plistlib.dumps(values, fmt=plistlib.FMT_BINARY))
 
 
 def directory(path):
@@ -42,7 +88,7 @@ def directory(path):
             raise ValueError(f"not a real directory: {part}")
 
 
-def install(home, source, run=subprocess.run, *, resolve_tool=shutil.which):
+def install(home, source, run=subprocess.run, *, resolve_tool=shutil.which, register=subprocess.run):
     home = Path(home).absolute()
     source = Path(source)
     app = home / "Applications" / "Y Harness GitHub.app"
@@ -94,6 +140,7 @@ def install(home, source, run=subprocess.run, *, resolve_tool=shutil.which):
     with tempfile.TemporaryDirectory(prefix="launcher-", dir=support) as tmp:
         compiled = Path(tmp) / "launcher.app"
         run(["/usr/bin/osacompile", "-o", str(compiled), "-e", script], check=True)
+        register_dsh_scheme(compiled)
         app.mkdir(mode=0o700)
         for child in compiled.iterdir():
             target = app / child.name
@@ -103,6 +150,12 @@ def install(home, source, run=subprocess.run, *, resolve_tool=shutil.which):
                 shutil.copytree(child, target, symlinks=True)
             else:
                 shutil.copy2(child, target, follow_symlinks=False)
+    # Tests inject the compiler runner and do not have a real Launch Services
+    # database. Registration is best-effort because a fresh macOS profile can
+    # temporarily reject a scan; opening the wrapper registers it again.
+    if sys.platform == "darwin" and (run is subprocess.run or register is not subprocess.run):
+        register([LSREGISTER, "-f", str(app)], check=False,
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return app
 
 

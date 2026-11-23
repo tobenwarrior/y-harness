@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import plistlib
 from pathlib import Path
 import subprocess
 import sys
@@ -8,6 +9,7 @@ import threading
 import time
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "install-github-desktop.py"
 spec = importlib.util.spec_from_file_location("github_installer", SCRIPT)
@@ -36,12 +38,16 @@ class InstallerTest(unittest.TestCase):
             tool.write_text("tool")
             tool.chmod(0o700)
         self.calls = []
+        self.registration_calls = []
 
     def compile(self, args, check):
         self.calls.append((args, check))
         app = Path(args[args.index("-o") + 1])
         (app / "Contents").mkdir(parents=True)
-        (app / "Contents" / "Info.plist").write_text("compiled")
+        (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps({"CFBundleName": "Y Harness"}))
+
+    def register(self, args, check, **kwargs):
+        self.registration_calls.append((args, check, kwargs))
 
     def test_install_and_safe_applescript_arguments(self):
         app = installer.install(self.home, self.source, self.compile, resolve_tool=self.which)
@@ -57,14 +63,29 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(updater.stat().st_mode & 0o777, 0o600)
         self.assertEqual(updater.parent.stat().st_mode & 0o777, 0o700)
         self.assertTrue((app / "Contents/Info.plist").is_file())
+        values = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+        self.assertEqual(values["CFBundleURLTypes"], [{
+            "CFBundleTypeRole": "Viewer",
+            "CFBundleURLName": "Y Harness",
+            "CFBundleURLSchemes": ["dsh"],
+        }])
         args, check = self.calls[0]
         self.assertTrue(check)
         self.assertEqual(args[0], "/usr/bin/osacompile")
         script = args[args.index("-e") + 1]
         self.assertIn(installer.applescript_string(str(bootstrap)), script)
         self.assertIn('"--start"', script)
+        self.assertIn("GURLGURL", script)
+        self.assertIn('"--open-url"', script)
         self.assertIn("NSTask", script)
         self.assertNotIn("do shell script", script)
+
+    def test_registers_stable_wrapper_with_launch_services_on_macos(self):
+        with mock.patch.object(installer.sys, "platform", "darwin"):
+            installer.install(self.home, self.source, self.compile, resolve_tool=self.which, register=self.register)
+        self.assertEqual(self.registration_calls, [([
+            installer.LSREGISTER, "-f", str(self.home / "Applications/Y Harness GitHub.app")
+        ], False, {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL})])
 
     def test_collisions_include_dangling_symlinks(self):
         for relative in ("Applications/Y Harness GitHub.app", "Library/Application Support/Y Harness GitHub"):
@@ -129,16 +150,18 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(marker.read_text(), "--start")
     @unittest.skipUnless(sys.platform == "darwin", "AppleScript compiler is macOS-only")
     def test_real_installer_builds_a_separate_app_bundle(self):
-        app = installer.install(self.home, self.source, resolve_tool=self.which)
+        app = installer.install(self.home, self.source, resolve_tool=self.which, register=self.register)
         self.assertTrue((app / "Contents/Info.plist").is_file())
         self.assertTrue((app / "Contents/MacOS/applet").is_file())
     @unittest.skipUnless(sys.platform == "darwin", "AppleScript compiler is macOS-only")
     def test_documented_command_installs_into_an_isolated_home(self):
-        environment = {**os.environ, "HOME": str(self.home), "PATH": str(self.root) + os.pathsep + "/usr/bin:/bin"}
+        home = self.root / "isolated-home"
+        home.mkdir()
+        environment = {**os.environ, "HOME": str(home), "PATH": str(self.root) + os.pathsep + "/usr/bin:/bin"}
         result = subprocess.run([sys.executable, str(SCRIPT)], env=environment, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Installed", result.stdout)
-        self.assertTrue((self.home / "Applications/Y Harness GitHub.app/Contents/Info.plist").is_file())
+        self.assertTrue((home / "Applications/Y Harness GitHub.app/Contents/Info.plist").is_file())
 
 
 if __name__ == "__main__":
