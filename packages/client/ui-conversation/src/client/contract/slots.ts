@@ -398,6 +398,8 @@ export interface ComposerBarOwnerProps {
   /** Open the Workspace picker from the inert composer surface. */
   onRequestWorkspace?: () => void
   placeholder?: string
+  /** Idle input copy when no workspace, plan, or queue hint takes precedence. */
+  defaultPlaceholder?: string
   /** Optional content rendered above the composer surface. */
   accessory?: ReactNode
 }
