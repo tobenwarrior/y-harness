@@ -243,9 +243,7 @@ export function readBotGrokLibraryPage(
   let olderPositionExists = false
   let oldestScanned: BotGrokLibraryCursor | undefined
 
-  outer: for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
-    const candidate = messages[messageIndex]
-    if (candidate === undefined) continue
+  outer: for (const candidate of messages) {
     if (before !== undefined && messageOrderAgainstCursor(candidate, before) < 0) continue
     if (scannedMessages >= BOT_GROK_LIBRARY_MAX_SCAN_MESSAGES) {
       scanTruncated = true

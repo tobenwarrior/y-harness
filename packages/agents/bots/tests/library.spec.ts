@@ -5,7 +5,7 @@ import {
   type BotLibraryEvent,
   type BotLibraryEventReader,
 } from '../src/library.ts'
-import { readBotGrokLibraryPage } from '../src/grok-library.ts'
+import { listBotGrokLibraryAttachmentPositions, readBotGrokLibraryPage } from '../src/grok-library.ts'
 import { readLibraryLinks } from '../src/library-links.ts'
 import { BotId, type BotGrokHistoryArchive } from '../src/types.ts'
 import { SessionId } from '@yharness/session'
@@ -222,7 +222,7 @@ describe('Imported Grok Bot Library projection', () => {
     }],
   }
 
-  it('projects only bounded links and verified attachment positions with explicit provenance', () => {
+  it('projects only bounded links and verified attachment positions with their archive source', () => {
     const page = readBotGrokLibraryPage(BotId('bot-imported-library'), archive, [
       { sourceId: 'primary', sourceSequence: 2 },
       { sourceId: 'builder', sourceSequence: 0 },
@@ -312,6 +312,109 @@ describe('Imported Grok Bot Library projection', () => {
     }, [], 1)
     expect(dated.items[0]).toMatchObject({ sourceId: 'builder', sourceSequence: 1, createdAt: 2_001 })
     expect(dated.nextBefore).toMatchObject({ sourceId: 'builder', sourceSequence: 1, createdAt: 2_001 })
+  })
+
+  it('lists attachment candidates and projects version-one archives without source metadata', () => {
+    const legacy: BotGrokHistoryArchive = {
+      source: 'grok-bot', version: 1, firstCachedSequence: 1,
+      messages: [
+        { sourceSequence: 1, role: 'assistant', text: '[Older](https://legacy.example/older)', timestampMs: 1_000 },
+        { sourceSequence: 2, role: 'assistant', text: '[Newer](https://legacy.example/newer)', timestampMs: 1_000 },
+      ],
+    }
+    expect(listBotGrokLibraryAttachmentPositions(legacy)).toEqual([])
+    expect(readBotGrokLibraryPage(BotId('bot-imported-library'), legacy, [], 10).items
+      .flatMap(item => item.category === 'link' ? [item.url] : [])).toEqual([
+      'https://legacy.example/newer', 'https://legacy.example/older',
+    ])
+
+    const sourceArchive: BotGrokHistoryArchive = {
+      ...archive,
+      sources: [
+        { id: 'z-source', label: 'Z source', firstCachedSequence: 0, messages: [
+          { sourceSequence: 0, role: 'attachment', text: 'z.txt', timestampMs: null },
+        ] },
+        { id: 'a-source', label: 'A source', firstCachedSequence: 0, messages: [
+          { sourceSequence: 0, role: 'attachment', text: 'a.txt', timestampMs: null },
+        ] },
+      ],
+    }
+    expect(listBotGrokLibraryAttachmentPositions(sourceArchive)).toEqual([
+      { sourceId: 'primary', sourceSequence: 2 },
+      { sourceId: 'a-source', sourceSequence: 0 },
+      { sourceId: 'z-source', sourceSequence: 0 },
+    ])
+  })
+
+  it('rejects malformed attachment labels and truncates long safe labels', () => {
+    const malformed: BotGrokHistoryArchive = {
+      source: 'grok-bot', version: 2, firstCachedSequence: 0,
+      messages: [
+        { sourceSequence: 0, role: 'attachment', text: '', timestampMs: 0 },
+        { sourceSequence: 1, role: 'attachment', text: 'a'.repeat(256), timestampMs: 1 },
+        { sourceSequence: 2, role: 'attachment', text: '\uD800', timestampMs: 2 },
+        { sourceSequence: 3, role: 'attachment', text: 'line\nbreak', timestampMs: 3 },
+        { sourceSequence: 4, role: 'attachment', text: 'a'.repeat(161), timestampMs: 4 },
+      ],
+    }
+    const available = malformed.messages.map(message => ({ sourceId: 'primary', sourceSequence: message.sourceSequence }))
+    const page = readBotGrokLibraryPage(BotId('bot-imported-library'), malformed, available, 10)
+    expect(page.items).toHaveLength(1)
+    expect(page.items[0]).toMatchObject({ sourceSequence: 4, category: 'file', label: `${'a'.repeat(159)}…` })
+  })
+
+  it('supports coordinate-only cursors and keeps a bounded page after truncation', () => {
+    const coordinatePage = readBotGrokLibraryPage(BotId('bot-imported-library'), archive, [
+      { sourceId: 'primary', sourceSequence: 2 },
+      { sourceId: 'builder', sourceSequence: 0 },
+    ], 10, { sourceId: 'primary', sourceSequence: 3, itemIndex: 1 })
+    expect(coordinatePage.items.map(item => [item.sourceId, item.sourceSequence, item.itemIndex])).toEqual([
+      ['builder', 1, 0], ['primary', 3, 0], ['primary', 2, 0], ['primary', 1, 0], ['builder', 0, 0],
+    ])
+
+    const dense: BotGrokHistoryArchive = {
+      source: 'grok-bot', version: 2, firstCachedSequence: 0,
+      messages: [
+        { sourceSequence: 0, role: 'assistant', text: '[Newest](https://dense.example/)', timestampMs: 1_000 },
+        ...Array.from({ length: 256 }, (_, index) => ({
+          sourceSequence: index + 1, role: 'user' as const, text: `message-${index + 1}`, timestampMs: 999 - index,
+        })),
+      ],
+    }
+    const bounded = readBotGrokLibraryPage(BotId('bot-imported-library'), dense, [], 1)
+    expect(bounded.items).toHaveLength(1)
+    expect(bounded.nextBefore).toMatchObject({ sourceId: 'primary', sourceSequence: 0, itemIndex: 0, createdAt: 1_000 })
+    expect(() => readBotGrokLibraryPage(BotId('bot-imported-library'), dense, [], 0)).toThrow(RangeError)
+  })
+
+  it('uses timestamp, source, sequence, and item tie-breakers for cursors', () => {
+    const tied: BotGrokHistoryArchive = {
+      source: 'grok-bot', version: 2, firstCachedSequence: 0,
+      messages: [
+        { sourceSequence: 0, role: 'assistant', text: '[Primary zero](https://tie.example/zero)', timestampMs: 100 },
+        { sourceSequence: 1, role: 'assistant', text: '[Primary one](https://tie.example/one)', timestampMs: 100 },
+        { sourceSequence: 2, role: 'assistant', text: '[Null](https://tie.example/null)', timestampMs: null },
+        { sourceSequence: 3, role: 'assistant', text: '[Latest](https://tie.example/latest)', timestampMs: 200 },
+      ],
+      sources: [
+        { id: 'z-source', label: 'Z source', firstCachedSequence: 0, messages: [
+          { sourceSequence: 0, role: 'assistant', text: '[Z](https://tie.example/z)', timestampMs: 100 },
+        ] },
+        { id: 'a-source', label: 'A source', firstCachedSequence: 0, messages: [
+          { sourceSequence: 0, role: 'assistant', text: '[A](https://tie.example/a)', timestampMs: 100 },
+        ] },
+      ],
+    }
+    const first = readBotGrokLibraryPage(BotId('bot-imported-library'), tied, [], 1)
+    expect(first.items[0]?.category === 'link' ? first.items[0].url : undefined).toBe('https://tie.example/latest')
+    expect(first.nextBefore).toBeDefined()
+    const rest = readBotGrokLibraryPage(BotId('bot-imported-library'), tied, [], 20, first.nextBefore)
+    expect(rest.items.flatMap(item => item.category === 'link' ? [item.url] : [])).toContain('https://tie.example/a')
+    expect(rest.items.flatMap(item => item.category === 'link' ? [item.url] : [])).toContain('https://tie.example/null')
+    const sameTimestamp = readBotGrokLibraryPage(BotId('bot-imported-library'), tied, [], 20, {
+      sourceId: 'primary', sourceSequence: 1, itemIndex: 0, createdAt: 100,
+    })
+    expect(sameTimestamp.items.flatMap(item => item.category === 'link' ? [item.url] : [])).toContain('https://tie.example/a')
   })
 
   it('returns an exclusive continuation after a bounded sparse scan', () => {

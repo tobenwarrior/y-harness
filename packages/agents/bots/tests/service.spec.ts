@@ -316,7 +316,7 @@ interface HarnessOptions {
   readonly initializeService?: boolean
 }
 
-type TemplateHarnessConfig = { readonly ownerId?: string }
+type TemplateHarnessConfig = { readonly ownerId?: string; readonly grokHistoryAttachmentVault?: string }
 type SessionEventSeedMap = ReadonlyMap<string, readonly SessionEvent[]>
 type HarnessToolMode = 'native' | 'ptc' | 'both'
 type TemplateHarnessCreate = ReturnType<typeof vi.fn<(
@@ -16553,6 +16553,9 @@ describe('durable Bot roster', () => {
     try {
       const created = await first.service.create({ id: BotId('bot-imported-library-service'), name: 'Imported Library', cwd: '/tmp' })
       botId = created.bot.id
+      await expect(first.service.readGrokLibrary({ botId })).resolves.toEqual({ botId, items: [] })
+      await expect(first.service.readGrokLibrary(null as never)).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(first.service.readGrokLibrary({ botId: undefined as never })).rejects.toMatchObject({ code: 'gateway/bad-request' })
       const document = JSON.stringify({
         source: 'grok-bot', version: 2, firstCachedSequence: 1,
         messages: [
@@ -16561,7 +16564,6 @@ describe('durable Bot roster', () => {
         ],
       })
       const before = (await first.ctx.sessionController.inspect(created.bot.sessionId)).events
-      await expect(first.service.importGrokHistory({ botId, document })).resolves.toEqual({ messages: 2 })
       await expect(first.service.importGrokHistory({ botId, document })).resolves.toEqual({ messages: 2 })
       await expect(first.service.readGrokLibrary({ botId, limit: 1 })).resolves.toEqual({
         botId,
@@ -16572,7 +16574,19 @@ describe('durable Bot roster', () => {
       })
       await expect(first.service.readGrokLibrary({ botId, before: { sourceId: 'missing', sourceSequence: 1, itemIndex: 0 } }))
         .rejects.toMatchObject({ code: 'gateway/bad-request' })
-      await expect(first.service.readGrokLibrary({ botId, limit: 0 })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      for (const limit of [0, 1.5, 1_000]) {
+        await expect(first.service.readGrokLibrary({ botId, limit })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      }
+      const cursor = { sourceId: 'primary', sourceSequence: 1, itemIndex: 0 }
+      for (const invalid of [
+        null as never, { ...cursor, sourceId: 7 as never }, { ...cursor, sourceId: '' },
+        { ...cursor, sourceId: 'a'.repeat(129) }, { ...cursor, sourceId: ' primary' },
+        { ...cursor, sourceId: 'primary\narchive' }, { ...cursor, sourceSequence: 0.5 },
+        { ...cursor, sourceSequence: -1 }, { ...cursor, itemIndex: 0.5 },
+        { ...cursor, itemIndex: -1 }, { ...cursor, createdAt: 0.5 }, { ...cursor, createdAt: -1 },
+      ]) {
+        await expect(first.service.readGrokLibrary({ botId, before: invalid })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      }
       expect((await first.ctx.sessionController.inspect(created.bot.sessionId)).events).toEqual(before)
       expect(observeSession).not.toHaveBeenCalled()
     } finally {
@@ -16584,6 +16598,63 @@ describe('durable Bot roster', () => {
       await expect(second.service.readGrokLibrary({ botId })).rejects.toMatchObject({ code: 'bot/not-found' })
     } finally {
       await close(second.ctx)
+    }
+  })
+
+  it('checks only attachments in the imported Library page and keeps the archive cursor', async () => {
+    const vault = await mkdtemp(join(tmpdir(), 'dsh-bot-archive-library-vault-'))
+    const botId = BotId('bot-imported-library-vault')
+    const file = Buffer.from('Example recovered checklist.')
+    const sha256 = createHash('sha256').update(file).digest('hex')
+    try {
+      await writeFile(join(vault, sha256), file)
+      await writeFile(join(vault, 'manifest.json'), JSON.stringify({
+        version: 1,
+        entries: [{ botId, sourceId: 'primary', sourceSequence: 2, filename: 'Checklist.md', timestampMs: 120, sha256 }],
+      }))
+      const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), { grokHistoryAttachmentVault: vault })
+      try {
+        await h.service.create({ id: botId, name: 'Archive Library Vault', cwd: '/tmp' })
+        await h.service.importGrokHistory({ botId, document: JSON.stringify({
+          source: 'grok-bot', version: 2, firstCachedSequence: 1,
+          messages: [
+            { sourceSequence: 1, role: 'assistant', text: '[Older](https://older.example/)', timestampMs: 100 },
+            { sourceSequence: 2, role: 'attachment', text: 'Checklist.md', timestampMs: 120 },
+            { sourceSequence: 3, role: 'attachment', text: 'Missing.md', timestampMs: 130 },
+            { sourceSequence: 4, role: 'assistant', text: '[Latest](https://latest.example/)', timestampMs: 150 },
+          ],
+          sources: [{
+            id: 'undated', label: 'Undated', firstCachedSequence: 0, messages: [
+              { sourceSequence: 0, role: 'assistant', text: '[Undated](https://undated.example/)', timestampMs: null },
+            ],
+          }],
+        }) })
+        const link = await h.service.readGrokLibrary({ botId, limit: 1 })
+        expect(link.items).toMatchObject([{ category: 'link', label: 'Latest' }])
+        const mixed = await h.service.readGrokLibrary({ botId, limit: 3 })
+        expect(mixed.items).toMatchObject([{ category: 'link', label: 'Latest' }, { category: 'file', label: 'Checklist.md' }])
+        expect(mixed.nextBefore).toEqual({ sourceId: 'primary', sourceSequence: 2, itemIndex: 0, createdAt: 120 })
+        if (mixed.nextBefore === undefined) throw new Error('Expected an older archive page')
+        await expect(h.service.readGrokLibrary({ botId, before: mixed.nextBefore })).resolves.toMatchObject({
+          items: [{ label: 'Older' }, { label: 'Undated' }],
+        })
+        await expect(h.service.readGrokLibrary({ botId, before: { sourceId: 'undated', sourceSequence: 0, itemIndex: 0, createdAt: null } }))
+          .resolves.toEqual({ botId, items: [] })
+        expect(await h.service.readGrokLibrary({ botId })).not.toHaveProperty('nextBefore')
+        const legacy = BotId('bot-imported-library-legacy')
+        await h.service.create({ id: legacy, name: 'Legacy Archive', cwd: '/tmp' })
+        await h.service.importGrokHistory({ botId: legacy, document: JSON.stringify({
+          source: 'grok-bot', version: 1, firstCachedSequence: 1, messages: [
+            { sourceSequence: 1, role: 'assistant', text: '[Older](https://archive.example/)', timestampMs: 90 },
+          ],
+        }) })
+        await expect(h.service.readGrokLibrary({ botId: legacy, before: { sourceId: 'primary', sourceSequence: 2, itemIndex: 0 } }))
+          .resolves.toMatchObject({ items: [{ label: 'Older' }] })
+      } finally {
+        await close(h.ctx)
+      }
+    } finally {
+      await rm(vault, { recursive: true, force: true })
     }
   })
 })

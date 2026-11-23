@@ -967,7 +967,7 @@ export interface BotGrokLibraryCursor {
 interface BotGrokLibraryItemFields extends BotGrokLibraryCursor {
   /** Bot whose owner-authorized archive produced this item. */
   readonly botId: BotId
-  /** Explicit provenance for this imported item. */
+  /** Archive source of this imported item. */
   readonly origin: 'grok-history'
   /** Human-readable supplemental source label, when the source supplied one. */
   readonly sourceLabel?: string
