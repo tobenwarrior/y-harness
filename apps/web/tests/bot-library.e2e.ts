@@ -25,7 +25,7 @@ it('lists past deliveries for just the selected Bot and downloads them from the 
     if (delivered === undefined) throw new Error('The fixture’s delivery Session is unavailable.')
     const report = 'Release checklist\n\n- Verify the narrow window\n'
     await writeFile(join(scaffold.workspaceCwd, 'Release checklist.md'), report)
-    await writeFile(join(scaffold.workspaceCwd, 'Window layout.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==', 'base64'))
+    await writeFile(join(scaffold.workspaceCwd, 'Window layout.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAUAAAAC0CAIAAABqhmJGAAACdUlEQVR42u3coQ2EMBiGYTQKicCfxjIFWzAHGsUCt+IpBChG4IeQhh5P8kzQ5k3V16KsGiBThSMAAQMCBgQMAgYEDAgYEDAIGBAwIGAQMCBgQMCAgEHAgIABAQMCBgEDAgYEDAIGXhlwPX+BIAGDgAUMAhYwCBgELGAQsIBBwICAQcACBgELGAQMAhYwCFjAIGBAwCBgAYOABQwCBgQMAhYwCFjAIGAQsIBBwAIGAQMCBgELGAR8rPl0QJCAQcACBgELGAQMAhYwCFjAIGBAwCBgAYOABQwCBgELGAQsYBAwIGAQsIBBwAIGAQMCBgE/O+B+GOGC39QmIGABI2ABg4AFjIAFLGAELGABI2ABI2ABCxgBC1jACFjAIGABI2ABCxgBCxjuJWABI2ABg4AFDAIWMAIWsIARsIBBwAIGAQsYAQtYwAhYwCBgASNgARsznLWsW4S9QZCABSxgAQtYwAIWsIAFLGABC1jAAhawgAUsYAELWMACFrCAEbCAHxaqgAUsYC+tgAUsYAELWMACFrCABZy9YMB2BQhYwAhYwAJGwAIWMAL+t1AFjIC9tAhYwAJGwAIWMAIWMAhYwAhYwAJGwAIWMALOZMzwntGCkATsRw4BI2ABC1jAAkbAAhawgBGwgAWMgBGwgAWMgAUsYAEjYAELWMACRsACFrCAEbArAQGDgAUMAhYwCBgQMAhYwCBgAYOAQcACBgELGAQMCBgELGAQsIBBwICAQcACBgELGAQMAhYwCFjAIGBAwCDgNAED6QkYBAwIGBAwCBgQMCBgQMAgYEDAgIBBwICAAQEDAgYBAwIGBAwIGAQMCBgQMAgYyMoO9H/K17iKqNEAAAAASUVORK5CYII=', 'base64'))
     await writeFile(join(scaffold.workspaceCwd, 'Verification results.csv'), 'check,status\nlayout,passed\n')
     delivered.append('deliverables/presented', { turn: 1, callId: ToolCallId('fixture-delivery'), files: [
       { path: 'Release checklist.md' }, { path: 'Window layout.png' }, { path: 'Verification results.csv' },
@@ -52,6 +52,10 @@ it('lists past deliveries for just the selected Bot and downloads them from the 
     const imageDialog = page.getByRole('dialog', { name: 'Image preview', exact: true })
     const image = imageDialog.getByRole('img', { name: 'Window layout.png', exact: true })
     await expect.poll(() => image.isVisible(), { timeout: 5_000 }).toBe(true)
+    await expect.poll(() => image.evaluate((element) => {
+      const rendered = element as HTMLImageElement
+      return rendered.complete && rendered.naturalWidth > 0 && rendered.naturalHeight > 0
+    }), { timeout: 5_000 }).toBe(true)
     if (images !== undefined) {
       await mkdir(images, { recursive: true })
       for (const [width, colorScheme, filename] of [
@@ -66,8 +70,9 @@ it('lists past deliveries for just the selected Bot and downloads them from the 
       }
       await page.setViewportSize({ width: 1440, height: 920 })
     }
-    await page.getByRole('button', { name: 'Close image preview', exact: true }).click()
-    expect(await imageDialog.isHidden()).toBe(true)
+    await page.keyboard.press('Escape')
+    await imageDialog.waitFor({ state: 'hidden' })
+    await dialog.waitFor({ state: 'visible' })
     expect(await reportLink.count()).toBe(0)
     await dialog.getByRole('button', { name: 'All', exact: true }).click()
     const downloaded = page.waitForEvent('download')
