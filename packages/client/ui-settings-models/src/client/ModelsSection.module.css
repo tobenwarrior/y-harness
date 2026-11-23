@@ -710,7 +710,8 @@ select.input {
 }
 
 .input::placeholder {
-  color: var(--yh-alias-label-dimmed);
+  color: var(--yh-alias-label-secondary);
+  opacity: 1;
 }
 
 .input:disabled {
@@ -755,6 +756,16 @@ select.input {
 @media (max-width: 760px) {
   .sectionHeader {
     align-items: flex-start;
+  }
+}
+
+@media (max-width: 400px) {
+  .modelRow {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .modelRow > input:first-child {
+    grid-column: 1 / -1;
   }
 }
 

@@ -200,11 +200,20 @@ export function providerKeyImportRoute(transfer: ProviderKeyTransfer): Connectio
   }
 }
 
+interface ProviderKeyCopyIpc {
+  readonly platform: NodeJS.Platform
+  readonly connected?: boolean | undefined
+  send?(message: object, callback: () => void): void
+  on(event: 'message', listener: (message: unknown) => void): void
+  off(event: 'message', listener: (message: unknown) => void): void
+}
+
 /**
  * Bind the private Desktop IPC and the separately authenticated Cloud import.
  * @param ctx - Web runtime context.
+ * @param ipc - The Desktop Host process channel.
  */
-export function mountProviderKeyCopy(ctx: Context): void {
+export function mountProviderKeyCopy(ctx: Context, ipc: ProviderKeyCopyIpc = process): void {
   const profile = ctx.get('profileContext')?.name
   if (profile !== 'desktop' && (profile !== 'web' || ctx.webServer.host !== '127.0.0.1')) return
   ctx.inject(['settings', 'credentials', 'connection'], (scope) => {
@@ -216,14 +225,14 @@ export function mountProviderKeyCopy(ctx: Context): void {
       scope.effect(() => scope.connection.fetch.register(providerKeyImportRoute(transfer)), 'provider-key-copy: Cloud import')
       return
     }
-    if (process.platform !== 'darwin' || !process.connected) return
+    if (ipc.platform !== 'darwin' || !ipc.connected) return
     scope.effect(() => {
       const receive = (message: unknown): void => {
         if (!record(message) || message.type !== 'provider-key-copy' || typeof message.requestId !== 'number'
           || !Number.isSafeInteger(message.requestId)) return
         const requestId = message.requestId
         const send = (result: object): void => {
-          if (process.connected) process.send?.({ type: 'provider-key-copy', requestId, ...result }, () => {})
+          if (ipc.connected) ipc.send?.({ type: 'provider-key-copy', requestId, ...result }, () => {})
         }
         void (async () => {
           try {
@@ -233,8 +242,8 @@ export function mountProviderKeyCopy(ctx: Context): void {
           } catch (_error) { send({ error: 'Could not prepare the saved provider connection.' }) }
         })().catch(() => { /* The private IPC peer disconnected. */ })
       }
-      process.on('message', receive)
-      return () => { process.off('message', receive) }
+      ipc.on('message', receive)
+      return () => { ipc.off('message', receive) }
     }, 'provider-key-copy: Desktop source')
   })
 }
