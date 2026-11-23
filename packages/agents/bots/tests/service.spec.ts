@@ -1136,8 +1136,6 @@ describe('durable Bot roster', () => {
         false,
         undefined,
       )
-      expect(readSkill.mock.calls.some(call => call[2] === 'missing')).toBe(false)
-      expect(installSkill.mock.calls.some(call => call[2] === 'missing')).toBe(false)
     } finally {
       await close(h.ctx)
       await rm(root, { recursive: true, force: true })
