@@ -895,7 +895,7 @@ export class CodexBackendRuntime {
       const currentContext = suffix.slice(requestIndex + 1).map(entry => entry.text).filter(Boolean).join('\n\n')
       if (currentContext !== '') texts.push(`## Current Harness context\n\n${currentContext}`)
       const request = historyMessages[start + requestIndex]
-      const sourceKind: string | undefined = request?.role === 'user' ? request.source?.kind : undefined
+      const sourceKind: string | undefined = request?.source?.kind
       if (sourceKind === 'schedule') texts.push(SCHEDULED_ROUTINE_GUIDANCE)
       texts.push(texts.length === 0 ? currentUser.text : `## Current user request\n\n${currentUser.text}`)
     }
