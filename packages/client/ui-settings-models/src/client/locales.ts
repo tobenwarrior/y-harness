@@ -85,7 +85,7 @@ export const en = {
   nav: 'Models',
   deepSeekAccount: 'DeepSeek Account',
   title: 'Models',
-  intro: 'Enter your API keys to use models from the following providers.',
+  intro: 'Connect a subscription or API provider to choose its models in Y Harness.',
   edit: 'Edit',
   editProvider: 'Edit {provider}',
   remove: 'Delete',

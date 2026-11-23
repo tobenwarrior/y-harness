@@ -1,6 +1,5 @@
 /** Global Bot panel and its explicitly Session-bound Conversation child. */
 
-import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { BotView } from '@yharness/bots/client'
 import type { HostObservable, PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime, InjectFace } from '@yharness/client-ui-slots'
@@ -11,12 +10,11 @@ import { BotDetail, BotGroupDetail, BotRoster } from './BotWorkspace.tsx'
 import type { BotStatus, BotSummary } from './types.ts'
 import { ComputerAction } from './ComputerAction.tsx'
 import { BotAvatar } from './BotAvatar.tsx'
-import { GrokHistoryAction } from './GrokHistoryAction.tsx'
 import { ComputerPanel } from './ComputerPanel.tsx'
 import { MacComputerPanel } from './MacComputerPanel.tsx'
 import type { AvailabilityState } from './computer-availability.ts'
 import type { ComputerClient, ComputerIdentity } from './computer-client.ts'
-import { Button, IconFolderOpenOutlineRegular, Menu, PluginArtworkTerminal, Tooltip } from '@yharness/client-ui-primitives'
+import { IconFolderOpenOutlineRegular, PluginArtworkTerminal } from '@yharness/client-ui-primitives'
 import css from './BotWorkspace.module.css'
 
 /** Selected sign-in request and its Computer panel. */
@@ -45,7 +43,7 @@ declare module '@yharness/client-ui-slots' {
 /** Complete props for the root Bot panel. */
 export type BotsPanelProps =
   PropsRuntime<'main'>
-  & PropsRenderSlots<'bots.conversation'>
+  & PropsRenderSlots<'bots.conversation' | 'conversation.session.header.agents'>
   & PropsLocale<'bots'>
   & InjectFace<BotWorkspaceFace & {
     readonly computer: ComputerClient
@@ -97,50 +95,6 @@ function summaryOf(bot: BotView, statuses: SessionStatusSnapshot): BotSummary {
     identity: bot.identity,
     ...(bot.avatar === undefined ? {} : { avatar: bot.avatar }),
   }
-}
-
-interface BotFilesActionProps {
-  readonly sharedFilesAvailable: boolean
-  readonly openWorkspaceTab: (kind: Extract<WorkspaceTabKind, 'computer-files' | 'computer-shared-files'>) => void
-  readonly t: BotsPanelProps['t']
-}
-
-function BotFilesAction({ sharedFilesAvailable, openWorkspaceTab, t }: BotFilesActionProps): ReactNode {
-  const [open, setOpen] = useState(false)
-  const anchor = (
-    <Tooltip label={t('filesOpen')} side="bottom" delayMs={500}>
-      <Button variant="toolbar" size="sm" icon={<IconFolderOpenOutlineRegular size={16} />}
-        aria-label={t('filesOpen')}
-        {...(sharedFilesAvailable ? { 'aria-haspopup': 'menu', 'aria-expanded': open } : {})}
-        onClick={() => {
-          if (sharedFilesAvailable) setOpen(value => !value)
-          else openWorkspaceTab('computer-files')
-        }}>
-        <span className={css.workspaceToolLabel}>{t('filesLabel')}</span>
-      </Button>
-    </Tooltip>
-  )
-  if (!sharedFilesAvailable) return anchor
-  return (
-    <Menu
-      open={open}
-      onClose={() => { setOpen(false) }}
-      autoFocus
-      dense
-      portal
-      align="end"
-      items={[
-        { id: 'private', label: t('filesPrivateWorkspace') },
-        { id: 'shared', label: t('filesSharedWorkspace') },
-      ]}
-      onSelect={(id) => {
-        setOpen(false)
-        if (id === 'private') openWorkspaceTab('computer-files')
-        else if (id === 'shared') openWorkspaceTab('computer-shared-files')
-      }}
-      anchor={anchor}
-    />
-  )
 }
 
 /** Render the selected Bot's real Conversation under its retained Session. */
@@ -256,26 +210,40 @@ export function BotsPanel({
       <BotDetail
         bot={selectedBot}
         children={conversation}
+        readGrokHistory={readGrokHistory}
+        workspaceActions={[
+          ...(showTerminalAction ? [{
+            id: 'terminal',
+            label: t('terminalLabel'),
+            icon: <PluginArtworkTerminal size={16} />,
+            ...(terminalInternet === undefined ? {} : {
+              description: t(terminalInternet ? 'terminalInternetEnabled' : 'terminalInternetDisabled'),
+            }),
+            run: () => { openWorkspaceTab('terminal') },
+          }] : []),
+          ...(showFilesAction ? [{
+            id: 'bot-files',
+            label: t(showSharedFilesAction ? 'filesPrivateWorkspace' : 'filesLabel'),
+            icon: <IconFolderOpenOutlineRegular size={16} />,
+            run: () => { openWorkspaceTab('computer-files') },
+          }] : []),
+          ...(showFilesAction && showSharedFilesAction ? [{
+            id: 'shared-files',
+            label: t('filesSharedWorkspace'),
+            icon: <IconFolderOpenOutlineRegular size={16} />,
+            run: () => { openWorkspaceTab('computer-shared-files') },
+          }] : []),
+        ]}
         headerActions={<>
           {canShowComputer && (
             <ComputerAction expanded={showComputer}
               {...(computerIdentity === undefined ? {} : { identity: computerIdentity })}
               toggle={() => { setComputerTarget(showComputer ? null : selectedReference.sessionId) }} t={t} />
           )}
-          {showTerminalAction && (
-            <Tooltip label={t(terminalInternet === undefined ? 'terminalOpen'
-              : terminalInternet ? 'terminalInternetEnabled' : 'terminalInternetDisabled')} side="bottom" delayMs={500}>
-              <Button variant="toolbar" size="sm" icon={<PluginArtworkTerminal size={16} />}
-                aria-label={t('terminalOpen')} onClick={() => { openWorkspaceTab('terminal') }}>
-                <span className={css.workspaceToolLabel}>{t('terminalLabel')}</span>
-              </Button>
-            </Tooltip>
-          )}
-          {showFilesAction && (
-            <BotFilesAction sharedFilesAvailable={showSharedFilesAction} openWorkspaceTab={openWorkspaceTab} t={t} />
-          )}
-          {readGrokHistory !== undefined && selectedBot !== undefined && (
-            <GrokHistoryAction key={selectedBot.id} botId={selectedBot.id} botName={selectedBot.name} read={readGrokHistory} t={t} />
+          {selectedReference !== undefined && selectedBot !== undefined && (
+            <SessionProvider session={selectedReference}>
+              {renderSlot('conversation.session.header.agents', { beforeOpen: closeComputer })}
+            </SessionProvider>
           )}
         </>}
         t={t}

@@ -8,7 +8,10 @@ import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 // Type-only: makes the Bot service contribution visible on the assembled Host context.
 import type { BotView } from '@yharness/bots'
 import type {} from '@yharness/bots'
+import { createAssistantMessage, createUserMessage } from '@yharness/llm'
 import type {} from '@yharness/schedule'
+import { SessionId } from '@yharness/session'
+import { snapshotSubagentDescriptor } from '@yharness/subagent'
 import {
   assertFixtureInventory, captureStableAria, compareOrRefreshGolden,
   launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold,
@@ -121,7 +124,8 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await folder.press('Space')
     await firstRow.waitFor({ state: 'visible' })
     await expect.poll(() => folder.getAttribute('aria-expanded')).toBe('true')
-    await roster.getByRole('button', { name: 'Edit avatar' }).click()
+    await roster.getByRole('button', { name: 'Bot workspace options', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Edit avatar', exact: true }).click()
     const editor = page.getByRole('dialog', { name: 'Customize avatar' })
     await editor.getByRole('tab', { name: 'Character' }).waitFor()
     await editor.getByRole('radio', { name: 'Amber' }).click()
@@ -137,7 +141,8 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
       return bounds === null ? null : page.viewportSize()!.height - (bounds.y + bounds.height)
     }).toBeLessThan(100)
 
-    await firstDetail.getByRole('button', { name: 'Edit bot profile', exact: true }).click()
+    await firstDetail.getByRole('button', { name: 'Bot options', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Edit bot profile', exact: true }).click()
     const profileDialog = page.getByRole('dialog', { name: 'Edit bot profile', exact: true })
     await profileDialog.getByLabel('What it does').fill('Keeps the team informed')
     await profileDialog.getByLabel('Instructions').fill('Give clear, concise updates.')
@@ -164,7 +169,8 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await createDialog.getByRole('button', { name: 'Cancel', exact: true }).last().click()
     await createDialog.waitFor({ state: 'hidden' })
 
-    await roster.getByRole('button', { name: 'Bot templates', exact: true }).click()
+    await roster.getByRole('button', { name: 'Bot workspace options', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Bot templates', exact: true }).click()
     const templateDialog = page.getByRole('dialog', { name: 'Bot templates', exact: true })
     await templateDialog.getByText('No shared templates yet.', { exact: true }).waitFor({ state: 'visible' })
     const templateDialogSnapshot = await captureStableAria(
@@ -173,7 +179,8 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await templateDialog.getByRole('button', { name: 'Cancel', exact: true }).last().click()
     await templateDialog.waitFor({ state: 'hidden' })
 
-    await firstDetail.getByRole('button', { name: 'Manage memories', exact: true }).click()
+    await firstDetail.getByRole('button', { name: 'Bot options', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Manage memories', exact: true }).click()
     const memoryDialog = page.getByRole('dialog', { name: 'Bot memory', exact: true })
     await memoryDialog.getByText('No saved memories', { exact: true }).waitFor({ state: 'visible' })
     const memoryDialogSnapshot = await captureStableAria(
@@ -182,7 +189,8 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await memoryDialog.getByRole('button', { name: 'Close', exact: true }).last().click()
     await memoryDialog.waitFor({ state: 'hidden' })
 
-    await firstDetail.getByRole('button', { name: 'Manage routines', exact: true }).click()
+    await firstDetail.getByRole('button', { name: 'Bot options', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Manage routines', exact: true }).click()
     const routineDialog = page.getByRole('dialog', { name: 'Bot routines', exact: true })
     await routineDialog.getByText('Morning check-in', { exact: true }).first().waitFor({ state: 'visible' })
     const routineDialogSnapshot = await captureStableAria(
@@ -191,13 +199,15 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await routineDialog.getByRole('button', { name: 'Close', exact: true }).last().click()
     await routineDialog.waitFor({ state: 'hidden' })
 
-    await firstDetail.getByRole('button', { name: 'Manage skills', exact: true }).click()
+    await firstDetail.getByRole('button', { name: 'Bot options', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Manage skills', exact: true }).click()
     const skillsDialog = page.getByRole('dialog', { name: 'Bot skills', exact: true })
     const selectedSkills = skillsDialog.getByRole('radio', { name: 'Only selected skills', exact: true })
     await selectedSkills.check()
     await skillsDialog.getByRole('button', { name: 'Save skills', exact: true }).click()
     await skillsDialog.waitFor({ state: 'hidden' })
-    await firstDetail.getByRole('button', { name: 'Manage skills', exact: true }).click()
+    await firstDetail.getByRole('button', { name: 'Bot options', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Manage skills', exact: true }).click()
     await expect.poll(() => selectedSkills.isChecked()).toBe(true)
     await skillsDialog.getByRole('button', { name: 'Close', exact: true }).last().click()
     await skillsDialog.waitFor({ state: 'hidden' })
@@ -209,7 +219,8 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await expect.poll(() => secondDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
       .toBe(secondBot.sessionId)
     await expect.poll(() => secondDetail.locator('[data-composer-placement="bottom"]').count()).toBe(1)
-    await secondDetail.getByRole('button', { name: 'Imported Grok chat', exact: true }).click()
+    await secondDetail.getByRole('button', { name: 'Bot options', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Imported Grok chat', exact: true }).click()
     const historyDialog = page.getByRole('dialog', { name: 'Imported Grok chat' })
     const sourceSelect = historyDialog.getByLabel('History source')
     await expect.poll(() => sourceSelect.inputValue()).toBe('primary')
@@ -287,6 +298,59 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
   }, 120_000)
+
+  it('opens previous agent work beside the Bot and keeps its conversation selected', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-bot-agent-chat'))
+    const mode = page.getByRole('button', { name: 'Bots', exact: true })
+    if (await mode.getAttribute('aria-pressed') !== 'true') await mode.click()
+    await page.locator(`[data-bot-id="${firstBot.id}"]`).click()
+    const parent = scaffold.ctx.sessions.get(firstBot.sessionId)
+    if (parent === undefined) throw new Error('The Bot session is unavailable.')
+    const detail = page.getByRole('region', { name: firstBot.name, exact: true })
+    await detail.waitFor()
+    const agents = detail.getByRole('button', { name: /^Agents, /u })
+    expect(await agents.count()).toBe(0)
+
+    const createdAt = Date.now()
+    const child = scaffold.ctx.sessions.create(SessionId('bot-workspace-reviewer'), {
+      meta: { cwd: scaffold.workspaceCwd, parentSession: parent.id, createdAt, origin: 'subagent', delegationDepth: 1 },
+    })
+    const answer = 'All three settings views fit at the narrow window size.'
+    child.append('turn/start', { turn: 1 })
+    child.append('subagent/descriptor', snapshotSubagentDescriptor({
+      mode: 'one-shot', provider: 'spawn', label: 'Review settings layout',
+    }))
+    child.append('user/message', createUserMessage({
+      source: { kind: 'user' }, content: [{ type: 'text', text: 'Review the settings layouts.' }],
+    }), { surfaceOp: 'append' })
+    child.append('step/start', { turn: 1, step: 1 })
+    child.append('assistant/message', {
+      stream: [], turn: 1, step: 1,
+      message: createAssistantMessage({
+        content: [{ type: 'text', text: answer }], source: { provider: 'fixture', model: 'review' },
+      }),
+    }, { surfaceOp: 'append' })
+    child.append('step/end', { turn: 1, step: 1 })
+    child.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    await scaffold.ctx.sessions.flush(child)
+    parent.append('subagent/catalog', {
+      version: 0, childId: child.id, childCreatedAt: createdAt, mode: 'one-shot', label: 'Review settings layout',
+    })
+    await scaffold.ctx.sessions.flush(parent)
+
+    await agents.click()
+    expect(await page.getByRole('treeitem', { name: /^Review settings layout/u }).count()).toBe(0)
+    await page.getByRole('button', { name: 'Previous agents (1)', exact: true }).click()
+    const reviewer = page.getByRole('treeitem', { name: /^Review settings layout/u })
+    await reviewer.click()
+    const sidebarChat = page.locator('[data-sidebar-chat]')
+    await sidebarChat.getByText(answer, { exact: true }).waitFor()
+    await expect.poll(() => detail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
+      .toBe(firstBot.sessionId)
+    expect(scaffold.ctx.agents.get(child.id)).toBeUndefined()
+    expect(tripwire.pageErrors).toEqual([])
+    expect(tripwire.warnings).toEqual([])
+  })
 
   it('keeps the scenario fixture inventory closed', async () => {
     await assertFixtureInventory(SNAPSHOT_DIR, ['session.v3.jsonl'])
