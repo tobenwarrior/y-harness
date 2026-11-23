@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events'
 import { credentialKey, credentialRef } from '@yharness/credentials'
 import type { CredentialProvider } from '@yharness/credentials'
 import { describe, expect, it, vi } from 'vitest'
@@ -29,6 +30,33 @@ function fixture(providers: Record<string, unknown> = {}) {
       credentials,
     ),
   }
+}
+
+function desktopFixture(connected: boolean) {
+  const events = new EventEmitter<{ message: [unknown] }>()
+  const ipc = {
+    connected,
+    platform: 'darwin' as const,
+    send: vi.fn((_message: object, callback: () => void) => { callback() }),
+    on: events.on.bind(events),
+    off: events.off.bind(events),
+  }
+  let dispose: (() => void) | undefined
+  const effect = vi.fn((factory: () => () => void) => {
+    dispose = factory()
+    return dispose
+  })
+  const scope = {
+    settings: { describe: () => [] }, credentials: fixture().credentials,
+    connection: { fetch: { register: vi.fn(() => () => {}) } }, effect,
+  }
+  const context = {
+    get: () => ({ name: 'desktop' }), webServer: { host: '127.0.0.1' },
+    inject: (_keys: readonly string[], callback: (value: never) => void) => {
+      callback(scope as never)
+    },
+  } as never as Context
+  return { context, events, ipc, effect, dispose: () => dispose?.() }
 }
 
 describe('copying a saved provider key between private workspaces', () => {
@@ -272,83 +300,45 @@ describe('copying a saved provider key between private workspaces', () => {
     expect(rejectedInject).not.toHaveBeenCalled()
   })
 
-  it('serves the private Desktop IPC source and restores its process listener', async () => {
-    const connectedDescriptor = Object.getOwnPropertyDescriptor(process, 'connected')
-    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-    const sendDescriptor = Object.getOwnPropertyDescriptor(process, 'send')
-    const sent: object[] = []
-    let dispose: (() => void) | undefined
-    const effect = (factory: () => () => void): (() => void) => {
-      dispose = factory()
-      return dispose
-    }
-    const scope = {
-      settings: { describe: () => [] }, credentials: fixture().credentials,
-      connection: { fetch: { register: vi.fn(() => () => {}) } }, effect,
-    }
-    const context = {
-      get: () => ({ name: 'desktop' }), webServer: { host: '127.0.0.1' },
-      inject: (_keys: readonly string[], callback: (value: never) => void) => {
-        callback(scope as never)
-      },
-    } as never as Context
-    Object.defineProperty(process, 'connected', { value: true, configurable: true })
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
-    Object.defineProperty(process, 'send', { configurable: true, value: (message: object, callback?: () => void) => { sent.push(message); callback?.(); return true } })
+  it('serves the private Desktop channel and removes its listener on disposal', async () => {
+    const desktop = desktopFixture(true)
+    const { context, events, ipc } = desktop
+    mountProviderKeyCopy(context, ipc)
     try {
-      mountProviderKeyCopy(context)
-      const emitMessage = process.emit.bind(process) as (event: string, message: unknown) => boolean
-      emitMessage('message', {})
-      emitMessage('message', { type: 'provider-key-copy', requestId: 1.5, command: { action: 'offer' } })
-      emitMessage('message', { type: 'provider-key-copy', requestId: 1, command: { action: 'offer' } })
-      emitMessage('message', { type: 'provider-key-copy', requestId: 2, command: { action: 'read', offer: { provider: 'model-lab' } } })
-      emitMessage('message', { type: 'provider-key-copy', requestId: 3, command: { action: 'read', offer: { provider: 'model-lab', identity: 'a'.repeat(64), sourceClaim: 'b'.repeat(64) } } })
+      expect(events.listenerCount('message')).toBe(1)
+      events.emit('message', {})
+      events.emit('message', { type: 'provider-key-copy', requestId: 1.5, command: { action: 'offer' } })
+      events.emit('message', { type: 'provider-key-copy', requestId: 1, command: { action: 'offer' } })
+      events.emit('message', { type: 'provider-key-copy', requestId: 2, command: { action: 'read', offer: { provider: 'model-lab' } } })
+      events.emit('message', { type: 'provider-key-copy', requestId: 3, command: { action: 'read', offer: { provider: 'model-lab', identity: 'a'.repeat(64), sourceClaim: 'b'.repeat(64) } } })
       await new Promise<void>(resolve => setImmediate(resolve))
-      expect(sent).toHaveLength(3)
-      expect(sent).toEqual(expect.arrayContaining([
+      expect(ipc.send.mock.calls.map(([message]) => message)).toEqual(expect.arrayContaining([
         { type: 'provider-key-copy', requestId: 1, value: [] },
         { type: 'provider-key-copy', requestId: 2, error: 'Could not prepare the saved provider connection.' },
         { type: 'provider-key-copy', requestId: 3, value: null },
       ]))
-      Object.defineProperty(process, 'connected', { value: false, configurable: true })
-      emitMessage('message', { type: 'provider-key-copy', requestId: 4, command: { action: 'offer' } })
+      expect(ipc.send).toHaveBeenCalledTimes(3)
+
+      ipc.connected = false
+      events.emit('message', { type: 'provider-key-copy', requestId: 4, command: { action: 'offer' } })
       await new Promise<void>(resolve => setImmediate(resolve))
-      expect(sent).toHaveLength(3)
-      Object.defineProperty(process, 'connected', { value: true, configurable: true })
-      Object.defineProperty(process, 'send', { configurable: true, value: () => { throw new Error('fixture send failure') } })
-      emitMessage('message', { type: 'provider-key-copy', requestId: 5, command: { action: 'invalid' } })
+      expect(ipc.send).toHaveBeenCalledTimes(3)
+
+      ipc.connected = true
+      ipc.send.mockImplementationOnce(() => { throw new Error('fixture send failure') })
+      events.emit('message', { type: 'provider-key-copy', requestId: 5, command: { action: 'invalid' } })
       await new Promise<void>(resolve => setImmediate(resolve))
-      dispose?.()
+      expect(ipc.send).toHaveBeenCalledTimes(4)
     } finally {
-      if (connectedDescriptor === undefined) delete (process as { connected?: boolean }).connected
-      else Object.defineProperty(process, 'connected', connectedDescriptor)
-      if (platformDescriptor === undefined) delete (process as { platform?: string }).platform
-      else Object.defineProperty(process, 'platform', platformDescriptor)
-      if (sendDescriptor === undefined) delete (process as { send?: unknown }).send
-      else Object.defineProperty(process, 'send', sendDescriptor)
+      desktop.dispose()
     }
+    expect(events.listenerCount('message')).toBe(0)
   })
 
-  it('does not install the Desktop listener while the process IPC channel is disconnected', () => {
-    const connectedDescriptor = Object.getOwnPropertyDescriptor(process, 'connected')
-    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-    const inject = vi.fn((_keys: readonly string[], callback: (value: never) => void) => {
-      callback({
-        settings: { describe: () => [] }, credentials: fixture().credentials,
-        connection: { fetch: { register: vi.fn(() => () => {}) } }, effect: vi.fn(),
-      } as never)
-    })
-    const context = { get: () => ({ name: 'desktop' }), webServer: { host: '127.0.0.1' }, inject } as never as Context
-    Object.defineProperty(process, 'connected', { value: false, configurable: true })
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
-    try {
-      mountProviderKeyCopy(context)
-      expect(inject).toHaveBeenCalledOnce()
-    } finally {
-      if (connectedDescriptor === undefined) delete (process as { connected?: boolean }).connected
-      else Object.defineProperty(process, 'connected', connectedDescriptor)
-      if (platformDescriptor === undefined) delete (process as { platform?: string }).platform
-      else Object.defineProperty(process, 'platform', platformDescriptor)
-    }
+  it('leaves the Desktop listener idle while its channel is disconnected', () => {
+    const { context, events, ipc, effect } = desktopFixture(false)
+    mountProviderKeyCopy(context, ipc)
+    expect(effect).not.toHaveBeenCalled()
+    expect(events.listenerCount('message')).toBe(0)
   })
 })
