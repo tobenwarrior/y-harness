@@ -10,7 +10,7 @@ import type {} from '@yharness/client-ui-conversation/client'
 import type {} from '@yharness/client-locale/client'
 import type { InputTriggerSource } from '@yharness/client-ui-input-trigger/client'
 import type { BotAvatar } from '@yharness/bots/client'
-import type { PresentedFileDownloads } from '@yharness/client-ui-deliverables/client'
+import type { PresentedFileDownloads, PresentedFilePreviews } from '@yharness/client-ui-deliverables/client'
 import { createSnapshotStore } from '@yharness/client-store'
 import type { MainPanelId } from '@yharness/client-ui-layout/client'
 import { BotWorkspaceController } from './controller.ts'
@@ -196,9 +196,14 @@ export function apply(ctx: Context): void {
         const downloadLibraryFile: PresentedFileDownloads['url'] | undefined = presentedFileDownloads === undefined
           ? undefined
           : (sessionId, eventSeq, fileIndex) => presentedFileDownloads.url(sessionId, eventSeq, fileIndex)
+        const presentedFilePreviews = ctx.get('presentedFilePreviews')
+        const previewLibraryFile: PresentedFilePreviews['url'] | undefined = presentedFilePreviews === undefined
+          ? undefined
+          : (sessionId, eventSeq, fileIndex) => presentedFilePreviews.url(sessionId, eventSeq, fileIndex)
         return {
           ...face, computer, setComputerTarget, openWorkspaceTab,
           downloadLibraryFile,
+          previewLibraryFile,
           refreshComputerAvailability: (sessionId?: string): void => { computerAvailability.refresh(sessionId) },
           hooks: {
             ...face.hooks,

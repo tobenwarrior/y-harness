@@ -15,6 +15,7 @@ export const BOT_LIBRARY_MAX_SCAN_EVENTS = BOT_LIBRARY_READ_CHUNK * 4
 const PRESENTED_EVENT_TYPE: string = 'deliverables/presented'
 const MAX_LABEL_LENGTH = 160
 const IMAGE_EXTENSIONS = new Set(['avif', 'gif', 'jpeg', 'jpg', 'png', 'svg', 'webp'])
+const RASTER_IMAGE_EXTENSIONS = new Set(['avif', 'gif', 'jpeg', 'jpg', 'png', 'webp'])
 const AUDIO_EXTENSIONS = new Set(['aac', 'flac', 'm4a', 'mp3', 'ogg', 'wav', 'weba'])
 const VIDEO_EXTENSIONS = new Set(['avi', 'mkv', 'mov', 'mp4', 'mpeg', 'webm'])
 
@@ -90,6 +91,13 @@ function libraryCategory(file: PresentedLibraryFile): BotLibraryItem['category']
   return 'file'
 }
 
+/** Mark only active-markup-free raster extensions for the bounded image route. */
+function libraryPreviewable(file: PresentedLibraryFile): boolean {
+  const base = file.path.replaceAll('\\', '/').replace(/^.*\//, '')
+  const extension = base.slice(base.lastIndexOf('.') + 1).toLowerCase()
+  return RASTER_IMAGE_EXTENSIONS.has(extension)
+}
+
 /** Compare two stable event/file positions in newest-first order. */
 function isOlder(position: BotLibraryCursor, before: BotLibraryCursor): boolean {
   return position.eventSeq < before.eventSeq
@@ -155,6 +163,7 @@ export async function readBotLibraryPage(
           fileIndex: file.index,
           label: libraryLabel(file),
           category: libraryCategory(file),
+          previewable: libraryPreviewable(file),
           createdAt: event.time,
         })
       }

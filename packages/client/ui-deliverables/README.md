@@ -56,6 +56,10 @@ Without wrapping, the two columns synchronize vertical scrolling and horizontal 
 
 Select the download icon on a file card to save the current bytes to your device. The download works in Cloud without a desktop on the VPS. The owner connection loads the recorded declaration and reads a regular file inside the viewed Session's workspace, subject to its complete-file size limit. A managed Bot download uses its private workspace. Native file actions open the source when the Host can access the same file.
 
+### Preview a delivered image in the Bot Library
+
+The owner-only Bot Library previews supported PNG, JPEG, GIF, WebP, and AVIF deliveries through the authenticated Session and event coordinates. The Host keeps the declared path private, validates the file again, and serves bounded bytes with an explicit image media type. It checks the source identity after reading and returns a retryable conflict if the file changes. SVG, HTML, documents, audio, and video remain download-only until they have a dedicated safe renderer.
+
 ### Inline-code links
 
 The closing prose links produced or delivered paths: successful `write`, `edit`, and mutating `str_replace_editor` calls contribute their validated argument path, while a successful or partially completed `apply_patch` contributes its validated stable produced-path metadata; the producer excludes deleted files and move sources. An inline-code token resolves by exact path, or by being exactly the basename of exactly one such path — a basename two paths share stays inert rather than guessing, so a mention can never open the wrong file. A resolved mention keeps its code chip and takes the markdown sheet's link language, with the full path as its title.

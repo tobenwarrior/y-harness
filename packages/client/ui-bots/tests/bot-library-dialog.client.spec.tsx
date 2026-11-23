@@ -15,12 +15,15 @@ const botId = BotId('bot-fixture')
 const sessionId = SessionId('bot-session-fixture')
 const archive = { eventSeq: 5, fileIndex: 2 }
 const row = (patch: Partial<BotLibraryItem> = {}): BotLibraryItem => ({
-  botId, sessionId, ...archive, label: 'notes.md', category: 'file', createdAt: new Date(2026, 10, 25, 9).getTime(), ...patch,
+  botId, sessionId, ...archive, label: 'notes.md', category: 'file', previewable: false,
+  createdAt: new Date(2026, 10, 25, 9).getTime(), ...patch,
 })
 
-function openLibrary(read: ReadBotLibrary): void {
+function openLibrary(read: ReadBotLibrary, previewUrl?: (session: string, seq: number, index: number) => string): void {
   render(<BotDetail bot={{ id: botId, name: 'Scout', accent: 'teal', identity: 'browse' }}
-    loading={false} loadAvatar={undefined} children={<p>Existing conversation</p>} readLibrary={read} downloadLibraryFile={(session, seq, index) => `api/present.download?sessionId=${session}&seq=${seq}&index=${index}`} t={t} />)
+    loading={false} loadAvatar={undefined} children={<p>Existing conversation</p>} readLibrary={read}
+    downloadLibraryFile={(session, seq, index) => `api/present.download?sessionId=${session}&seq=${seq}&index=${index}`}
+    {...(previewUrl === undefined ? {} : { previewLibraryFile: previewUrl })} t={t} />)
   expect(read).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
   fireEvent.click(screen.getByRole('menuitem', { name: en.libraryTitle }))
@@ -78,7 +81,6 @@ it('continues past an empty page when earlier messages remain', async () => {
   expect(await screen.findByRole('link', { name: 'Download notes.md' })).toBeTruthy()
   expect(screen.queryByText(en.libraryPageEmpty)).toBeNull()
 })
-
 it.each(['success', 'error'] as const)('ignores a late %s from a closed Library request', async (settlement) => {
   const firstPage = Promise.withResolvers<BotLibraryValue>()
   const read = vi.fn<ReadBotLibrary>()
@@ -97,4 +99,21 @@ it.each(['success', 'error'] as const)('ignores a late %s from a closed Library 
   expect(screen.queryByRole('alert')).toBeNull()
   expect(screen.queryByText('stale.md')).toBeNull()
   expect(screen.getByRole('link', { name: 'Download current.md' })).toBeTruthy()
+})
+
+it('previews image deliveries through the exact authenticated file coordinates', async () => {
+  const read = vi.fn<ReadBotLibrary>().mockResolvedValueOnce({
+    botId, items: [row({ label: 'chart.png', category: 'image', previewable: true })],
+  })
+  const preview = vi.fn((session: string, seq: number, index: number) =>
+    `api/present.preview?sessionId=${session}&seq=${seq}&index=${index}`)
+  openLibrary(read, preview)
+  await screen.findByText('chart.png')
+  fireEvent.click(screen.getByRole('button', { name: 'Preview chart.png' }))
+  expect(preview).toHaveBeenCalledWith(sessionId, archive.eventSeq, archive.fileIndex)
+  expect(screen.getByRole('dialog', { name: en.libraryPreviewDialog })).toBeTruthy()
+  expect(screen.getByRole('img', { name: 'chart.png' }).getAttribute('src'))
+    .toBe('api/present.preview?sessionId=bot-session-fixture&seq=5&index=2')
+  fireEvent.click(screen.getByRole('button', { name: en.libraryPreviewClose }))
+  expect(screen.queryByRole('dialog', { name: en.libraryPreviewDialog })).toBeNull()
 })

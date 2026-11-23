@@ -20,7 +20,7 @@ import type {} from '@yharness/client-ui-renderer/client'
 import type {} from '@yharness/client-ui-sidebar-right/client'
 import type {} from '@yharness/client-ui-settings/client'
 import { changesReviewAddress } from '../changes.ts'
-import { presentedDownloadUrl } from '../presented.ts'
+import { presentedDownloadUrl, presentedPreviewUrl } from '../presented.ts'
 import { ChangesDiffStore } from './changes-diff.ts'
 import { ChangesSummaryStore } from './changes-summary.ts'
 import { PresentedOpenController } from './present-open.ts'
@@ -46,8 +46,23 @@ export interface PresentedFileDownloads {
   url(sessionId: SessionId, eventSeq: number, fileIndex: number): string
 }
 
+/** Authenticated raster-image previews for file declarations already accepted by the Host. */
+export interface PresentedFilePreviews {
+  /**
+   * Address one exact supported raster image already declared in an accessible Session.
+   * @param sessionId - owning Session.
+   * @param eventSeq - delivery event sequence.
+   * @param fileIndex - original file position in the event.
+   * @returns A document-relative preview URL.
+   */
+  url(sessionId: SessionId, eventSeq: number, fileIndex: number): string
+}
+
 declare module '@yharness/cordis' {
-  interface Context { readonly presentedFileDownloads: PresentedFileDownloads }
+  interface Context {
+    readonly presentedFileDownloads: PresentedFileDownloads
+    readonly presentedFilePreviews: PresentedFilePreviews
+  }
 }
 
 declare module '@yharness/client-ui-slots' {
@@ -66,6 +81,7 @@ export const inject = ['slots', 'locale', 'uiConversation', 'remote', 'remote.se
  */
 export function apply(ctx: ClientContext): void {
   ctx.provide('presentedFileDownloads', { url: presentedDownloadUrl })
+  ctx.provide('presentedFilePreviews', { url: presentedPreviewUrl })
   const opener = new PresentedOpenController()
   const summaries = new ChangesSummaryStore()
   const diffs = new ChangesDiffStore()

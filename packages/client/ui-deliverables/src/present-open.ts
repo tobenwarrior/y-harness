@@ -9,7 +9,10 @@ import type {} from '@yharness/client-connection'
 import type {} from '@yharness/session-query'
 import type { SessionId, SessionSeq } from '@yharness/session'
 import { CHANGES_DIFF_PATH, CHANGES_OPEN_PATH, CHANGED_FILES_PATH, type ChangesSummary } from './changes.ts'
-import { basename, isPresentedData, isPresentedFile, PRESENT_DOWNLOAD_PATH, PRESENT_OPEN_PATH, PRESENT_HOST_PATH, type PresentedHost } from './presented.ts'
+import {
+  basename, isPresentedData, isPresentedFile, PRESENT_DOWNLOAD_PATH, PRESENT_OPEN_PATH, PRESENT_PREVIEW_PATH,
+  PRESENT_HOST_PATH, type PresentedHost,
+} from './presented.ts'
 
 /**
  * Register the deliverables routes inside Connection's authentication fence:
@@ -36,6 +39,7 @@ export function registerPresentOpen(ctx: Context): void {
   const routes = [
     [PRESENT_OPEN_PATH, ['GET', 'POST'], handlePresentOpen],
     [PRESENT_DOWNLOAD_PATH, ['GET'], handlePresentDownload],
+    [PRESENT_PREVIEW_PATH, ['GET'], handlePresentPreview],
     [CHANGES_OPEN_PATH, ['GET', 'POST'], handleChangesOpen],
     [CHANGES_DIFF_PATH, ['GET'], handleChangesDiff],
   ] as const
@@ -57,6 +61,16 @@ export function registerPresentOpen(ctx: Context): void {
 }
 
 const NUMERIC = /^\d+$/
+
+const MAX_IMAGE_PREVIEW_BYTES = 8 * 1024 * 1024
+const RASTER_IMAGE_TYPES = new Map([
+  ['avif', 'image/avif'],
+  ['gif', 'image/gif'],
+  ['jpeg', 'image/jpeg'],
+  ['jpg', 'image/jpeg'],
+  ['png', 'image/png'],
+  ['webp', 'image/webp'],
+])
 
 function coordinate(value: string | null): number | undefined {
   return value !== null && NUMERIC.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : undefined
@@ -139,11 +153,17 @@ async function openWorkspaceFile(
   return openVerified(ctx, request, path, action)
 }
 
-async function handlePresentDownload(ctx: Context, request: Request): Promise<Response> {
+async function requestedPresentation(
+  ctx: Context, request: Request,
+): Promise<{ scope: WorkspaceFileScope; path: string } | Response> {
   const coordinates = presentationCoordinates(new URL(request.url).searchParams)
   if (coordinates instanceof Response) return coordinates
+  return readPresentation(ctx, coordinates, request.signal)
+}
+
+async function handlePresentDownload(ctx: Context, request: Request): Promise<Response> {
   try {
-    const read = await readPresentation(ctx, coordinates, request.signal)
+    const read = await requestedPresentation(ctx, request)
     if (read instanceof Response) return read
     return await ctx.workspaceFiles.downloadWorkspaceFile(read.scope, read.path, basename(read.path), request.signal)
   } catch (error: unknown) {
@@ -152,6 +172,47 @@ async function handlePresentDownload(ctx: Context, request: Request): Promise<Re
     if (code === 'workspace-file/too-large') return new Response('Presented file exceeds the download limit.', { status: 413 })
     const status = code === 'workspace-file/outside-workspace' ? 404 : failureStatus(error)
     return new Response('Presented file unavailable.', { status })
+  }
+}
+
+function rasterImageType(path: string): string | undefined {
+  const name = basename(path).toLowerCase()
+  const extension = name.slice(name.lastIndexOf('.') + 1)
+  return extension === name ? undefined : RASTER_IMAGE_TYPES.get(extension)
+}
+
+async function handlePresentPreview(ctx: Context, request: Request): Promise<Response> {
+  try {
+    const read = await requestedPresentation(ctx, request)
+    if (read instanceof Response) return read
+    const contentType = rasterImageType(read.path)
+    if (contentType === undefined) return new Response('Only raster image previews are available.', { status: 415 })
+    const stat = await ctx.workspaceFiles.stat(read.scope, read.path, request.signal)
+    if (stat.bytes !== undefined && stat.bytes > MAX_IMAGE_PREVIEW_BYTES) {
+      return new Response('Presented image exceeds the preview limit.', { status: 413 })
+    }
+    const data = await ctx.workspaceFiles.readVerifiedBytes(
+      read.scope, read.path, stat, MAX_IMAGE_PREVIEW_BYTES, request.signal,
+    )
+    const current = await ctx.workspaceFiles.stat(read.scope, read.path, request.signal)
+    if (current.absolutePath !== stat.absolutePath || current.version !== stat.version) {
+      return new Response('Presented image changed while reading.', { status: 409 })
+    }
+    request.signal.throwIfAborted()
+    return new Response(new Uint8Array(data), { headers: {
+      'content-type': contentType,
+      'content-length': String(data.byteLength),
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    } })
+  } catch (error: unknown) {
+    request.signal.throwIfAborted()
+    const code = remoteErrorOf(error)?.code
+    const tooLarge = code === 'workspace-file/too-large'
+      || error instanceof Error && 'code' in error && error.code === 'FS_TOO_LARGE'
+    if (tooLarge) return new Response('Presented image exceeds the preview limit.', { status: 413 })
+    const status = code === 'workspace-file/outside-workspace' ? 404 : failureStatus(error)
+    return new Response('Presented image unavailable.', { status })
   }
 }
 

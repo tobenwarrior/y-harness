@@ -929,6 +929,8 @@ export interface BotLibraryItem {
   readonly label: string
   /** Coarse media/file badge category for the Library surface. */
   readonly category: BotLibraryItemCategory
+  /** Whether the authenticated Host may serve this item through the bounded raster preview route. */
+  readonly previewable: boolean
   /** Creation time copied from the durable Session event. */
   readonly createdAt: number
 }
