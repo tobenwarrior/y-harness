@@ -95,7 +95,7 @@ describe('product icon set', () => {
   })
 
   it('exports both weights for every reference kind', () => {
-    for (const kind of ['session', 'file', 'folder', 'bot'] as const) {
+    for (const kind of ['session', 'file', 'folder', 'bot', 'bot-group'] as const) {
       const regular = render(<primitives.ReferenceIconRegular kind={kind} />)
       expect(regular.container.querySelector('svg')?.getAttribute('stroke-width')).toBe('1')
       regular.unmount()

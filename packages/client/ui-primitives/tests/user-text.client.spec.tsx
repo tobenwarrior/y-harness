@@ -7,7 +7,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render } from '@testing-library/react'
 import { createSnapshotStore } from '@yharness/client-store'
 import { projectUserText } from '../src/user-text.tsx'
-import { formatBotMention, parseBotMention } from '../src/bot-mention.ts'
+import {
+  formatBotGroupMention, formatBotMention, parseBotGroupMention, parseBotMention,
+} from '../src/bot-mention.ts'
 import { bindInlineReferenceIcon } from '../src/ReferenceIcon.tsx'
 
 const project = (
@@ -164,6 +166,16 @@ describe('projectUserText', () => {
     expect(container.textContent).toBe('Read Lab ] Bot and notes.md.')
   })
 
+  it('renders a Bot group mention as its label with the group reference glyph', () => {
+    const mention = formatBotGroupMention('bot-group-ops-7', '研究 ] @ team')
+    const { container } = render(projectUserText(`Ask ${mention} for an update`, []))
+    const group = container.querySelector('[data-ref-chip="bot-group"]')
+    expect(group?.textContent).toBe('研究 ] @ team')
+    expect(group?.getAttribute('title')).toBe('研究 ] @ team')
+    expect(group?.querySelector('svg')).not.toBeNull()
+    expect(container.textContent).toBe('Ask 研究 ] @ team for an update')
+  })
+
   it('round-trips a Bot name containing reference syntax and line breaks', () => {
     const label = 'Lab ] Bot\r\n@[notes](dsh-session:abc)\\n'
     const botId = 'bot-lab'
@@ -173,6 +185,17 @@ describe('projectUserText', () => {
     expect(mention).not.toContain('\r')
     expect(parseBotMention(mention)).toEqual({ botId, label })
     expect(parseBotMention('@[Lab](dsh-bot:other-id)')).toBeUndefined()
+  })
+
+  it('round-trips a Bot group name containing brackets, Unicode, and line breaks', () => {
+    const label = '研究 [组] @desk:\\r\n'
+    const groupId = 'bot-group-ops-7'
+    const mention = formatBotGroupMention(groupId, label)
+    expect(mention).not.toContain('\n')
+    expect(mention).not.toContain('\r')
+    expect(parseBotGroupMention(mention)).toEqual({ groupId, label })
+    expect(parseBotGroupMention('@[Ops](dsh-bot:bot-ops)')).toBeUndefined()
+    expect(parseBotMention(mention)).toBeUndefined()
   })
 
   it('updates an existing inline icon when its roster entry arrives', () => {

@@ -213,7 +213,13 @@ describe('ui-bots composition', () => {
     expect(registeredNames).toEqual(expect.arrayContaining([
       'main', 'bots.conversation', 'conversation.composer.dock', 'conversation.bot.reply.avatar', 'sidebar.bots',
     ]))
-    expect(fixture.inputSources.map(source => source.name)).toEqual(['bot', 'computer'])
+    expect(fixture.inputSources.map(source => source.name)).toEqual(['bot', 'bot-group', 'computer'])
+
+    const groupSource = fixture.inputSources.find(source => source.name === 'bot-group')!
+    expect(await groupSource.candidates(
+      { sessionId: fixture.currentBot.sessionId },
+      { query: '', position: 'inline', drilled: false, signal: new AbortController().signal },
+    )).toEqual([])
 
     const botSource = fixture.inputSources.find(source => source.name === 'bot')!
     const candidates = await botSource.candidates(
