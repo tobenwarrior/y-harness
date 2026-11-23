@@ -1234,6 +1234,13 @@
   overflow-wrap: anywhere;
 }
 
+.routineHistoryStatus {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
 .routineHistoryEmpty {
   margin: 20px 0;
   color: var(--yh-alias-label-tertiary);

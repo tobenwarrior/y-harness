@@ -2099,6 +2099,7 @@ export class BotWorkspaceController {
           botId: brandString<BotIdType>(botId),
           routineId,
           limit: 50,
+          includeExecutionEvidence: true,
           ...(before === undefined ? {} : { before }),
         })
         if (!result.ok) throw new Error(result.error.message)

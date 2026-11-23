@@ -306,7 +306,7 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 
 /**
  * Read one bounded routine history page without activating the Bot Session.
- * @param request - Bot, routine, page size, and optional timed-delivery cursor.
+ * @param request - Bot, routine, page size, optional cursor, and optional timed execution evidence.
  * @returns Newest-first timed receipts or event deliveries/results.
  */
 @Remote('routineHistory') async routineHistory(request: BotRoutineHistoryRequest): Promise<BotRoutineHistoryValue>

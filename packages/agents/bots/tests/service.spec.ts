@@ -12671,6 +12671,43 @@ describe('durable Bot roster', () => {
       const history = await h.service.routineHistory({ botId: created.bot.id, routineId: String(task.id), limit: 10 })
       expect(history).toMatchObject({ kind: 'schedule', id: task.id, records: [] })
 
+      const evidenceRecord = {
+        scheduledAt: '2026-01-01T00:00:00.000Z',
+        deliveredAt: '2026-01-01T00:00:01.000Z',
+        messageId: MessageId('routine-evidence-delivery'),
+        prompt: 'Check status',
+      }
+      const historyCall = vi.spyOn(schedule, 'history')
+        .mockResolvedValue({
+          id: task.id,
+          records: [evidenceRecord],
+          earlierRecordsUnavailable: false,
+          earlierRecordsPruned: false,
+          retention: { days: 30, records: 100 },
+        })
+      const evidence = await h.service.routineHistory({
+        botId: created.bot.id,
+        routineId: String(task.id),
+        limit: 10,
+        includeExecutionEvidence: true,
+      })
+      expect(evidence).toMatchObject({
+        kind: 'schedule',
+        records: [{ messageId: evidenceRecord.messageId, executionEvidence: { status: 'delivery-only' } }],
+      })
+      h.inspect.mockRejectedValueOnce(new Error('fixture inspection failure'))
+      const unavailable = await h.service.routineHistory({
+        botId: created.bot.id,
+        routineId: String(task.id),
+        limit: 10,
+        includeExecutionEvidence: true,
+      })
+      expect(unavailable).toMatchObject({
+        kind: 'schedule',
+        records: [{ messageId: evidenceRecord.messageId, executionEvidence: { status: 'unavailable' } }],
+      })
+      historyCall.mockRestore()
+
       await expect(other.service.listRoutines({ botId: created.bot.id })).rejects.toMatchObject({ code: 'bot/not-found' })
       const removed = await h.service.deleteRoutine({ botId: created.bot.id, routineId: String(task.id) })
       expect(removed).toEqual({ id: task.id, deleted: true })

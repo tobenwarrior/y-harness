@@ -442,6 +442,53 @@ export interface BotRoutineHistoryRequest {
   readonly limit: number
   /** Exclusive cursor for timed delivery history. */
   readonly before?: MessageId
+  /**
+   * Include bounded evidence from the Bot Session for each returned timed
+   * delivery. The default keeps this API delivery-only and never reads the
+   * Session log.
+   */
+  readonly includeExecutionEvidence?: true
+}
+
+/** Safe counts of work observed in one persisted scheduled turn. */
+export interface BotRoutineExecutionCounts {
+  /** Native Bot actions that reached a durable settlement. */
+  readonly nativeActions: {
+    readonly settled: number
+    readonly succeeded: number
+    readonly failed: number
+  }
+  /** Ordinary model-requested tools and their durable results. */
+  readonly ordinaryTools: {
+    readonly calls: number
+    readonly succeeded: number
+    readonly failed: number
+  }
+}
+
+/** Owner-facing execution state for one timed delivery. */
+export interface BotRoutineExecutionEvidence extends BotRoutineExecutionCounts {
+  /** Delivery identity used to correlate this evidence with the receipt. */
+  readonly messageId: MessageId
+  /** Conservative evidence classification; this is not a model result. */
+  readonly status:
+    | 'delivery-only'
+    | 'started'
+    | 'completed-no-tool-use'
+    | 'completed-with-tool-use'
+    | 'ambiguous'
+    | 'unavailable'
+  /** Persisted turn number when one could be identified. */
+  readonly turn?: number
+  /** Persisted turn-ending reason, when the turn closed. */
+  readonly turnStatus?: 'completed' | 'error' | 'aborted' | 'blocked' | 'max-tokens' | 'interrupted' | 'forked' | 'other'
+  /** Persisted turn-end time, when the turn closed. */
+  readonly completedAt?: string
+}
+
+/** Timed delivery receipt with optional owner-requested Session evidence. */
+export type BotScheduleDeliveryRecord = ScheduleDeliveryRecord & {
+  readonly executionEvidence?: BotRoutineExecutionEvidence
 }
 
 /** Timed routine history returned by the Bot-scoped API. */
@@ -451,7 +498,7 @@ export interface BotScheduleRoutineHistory {
   /** Stable timed routine identity. */
   readonly id: ScheduleId
   /** Newest-first acknowledged deliveries. */
-  readonly records: readonly ScheduleDeliveryRecord[]
+  readonly records: readonly BotScheduleDeliveryRecord[]
   /** Whether older records may be unavailable. */
   readonly earlierRecordsUnavailable: boolean
   /** Whether retention pruning removed an older record. */

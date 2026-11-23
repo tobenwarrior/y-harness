@@ -9,6 +9,7 @@ import { SessionId } from '@yharness/session'
 import { BotRoutineManager } from '../src/client/BotRoutineManager.tsx'
 import { en } from '../src/client/locales.ts'
 import type { BotRoutineManagerActions, BotSummary } from '../src/client/types.ts'
+import { MessageId } from '@yharness/llm/brand'
 
 afterEach(cleanup)
 
@@ -60,6 +61,67 @@ describe('BotRoutineManager', () => {
     const detail = screen.getByRole('region', { name: 'Routine details' })
     expect(within(detail).getByText('Repeats every 1 minute 1 second')).toBeTruthy()
     expect(within(list).getByRole('button', { name: 'View results for Routine cadence' })).toBeTruthy()
+  })
+
+  it('separates timed delivery from optional execution evidence', async () => {
+    const routine = schedule()
+    const firstMessage = MessageId('routine-evidence-completed')
+    const secondMessage = MessageId('routine-evidence-tools')
+    const legacyMessage = MessageId('routine-evidence-missing')
+    const history = {
+      kind: 'schedule' as const,
+      id: routine.id,
+      records: [
+        {
+          scheduledAt: '2026-11-04T03:00:00.000Z',
+          deliveredAt: '2026-11-04T03:00:01.000Z',
+          messageId: firstMessage,
+          prompt: 'No-tool turn',
+          executionEvidence: {
+            messageId: firstMessage,
+            status: 'completed-no-tool-use' as const,
+            turn: 3,
+            turnStatus: 'completed' as const,
+            completedAt: '2026-11-04T03:00:02.000Z',
+            nativeActions: { settled: 0, succeeded: 0, failed: 0 },
+            ordinaryTools: { calls: 0, succeeded: 0, failed: 0 },
+          },
+        },
+        {
+          scheduledAt: '2026-11-04T02:00:00.000Z',
+          deliveredAt: '2026-11-04T02:00:01.000Z',
+          messageId: secondMessage,
+          prompt: 'Tool turn',
+          executionEvidence: {
+            messageId: secondMessage,
+            status: 'completed-with-tool-use' as const,
+            turn: 2,
+            turnStatus: 'completed' as const,
+            completedAt: '2026-11-04T02:00:02.000Z',
+            nativeActions: { settled: 1, succeeded: 1, failed: 0 },
+            ordinaryTools: { calls: 1, succeeded: 1, failed: 0 },
+          },
+        },
+        {
+          scheduledAt: '2026-11-04T01:00:00.000Z',
+          deliveredAt: '2026-11-04T01:00:01.000Z',
+          messageId: legacyMessage,
+          prompt: 'Legacy delivery',
+        },
+      ],
+      earlierRecordsUnavailable: false,
+      earlierRecordsPruned: false,
+      retention: { days: 30, records: 100 },
+    }
+    const actions = actionsFor([routine], { history: vi.fn(async () => history) })
+
+    render(<BotRoutineManager bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'View results for Routine cadence' }))
+
+    expect(await screen.findByText('Delivered · No tool work observed')).toBeTruthy()
+    expect(screen.getByText('Delivered · Tool work observed')).toBeTruthy()
+    expect(screen.getByText('Delivered · Work not verified')).toBeTruthy()
+    expect(screen.queryByText('Completed')).toBeNull()
   })
 
   it('does not submit a second delete while the first removal is pending', async () => {

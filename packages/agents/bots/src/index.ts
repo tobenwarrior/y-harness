@@ -41,6 +41,7 @@ import type {
   DailyInput,
   ScheduleCatalogEntry,
   ScheduleCreateRequest,
+  ScheduleDeliveryRecord,
   ScheduleLifecycleView,
   ScheduleRecord,
   ScheduleTimingChange,
@@ -195,6 +196,7 @@ import type {
   BotGrokImportValue,
   BotMemoryView,
   BotRoutineDeleteValue,
+  BotScheduleDeliveryRecord,
   BotRoutineHistoryRequest,
   BotRoutineHistoryValue,
   BotRoutineLifecycleRequest,
@@ -224,6 +226,7 @@ import type {
   BotSharedRosterFenceRecoveryValue,
   BotView,
 } from './types.ts'
+import { routineExecutionEvidenceForMessages, unavailableRoutineExecutionEvidence } from './routine-evidence.ts'
 import {
   BOT_APPEARANCE_MIGRATION_VERSION,
   botDomain,
@@ -7187,7 +7190,7 @@ export class BotService extends TypertRemoteService {
 
   /**
    * Read one bounded routine history page without activating the Bot Session.
-   * @param request - Bot, routine, page size, and optional timed-delivery cursor.
+   * @param request - Bot, routine, page size, optional cursor, and optional timed execution evidence.
    * @returns Newest-first timed receipts or event deliveries/results.
    */
   @Remote('routineHistory')
@@ -7220,9 +7223,40 @@ export class BotService extends TypertRemoteService {
       limit: request.limit,
       ...(request.before === undefined ? {} : { before: request.before }),
     })
-    if ('records' in result) return { kind: 'schedule', ...result }
+    if ('records' in result) {
+      const records = request.includeExecutionEvidence === true
+        ? await this.readRoutineExecutionEvidence(bot.sessionId, result.records)
+        : result.records
+      return { kind: 'schedule', ...result, records }
+    }
     if (result.code === 'delivery_cursor_not_found') return { id: routineId, code: 'delivery_cursor_not_found' }
     return { id: routineId, code: 'routine_not_found' }
+  }
+
+  /**
+   * Attach read-only execution evidence to a bounded set of timed receipts.
+   * @param sessionId - Session bound to the owner Bot.
+   * @param records - Schedule receipts already bounded by the Schedule API.
+   * @returns The same receipts with redacted evidence, when available.
+   */
+  private async readRoutineExecutionEvidence(
+    sessionId: SessionId,
+    records: readonly ScheduleDeliveryRecord[],
+  ): Promise<readonly BotScheduleDeliveryRecord[]> {
+    if (records.length === 0) return records
+    try {
+      const inspection = await this.ctx.sessionController.inspect(sessionId)
+      const evidence = routineExecutionEvidenceForMessages(inspection.events, records.map(record => record.messageId))
+      return records.map(record => ({
+        ...record,
+        executionEvidence: evidence.get(String(record.messageId)) ?? unavailableRoutineExecutionEvidence(record.messageId),
+      }))
+    } catch {
+      return records.map(record => ({
+        ...record,
+        executionEvidence: unavailableRoutineExecutionEvidence(record.messageId),
+      }))
+    }
   }
 
   /**
