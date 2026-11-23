@@ -154,7 +154,7 @@ def main():
     parser.add_argument('--connected-app-map', type=Path,
                         help='Absolute JSON map for reviewed connected-app grants. This mode imports apps only.')
     parser.add_argument('--discover-connected-apps', action='store_true',
-                        help='Read source app labels and configured target access without changing the Bot.')
+                        help='Read source app labels and visible target access entries without changing the Bot.')
     parser.add_argument('--expected-updated-at', type=int,
                         help='Revision printed by a reviewed connected-app preview. Required with --apply.')
     parser.add_argument('--apply', action='store_true', help='Write entries. By default, preview only.')
