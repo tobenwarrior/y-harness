@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Install or explicitly upgrade the separate GitHub launcher."""
 import argparse
+import ctypes
+import errno
 import fcntl
 import json
 import os
@@ -16,6 +18,7 @@ from pathlib import Path
 
 LSREGISTER = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 CODESIGN = "/usr/bin/codesign"
+RENAME_SWAP = 0x2
 BOOTSTRAP_FILES = (
     "github-source-updater.py",
     "github-desktop-supervisor.py",
@@ -162,6 +165,20 @@ def _release_supervisor_lock(fd):
         os.close(fd)
 
 
+def _rename_swap(source, destination):
+    """Atomically exchange two managed paths on a macOS volume."""
+    if sys.platform != "darwin":
+        raise OSError(errno.ENOTSUP, "atomic path exchange requires macOS", str(destination))
+    libc = ctypes.CDLL(None, use_errno=True)
+    renamex = libc.renamex_np
+    renamex.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+    renamex.restype = ctypes.c_int
+    result = renamex(os.fsencode(source), os.fsencode(destination), RENAME_SWAP)
+    if result != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), str(destination))
+
+
 def _validate_existing_install(home):
     home = Path(home).absolute()
     app = home / "Applications" / "Y Harness GitHub.app"
@@ -208,61 +225,64 @@ def _stage_bootstrap(support, source):
     return staging
 
 
-def upgrade_existing(home, source, run=subprocess.run, *, register=subprocess.run, sign=None):
+def upgrade_existing(home, source, run=subprocess.run, *, register=subprocess.run, sign=None, exchange=None):
     """Upgrade an installed managed wrapper without replacing its profile or versions."""
     app, support, bootstrap = _validate_existing_install(home)
     lock_fd = _acquire_supervisor_lock(support)
+    swap = _rename_swap if exchange is None else exchange
     try:
         source = Path(source)
         for name in BOOTSTRAP_FILES:
             _owned_regular(_bootstrap_source(source, name), f"bootstrap source/{name}", private=False)
         staged_bootstrap = _stage_bootstrap(support, source)
+        staged_app = Path(support) / (".launcher-upgrade-" + uuid.uuid4().hex + ".app")
         old_app = Path(support) / (".launcher-backup-" + uuid.uuid4().hex + ".app")
         old_bootstrap = Path(support) / (".bootstrap-backup-" + uuid.uuid4().hex)
+        bootstrap_swapped = False
+        app_swapped = False
         try:
-            with tempfile.TemporaryDirectory(prefix="launcher-upgrade-", dir=support) as tmp:
-                compiled = Path(tmp) / "launcher.app"
-                script = launcher_source(bootstrap / "github-desktop-bootstrap.py")
-                run(["/usr/bin/osacompile", "-o", str(compiled), "-e", script], check=True)
-                register_dsh_scheme(compiled)
-                if sign is not None:
-                    sign(compiled)
-                elif run is subprocess.run:
-                    sign_bundle(compiled)
-                os.chmod(compiled, 0o700)
-                _owned_directory(compiled, "staged managed launcher", private=False)
-                _owned_regular(compiled / "Contents" / "Info.plist", "staged launcher Info.plist", private=False)
-                _owned_directory(compiled / "Contents" / "MacOS", "staged launcher MacOS", private=False)
-                executable = compiled / "Contents" / "MacOS" / "applet"
-                if not executable.exists():
-                    executable = compiled / "Contents" / "MacOS" / "Electron"
-                _owned_regular(executable, "staged launcher executable", private=False)
-                moved_app = False
-                moved_bootstrap = False
-                installed_bootstrap = False
+            script = launcher_source(bootstrap / "github-desktop-bootstrap.py")
+            run(["/usr/bin/osacompile", "-o", str(staged_app), "-e", script], check=True)
+            register_dsh_scheme(staged_app)
+            if sign is not None:
+                sign(staged_app)
+            elif run is subprocess.run:
+                sign_bundle(staged_app)
+            os.chmod(staged_app, 0o700)
+            _owned_directory(staged_app, "staged managed launcher", private=False)
+            _owned_regular(staged_app / "Contents" / "Info.plist", "staged launcher Info.plist", private=False)
+            _owned_directory(staged_app / "Contents" / "MacOS", "staged launcher MacOS", private=False)
+            executable = staged_app / "Contents" / "MacOS" / "applet"
+            if not executable.exists():
+                executable = staged_app / "Contents" / "MacOS" / "Electron"
+            _owned_regular(executable, "staged launcher executable", private=False)
+            swap(staged_bootstrap, bootstrap)
+            bootstrap_swapped = True
+            try:
+                swap(staged_app, app)
+                app_swapped = True
+            except Exception:
+                # The old wrapper and bootstrap remain available if the second
+                # exchange fails. Restore the original pair when possible.
                 try:
-                    os.rename(app, old_app)
-                    moved_app = True
-                    os.rename(bootstrap, old_bootstrap)
-                    moved_bootstrap = True
-                    os.rename(staged_bootstrap, bootstrap)
-                    installed_bootstrap = True
-                    os.rename(compiled, app)
-                except Exception:
-                    if installed_bootstrap and bootstrap.exists():
-                        os.rename(bootstrap, staged_bootstrap)
-                    if moved_bootstrap and old_bootstrap.exists():
-                        os.rename(old_bootstrap, bootstrap)
-                    if moved_app and old_app.exists():
-                        os.rename(old_app, app)
-                    raise
+                    swap(staged_bootstrap, bootstrap)
+                    bootstrap_swapped = False
+                except Exception as rollback_error:
+                    raise RuntimeError(
+                        "managed launcher exchange failed; old and new paths were retained"
+                    ) from rollback_error
+                raise
+            os.rename(staged_bootstrap, old_bootstrap)
+            os.rename(staged_app, old_app)
             if sys.platform == "darwin" and (run is subprocess.run or register is not subprocess.run):
                 register([LSREGISTER, "-f", str(app)], check=False,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return app
         except Exception:
-            if staged_bootstrap.exists():
+            if not bootstrap_swapped and staged_bootstrap.exists():
                 shutil.rmtree(staged_bootstrap)
+            if not app_swapped and staged_app.exists():
+                shutil.rmtree(staged_app)
             raise
     finally:
         _release_supervisor_lock(lock_fd)

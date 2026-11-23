@@ -41,6 +41,7 @@ class InstallerTest(unittest.TestCase):
         self.calls = []
         self.registration_calls = []
         self.sign_calls = []
+        self.exchange_calls = 0
 
     def compile(self, args, check):
         self.calls.append((args, check))
@@ -56,6 +57,23 @@ class InstallerTest(unittest.TestCase):
 
     def register(self, args, check, **kwargs):
         self.registration_calls.append((args, check, kwargs))
+
+    def exchange(self, source, destination):
+        self.exchange_calls += 1
+        self._exchange_paths(source, destination)
+
+    def _exchange_paths(self, source, destination):
+        temporary = Path(tempfile.mkdtemp(prefix=".exchange-", dir=source.parent))
+        temporary.rmdir()
+        os.rename(source, temporary)
+        os.rename(destination, source)
+        os.rename(temporary, destination)
+
+    def fail_second_exchange(self, source, destination):
+        self.exchange_calls += 1
+        if self.exchange_calls == 2:
+            raise OSError("synthetic second exchange failure")
+        self._exchange_paths(source, destination)
 
     def test_install_and_safe_applescript_arguments(self):
         app = installer.install(self.home, self.source, self.compile, resolve_tool=self.which)
@@ -128,7 +146,8 @@ class InstallerTest(unittest.TestCase):
         (managed / "current").write_text("keep versions")
         runtime = (support / "bootstrap" / "runtime.json").read_bytes()
         result = installer.upgrade_existing(
-            self.home, self.source, self.compile, register=self.register, sign=self.sign)
+            self.home, self.source, self.compile, register=self.register, sign=self.sign,
+            exchange=self.exchange)
         self.assertEqual(result, app)
         self.assertEqual((data / "profile").read_text(), "keep profile")
         self.assertEqual((managed / "current").read_text(), "keep versions")
@@ -144,9 +163,29 @@ class InstallerTest(unittest.TestCase):
         self.assertIn('bootstrap/github-desktop-bootstrap.py"', upgrade_script)
         self.assertNotIn(".bootstrap-upgrade-", upgrade_script)
         installer.upgrade_existing(
-            self.home, self.source, self.compile, register=self.register, sign=self.sign)
+            self.home, self.source, self.compile, register=self.register, sign=self.sign,
+            exchange=self.exchange)
         self.assertEqual((data / "profile").read_text(), "keep profile")
         self.assertEqual((managed / "current").read_text(), "keep versions")
+
+    def test_upgrade_restores_both_paths_when_second_exchange_fails(self):
+        app = installer.install(self.home, self.source, self.compile, resolve_tool=self.which)
+        old_marker = app / "Contents" / "old-marker"
+        old_marker.write_text("old wrapper")
+        old_bootstrap = (self.home / "Library/Application Support/Y Harness GitHub/bootstrap"
+                         / "github-desktop-bootstrap.py").read_text()
+        with self.assertRaisesRegex(OSError, "synthetic second exchange failure"):
+            installer.upgrade_existing(
+                self.home, self.source, self.compile, sign=self.sign,
+                exchange=self.fail_second_exchange)
+        self.assertEqual(self.exchange_calls, 3)
+        self.assertEqual(old_marker.read_text(), "old wrapper")
+        self.assertEqual(
+            (self.home / "Library/Application Support/Y Harness GitHub/bootstrap"
+             / "github-desktop-bootstrap.py").read_text(), old_bootstrap)
+        support = self.home / "Library/Application Support/Y Harness GitHub"
+        self.assertFalse(any(path.name.startswith(".launcher-upgrade-") for path in support.iterdir()))
+        self.assertFalse(any(path.name.startswith(".bootstrap-upgrade-") for path in support.iterdir()))
 
     def test_upgrade_refuses_a_running_managed_supervisor(self):
         installer.install(self.home, self.source, self.compile, resolve_tool=self.which)
