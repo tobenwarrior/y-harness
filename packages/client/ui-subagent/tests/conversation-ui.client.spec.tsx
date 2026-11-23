@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { makeTranslate, RemoteError, sessionSnapshot } from '@yharness/client-test-runtime'
+import { createToolResultMessage, LlmAttemptId, ToolCallId } from '@yharness/llm'
+import { SessionSeq } from '@yharness/session'
 import type {
-  SessionListState, SessionSummary, SessionSnapshot,
+  SessionEventLikeEntry, SessionListState, SessionSummary, SessionSnapshot,
 } from '@yharness/api-session-controller/client'
+import type { SessionEvent } from '@yharness/session/types'
 import type { SubagentAddress, SubagentCatalogRow } from '@yharness/subagent/client'
 import type { SessionId } from '@yharness/session/types'
 import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
@@ -12,6 +15,7 @@ import {
   SubagentActivity, SubagentCatalogAction, SubagentHeaderLineage,
   type SubagentCatalogActionProps, type SubagentHeaderLineageProps,
 } from '../src/client/SubagentHeaderLineage.tsx'
+import { summarizeSubagentActivity } from '../src/client/activity.ts'
 import { SubagentReadOnlyComposer } from '../src/client/SubagentReadOnlyComposer.tsx'
 import { en } from '../src/client/locales.ts'
 
@@ -122,6 +126,7 @@ function props(
     openChild: vi.fn(),
     openChildAside: vi.fn(),
     refreshProjection: vi.fn(),
+    readChildActivity: vi.fn(async () => []),
     lineageSessionId: PARENT,
     displayTitle: 'Parent title',
     t,
@@ -298,6 +303,130 @@ describe('SubagentHeaderLineage', () => {
     expect(input.openChildAside).toHaveBeenCalledWith({ parentSessionId: PARENT, childSessionId: CHILD, mode: 'continuable' })
     expect(input.openChild).not.toHaveBeenCalled()
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('loads a child activity preview only after an explicit expansion', async () => {
+    const input = props(catalog())
+    const readChildActivity = vi.fn(async () => [
+      { kind: 'action' as const, name: 'read', status: 'running' as const },
+      { kind: 'result' as const, name: 'read', status: 'completed' as const },
+      { kind: 'result' as const, name: 'write', status: 'failed' as const },
+    ])
+    render(<SubagentActivity {...input} readChildActivity={readChildActivity} />)
+    const trigger = screen.getByRole('button', { name: 'Agents, 1 running, 2 total' })
+    fireEvent.click(trigger)
+
+    expect(readChildActivity).not.toHaveBeenCalled()
+    const preview = screen.getByRole('button', { name: 'Recent activity for worker' })
+    fireEvent.click(preview)
+    expect(readChildActivity).toHaveBeenCalledWith({
+      parentSessionId: PARENT, childSessionId: CHILD, mode: 'continuable',
+    })
+    expect(screen.getByText('Loading recent activity…')).toBeTruthy()
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByText('Action · read')).toBeTruthy()
+    expect(screen.getByText('Result · read')).toBeTruthy()
+    expect(screen.getByText('Failed · write')).toBeTruthy()
+
+    fireEvent.keyDown(preview, { key: 'Enter' })
+    fireEvent.click(preview)
+    expect(screen.queryByText('Action · read')).toBeNull()
+    fireEvent.click(preview)
+    expect(readChildActivity).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not start a second activity read while the first one is pending', async () => {
+    const input = props(catalog())
+    const deferred = Promise.withResolvers<readonly [{ kind: 'action'; name: 'read'; status: 'running' }]>()
+    const readChildActivity = vi.fn(() => deferred.promise)
+    render(<SubagentActivity {...input} readChildActivity={readChildActivity} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Agents, 1 running, 2 total' }))
+    const preview = screen.getByRole('button', { name: 'Recent activity for worker' })
+    fireEvent.click(preview)
+    await waitFor(() => { expect(screen.getByText('Loading recent activity…')).toBeTruthy() })
+    fireEvent.click(preview)
+    fireEvent.click(preview)
+    expect(readChildActivity).toHaveBeenCalledTimes(1)
+    deferred.resolve([{ kind: 'action', name: 'read', status: 'running' }])
+    await waitFor(() => { expect(screen.getByText('Action · read')).toBeTruthy() })
+  })
+
+  it('keeps the Code catalog compact until its activity preview is expanded', async () => {
+    const input = props(catalog())
+    const readChildActivity = vi.fn(async () => [
+      { kind: 'action' as const, name: 'search', status: 'running' as const },
+    ])
+    render(<HeaderCatalog {...input} readChildActivity={readChildActivity} />)
+    const trigger = screen.getByRole('button', { name: /1 subagent running/ })
+    hoverCatalog(trigger)
+    vi.useRealTimers()
+    const worker = screen.getByRole('treeitem', { name: /worker/ })
+    expect(readChildActivity).not.toHaveBeenCalled()
+    fireEvent.click(within(worker).getByRole('button', { name: 'Recent activity for worker' }))
+    expect(readChildActivity).toHaveBeenCalledWith({
+      parentSessionId: PARENT, childSessionId: CHILD, mode: 'continuable',
+    })
+    await waitFor(() => { expect(screen.getByText('Action · search')).toBeTruthy() })
+  })
+
+  it('keeps failed and empty activity reads inside the explicit preview', async () => {
+    const input = props(catalog())
+    const readChildActivity = vi.fn()
+      .mockRejectedValueOnce(new Error('read failed'))
+      .mockResolvedValueOnce([])
+    const view = render(<SubagentActivity {...input} readChildActivity={readChildActivity} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Agents, 1 running, 2 total' }))
+    const preview = screen.getByRole('button', { name: 'Recent activity for worker' })
+    fireEvent.click(preview)
+    await waitFor(() => { expect(screen.getByText('Unable to load recent activity')).toBeTruthy() })
+    fireEvent.click(preview)
+    await waitFor(() => { expect(preview.getAttribute('aria-expanded')).toBe('false') })
+    fireEvent.click(preview)
+    await waitFor(() => { expect(screen.getByText('No recent tool activity')).toBeTruthy() })
+    expect(readChildActivity).toHaveBeenCalledTimes(2)
+    view.unmount()
+  })
+
+  it('projects only bounded tool names and result status from a child tail', () => {
+    const call: SessionEvent<'tool/call'> = {
+      type: 'tool/call', seq: SessionSeq(2), time: 2,
+      data: { turn: 1, step: 1, callId: ToolCallId('read-call'), name: 'read', arguments: '{"secret":"omit"}' },
+    }
+    const result: SessionEvent<'tool/result'> = {
+      type: 'tool/result', seq: SessionSeq(3), time: 3, surfaceOp: 'append',
+      data: { turn: 1, step: 1, message: createToolResultMessage({
+        callId: ToolCallId('read-call'), content: [{ type: 'text', text: 'private result omitted' }], isError: false,
+      }) },
+    }
+    const failed: SessionEvent<'tool/result'> = {
+      type: 'tool/result', seq: SessionSeq(4), time: 4, surfaceOp: 'append',
+      data: { turn: 1, step: 1, message: createToolResultMessage({
+        callId: ToolCallId('missing-call'), content: [{ type: 'text', text: 'private error omitted' }], isError: true,
+      }) },
+    }
+    const turnStart: SessionEvent<'turn/start'> = {
+      type: 'turn/start', seq: SessionSeq(5), time: 5, data: { turn: 1 },
+    }
+    const entries: SessionEventLikeEntry[] = [
+      {
+        type: 'transient', event: {
+          type: 'assistant/live-chunk', seq: 1.5, time: 1.5,
+          data: {
+            turn: 1, step: 1, attemptId: LlmAttemptId('activity-tail'),
+            chunk: { type: 'text-delta', index: 0, text: 'ignored' },
+          },
+        },
+      },
+      { type: 'event', event: turnStart },
+      { type: 'event', event: call },
+      { type: 'event', event: result },
+      { type: 'event', event: failed },
+    ]
+    expect(summarizeSubagentActivity(entries)).toEqual([
+      { kind: 'action', name: 'read', status: 'running' },
+      { kind: 'result', name: 'read', status: 'completed' },
+      { kind: 'result', name: 'tool', status: 'failed' },
+    ])
   })
 
   it('sorts running agents and previous agents by start time and routes descendants to the sidebar', () => {
