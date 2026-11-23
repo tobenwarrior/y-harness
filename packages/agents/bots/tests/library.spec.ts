@@ -5,6 +5,7 @@ import {
   type BotLibraryEvent,
   type BotLibraryEventReader,
 } from '../src/library.ts'
+import { readLibraryLinks } from '../src/library-links.ts'
 import { BotId } from '../src/types.ts'
 import { SessionId } from '@yharness/session'
 
@@ -64,6 +65,55 @@ describe('Bot Library event projection', () => {
       [2, 'image', 'photo.PNG'],
       [1, 'file', 'report.pdf'],
     ])
+  })
+
+  it('lists links from settled Bot replies through the same cursor as presented files', async () => {
+    const content = [{ type: 'text', text: [
+      '[Release notes](https://docs.example.com/release)',
+      'Read https://status.example.com/ today.',
+      '[Runbook][runbook]',
+      '[runbook]: https://support.example.com/runbook',
+      '[Unsafe](javascript:alert(1)) [Credentials](https://account:password@example.com/login)',
+      '![Picture](https://images.example.com/test.png)',
+      '`https://code.example.com/snippet`',
+    ].join('\n\n') }, { type: 'reasoning', text: 'Private https://reasoning.example.com/' }]
+    const source = reader([
+      { seq: 0, time: 1, type: 'user/message', data: { message: { content } } },
+      presented(1, 2, [{ path: 'report.txt' }]),
+      { seq: 2, time: 3, type: 'assistant/message', data: { message: { content } } },
+    ])
+    const first = await readBotLibraryPage(botId, sessionId, source, 2)
+    expect(first.items).toEqual([
+      expect.objectContaining({ category: 'link', label: 'Runbook', url: 'https://support.example.com/runbook', eventSeq: 2, fileIndex: 2 }),
+      expect.objectContaining({ category: 'link', url: 'https://status.example.com/', eventSeq: 2, fileIndex: 1 }),
+    ])
+    expect(first.nextBefore).toEqual({ eventSeq: 2, fileIndex: 1 })
+    const next = await readBotLibraryPage(botId, sessionId, source, 4, first.nextBefore)
+    expect(next.items).toEqual([
+      expect.objectContaining({ category: 'link', label: 'Release notes', url: 'https://docs.example.com/release', eventSeq: 2, fileIndex: 0 }),
+      expect.objectContaining({ category: 'file', label: 'report.txt', eventSeq: 1, fileIndex: 0 }),
+    ])
+    expect(next.nextBefore).toBeUndefined()
+  })
+
+  it('keeps labels plain and bounds duplicates, URLs, and oversized replies', () => {
+    const response = [
+      '[**Runbook** `index`](https://docs.example.com/)',
+      'https://docs.example.com/',
+      '[invalid](https://)',
+      `[too long](https://docs.example.com/${'x'.repeat(2_048)})`,
+      `[${'x'.repeat(200)}](https://status.example.com/)`,
+      ...Array.from({ length: 40 }, (_, index) => `[item](https://items.example.com/${index})`),
+    ].join('\n\n')
+    const links = readLibraryLinks(response)
+    expect(links).toHaveLength(32)
+    expect(links.slice(0, 2)).toEqual([
+      { label: 'Runbook index', url: 'https://docs.example.com/' },
+      { label: `${'x'.repeat(159)}…`, url: 'https://status.example.com/' },
+    ])
+    expect(readLibraryLinks(`${'z'.repeat(64 * 1024)} https://docs.example.com/`)).toEqual([])
+    expect(readLibraryLinks(`[Encoded path](https://docs.example.com/${'é'.repeat(500)})`)).toEqual([])
+    expect(readLibraryLinks('No links here.')).toEqual([])
   })
 
   it('seeks through files sharing one event and then older events without duplicates', async () => {

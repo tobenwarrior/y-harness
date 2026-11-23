@@ -9,6 +9,9 @@ const WEBSITE_LOGIN_USE_PATH = /^\/__yharness\/vault-login-use\/([a-f0-9]{32})$/
 /** Marker appended to the authenticated Cloud view's user agent for native capability detection. */
 export const CLOUD_DESKTOP_USER_AGENT = 'YHarnessCloudDesktop/1'
 
+/** Maximum URL payload accepted from the Cloud link click handler. */
+export const CLOUD_EXTERNAL_URL_MAX_LENGTH = 2_048
+
 /** Connection state rendered by the workspace controls. */
 export type CloudWorkspaceStatus = 'setup' | 'connecting' | 'online' | 'reconnecting' | 'offline'
 
@@ -41,6 +44,20 @@ export function cloudRequestAllowed(origin: string, destination: string): boolea
   const url = new URL(destination)
   if (url.username || url.password) return false
   return url.origin === origin || (url.protocol === 'ws:' && `http://${url.host}` === origin)
+}
+
+/**
+ * Validate one canonical external URL sent by the isolated Cloud preload.
+ * @param value - untrusted IPC payload from a Cloud document.
+ * @returns the canonical HTTP(S) URL, or undefined when the payload is refused.
+ */
+export function cloudExternalUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length === 0 || value.length > CLOUD_EXTERNAL_URL_MAX_LENGTH
+    || !URL.canParse(value)) return undefined
+  const url = new URL(value)
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username !== '' || url.password !== ''
+    || url.href !== value) return undefined
+  return url.href
 }
 
 /**

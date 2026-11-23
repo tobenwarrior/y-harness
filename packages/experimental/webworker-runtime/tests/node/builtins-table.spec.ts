@@ -60,6 +60,20 @@ describe('the replacement table', () => {
 })
 
 describe('module identity through the loader', () => {
+  it('prefers a worker export over a browser export', () => {
+    const vfs = new MemoryVfs()
+    vfs.seedDirectory('/dsh/node_modules/example')
+    vfs.writeFileSync('/dsh/node_modules/example/package.json', JSON.stringify({
+      exports: { '.': { worker: './worker.js', browser: './browser.js', default: './default.js' } },
+    }))
+    vfs.writeFileSync('/dsh/node_modules/example/worker.js', 'module.exports = "worker"\n')
+    vfs.writeFileSync('/dsh/node_modules/example/browser.js', 'module.exports = "browser"\n')
+    vfs.writeFileSync('/dsh/node_modules/example/default.js', 'module.exports = "default"\n')
+    const loader = new WorkerModuleLoader({ vfs, root: '/dsh', staticModules: createNodeBuiltins() })
+
+    expect(loader.createRequire('/dsh/')('example')).toBe('worker')
+  })
+
   it('exposes async and synchronous resolution through the Cordis internal seam', async () => {
     const vfs = new MemoryVfs()
     vfs.seedDirectory('/dsh/node_modules/example')
