@@ -1313,11 +1313,11 @@ export function BotDetail({
         </span>
       </header>
       {share !== undefined && (
-        <BotShareDialog key={bot.id} bot={bot} actions={share} open={shareTarget === bot.id}
+        <BotShareDialog key={'share-' + bot.id} bot={bot} actions={share} open={shareTarget === bot.id}
           onClose={() => { setShareTarget(null) }} t={t} />
       )}
       {readGrokHistory !== undefined && (
-        <GrokHistoryDialog key={bot.id} botId={bot.id} botName={bot.name} read={readGrokHistory}
+        <GrokHistoryDialog key={'history-' + bot.id} botId={bot.id} botName={bot.name} read={readGrokHistory}
           open={historyTarget === bot.id} onClose={() => { setHistoryTarget(null) }} t={t} />
       )}
       {bot.status === 'working' && (bot.preview !== undefined || bot.activity !== undefined) && (

@@ -57,11 +57,15 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
       title: 'Morning check-in', prompt: 'Review the project.', every_seconds: 86400,
     })
     browser = await chromium.launch()
+    await openWorkspacePage()
+  }, 120_000)
+
+  async function openWorkspacePage(): Promise<void> {
     page = await newEnglishPage(browser)
     tripwire = watchConsole(page)
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
     await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-  }, 120_000)
+  }
 
   afterAll(async () => {
     await browser?.close()
@@ -231,7 +235,7 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await historyDialog.getByText('Orbit historian', { exact: true }).waitFor()
     await historyDialog.getByText('Author Original author', { exact: true }).waitFor()
     await historyDialog.getByText('Archive tool', { exact: true }).waitFor()
-    await historyDialog.getByText('Some records could not be recovered from this source.').waitFor()
+    await historyDialog.getByText('Some messages could not be recovered.', { exact: true }).waitFor()
     await historyDialog.getByText('Unknown time', { exact: true }).first().waitFor()
     await historyDialog.getByText('Incomplete source record', { exact: true }).waitFor()
     await expect.poll(() => historyDialog.locator('time').count()).toBe(1)
@@ -301,6 +305,8 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
 
   it('opens previous agent work beside the Bot and keeps its conversation selected', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-bot-agent-chat'))
+    await page.context().close()
+    await openWorkspacePage()
     const mode = page.getByRole('button', { name: 'Bots', exact: true })
     if (await mode.getAttribute('aria-pressed') !== 'true') await mode.click()
     await page.locator(`[data-bot-id="${firstBot.id}"]`).click()

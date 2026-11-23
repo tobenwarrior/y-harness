@@ -180,11 +180,12 @@ const supportedCodexTargets = new Set([
 ])
 const actualCodexSmoke = supportedCodexTargets.has(codexTarget) ? it : it.skip
 if (!supportedCodexTargets.has(codexTarget)) console.info(`Skipping Codex CLI smoke on unsupported target ${codexTarget}.`)
-actualCodexSmoke('initializes the pinned package-local Codex CLI with an isolated empty account', async () => {
+actualCodexSmoke('initializes the pinned package-local Codex CLI with an isolated empty account', async ({ onTestFinished }) => {
   const packageManifest = createRequire(import.meta.url).resolve('@openai/codex/package.json')
   const manifest = JSON.parse(await readFile(packageManifest, 'utf8')) as { version: string; bin: { codex: string } }
   expect(manifest.version).toBe('0.166.0')
   const root = await mkdtemp(join(tmpdir(), 'y-harness-codex-cli-'))
+  onTestFinished(async () => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
   const packageRoot = dirname(packageManifest)
   const nativePackageName = `@openai/codex-${process.platform}-${process.arch}`
   const nativeManifest = createRequire(packageManifest).resolve(`${nativePackageName}/package.json`)
@@ -215,6 +216,5 @@ actualCodexSmoke('initializes the pinned package-local Codex CLI with an isolate
       await handle.done
       await expect(handle.waitForExit()).resolves.toBe(true)
     }
-    await rm(root, { recursive: true, force: true })
   }
 })
