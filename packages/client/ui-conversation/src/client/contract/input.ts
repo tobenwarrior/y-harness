@@ -8,6 +8,7 @@
  */
 import type { Context } from '@yharness/cordis'
 import type { SessionBinding } from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
 import type { InboxState } from '@yharness/agent/types'
 import type { ObservableSnapshot, SnapshotStore } from '@yharness/client-store'
 import type { Branded } from '@yharness/brand'
@@ -161,6 +162,27 @@ declare module '@yharness/cordis' {
 /** Browser-runtime identity of one unsent attachment draft. */
 export type DraftAttachmentId = Branded<'DraftAttachmentId'>
 
+/** Runtime-only handoff for unsent attachments while the Bot selection changes. */
+export interface BotDraftRetention {
+  /**
+   * Detach the current draft attachments without releasing their browser files.
+   * @param ownerKey - stable Bot and Session owner key.
+   * @param sessionId - Session that currently owns the draft.
+   */
+  detach(ownerKey: string, sessionId: SessionId): void
+  /**
+   * Reattach a previously detached draft after its Session is retained again.
+   * @param ownerKey - stable Bot and Session owner key.
+   * @param sessionId - Session that should receive the draft.
+   */
+  reacquire(ownerKey: string, sessionId: SessionId): void
+  /**
+   * Release a detached draft whose owner no longer exists.
+   * @param ownerKey - stable Bot and Session owner key.
+   */
+  forget(ownerKey: string): void
+}
+
 /**
  * The scoped-event application verbs: the hub's bail listeners call these,
  * and the boolean answer IS the event's bail value (true ⟺ the editor
@@ -220,6 +242,8 @@ export interface SessionInputResolver {
    * @throws when binding is not the currently retained Session generation.
    */
   requestDraftInitialization(binding: SessionBinding, options: DraftInitializationOptions): DraftInitializationResult
+  /** Runtime-only Bot handoff; absent when the host does not mount Bot workspace support. */
+  readonly botDrafts?: BotDraftRetention
 }
 
 /** Initial text for a target Session; attachments remain under their existing owner. */

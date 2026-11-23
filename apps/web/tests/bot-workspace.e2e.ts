@@ -687,6 +687,43 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     expect(tripwire.warnings).toEqual([])
   })
 
+  it('preserves an attachment when switching from one Bot to another and back', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-bot-draft-switch'))
+    const sidebar = page.locator('[data-yh-part="sidebar"]')
+    const botsMode = sidebar.getByRole('button', { name: 'Bots', exact: true })
+    await botsMode.click()
+    const roster = sidebar.locator('aside[aria-label="Bot workspace"]')
+    await roster.waitFor({ state: 'visible', timeout: 15_000 })
+    const firstRow = roster.locator(`[data-bot-id="${firstBot.id}"]`)
+    const secondRow = roster.locator(`[data-bot-id="${secondBot.id}"]`)
+    await firstRow.waitFor({ state: 'visible', timeout: 15_000 })
+    await secondRow.waitFor({ state: 'visible', timeout: 15_000 })
+
+    await firstRow.click()
+    const firstDetail = page.getByRole('region', { name: firstBot.name, exact: true })
+    const firstComposer = firstDetail.locator('[data-composer-input][contenteditable="true"]')
+    await firstComposer.waitFor()
+    await firstComposer.fill('')
+    let uploadRequests = 0
+    const countUpload = (request: { method(): string; url(): string }): void => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/api/session/uploadFileBinary')) uploadRequests++
+    }
+    page.on('request', countUpload)
+    await firstDetail.locator('input[type="file"]').setInputFiles({
+      name: 'switch.txt', mimeType: 'text/plain', buffer: Buffer.from('Switch draft.'),
+    })
+    await firstDetail.getByTitle('switch.txt').waitFor()
+    await expect.poll(() => uploadRequests).toBe(1)
+
+    await secondRow.click()
+    await page.getByRole('region', { name: secondBot.name, exact: true }).waitFor()
+    await firstRow.click()
+    await firstComposer.waitFor()
+    expect(await firstDetail.getByTitle('switch.txt').count()).toBe(1)
+    expect(uploadRequests).toBe(1)
+    page.off('request', countUpload)
+  })
+
   it('keeps the scenario fixture inventory closed', async () => {
     await assertFixtureInventory(SNAPSHOT_DIR, ['session.v3.jsonl'])
   })

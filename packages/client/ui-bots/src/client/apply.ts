@@ -335,6 +335,8 @@ export function apply(ctx: Context): void {
   }, 'ui-bots: panel registrations')
 
   ctx.inject(['layout', 'conversation'], (scope) => {
+    controller.setDraftRetention(scope.conversation.input.botDrafts)
+    scope.effect(() => () => { controller.setDraftRetention(undefined) }, 'ui-bots: Bot draft handoff')
     scope.effect(() => {
       const lifetime = new AbortController()
       const openPrompt = async (intent: BotPromptIntent): Promise<void> => {

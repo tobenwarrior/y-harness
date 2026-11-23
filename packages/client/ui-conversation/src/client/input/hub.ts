@@ -18,7 +18,7 @@ import type { InboxState } from '@yharness/agent/types'
 import type { ObservableSnapshot } from '@yharness/client-store'
 import type {
   DraftAttachmentId, DraftAttachmentSerializationResult, DraftInitializationOptions, DraftInitializationResult, InputTriggerController,
-  SessionInputResolver, SessionInput, SubmitOutcome,
+  BotDraftRetention, SessionInputResolver, SessionInput, SubmitOutcome,
 } from '../contract/input.ts'
 import type { ComposerKeyboard } from '../contract/draft-editor.ts'
 import type { InputSubmitMode } from '../contract/composer-submission.ts'
@@ -56,6 +56,16 @@ interface ConversationAttachmentFace {
 /** Session-addressed input facade registry (SessionInputResolver face + composer-layer extras). */
 export class InputHub implements SessionInputResolver {
   private readonly shells = new WeakMap<SessionBinding, SessionInputShell>()
+  private readonly detachedBotDrafts = new Map<string, {
+    readonly sessionId: SessionId
+    readonly attachmentIds: readonly DraftAttachmentId[]
+  }>()
+  /** Runtime-only Bot handoff; browser files remain in the Conversation registry. */
+  readonly botDrafts: BotDraftRetention = {
+    detach: (ownerKey, sessionId) => { this.detachBotDraft(ownerKey, sessionId) },
+    reacquire: (ownerKey, sessionId) => { this.reacquireBotDraft(ownerKey, sessionId) },
+    forget: (ownerKey) => { this.forgetBotDraft(ownerKey) },
+  }
 
   /**
    * @param ctx - client root context (services resolved lazily per call — boot order stays free).
@@ -64,7 +74,15 @@ export class InputHub implements SessionInputResolver {
   constructor(
     private readonly rootCtx: Context,
     private readonly t: TranslateNS<'conversation'>,
-  ) {}
+  ) {
+    rootCtx.effect(() => () => {
+      const conversation = this.rootCtx.get('conversation') as ConversationAttachmentFace | undefined
+      for (const record of this.detachedBotDrafts.values()) {
+        for (const attachmentId of record.attachmentIds) conversation?.releaseDraftAttachment(attachmentId)
+      }
+      this.detachedBotDrafts.clear()
+    }, 'conversation.input: Bot draft retention')
+  }
 
   /**
    * Resolve the facade for one session-scope ctx (SessionInputResolver face).
@@ -172,6 +190,39 @@ export class InputHub implements SessionInputResolver {
     })
     shell.setDraft(readConversationDraft(binding.sessionId))
     return shell
+  }
+
+  private detachBotDraft(ownerKey: string, sessionId: SessionId): void {
+    const binding = this.sessions().binding(sessionId)
+    if (binding === undefined) return
+    const shell = this.shells.get(binding)
+    if (shell === undefined) return
+    const attachmentIds = shell.detachDraftAttachments()
+    if (attachmentIds.length === 0) return
+    const previous = this.detachedBotDrafts.get(ownerKey)
+    const merged = new Set(previous?.attachmentIds)
+    for (const attachmentId of attachmentIds) merged.add(attachmentId)
+    this.detachedBotDrafts.set(ownerKey, { sessionId, attachmentIds: [...merged] })
+  }
+
+  private reacquireBotDraft(ownerKey: string, sessionId: SessionId): void {
+    const record = this.detachedBotDrafts.get(ownerKey)
+    if (record === undefined || record.sessionId !== sessionId) return
+    const binding = this.sessions().binding(sessionId)
+    if (binding === undefined) return
+    const shell = this.shellFor(binding)
+    const existing = new Set(shell.snapshot.attachmentIds)
+    const missing = record.attachmentIds.filter(attachmentId => !existing.has(attachmentId))
+    if (!shell.addAttachments(missing)) return
+    this.detachedBotDrafts.delete(ownerKey)
+  }
+
+  private forgetBotDraft(ownerKey: string): void {
+    const record = this.detachedBotDrafts.get(ownerKey)
+    if (record === undefined) return
+    this.detachedBotDrafts.delete(ownerKey)
+    const conversation = this.rootCtx.get('conversation') as ConversationAttachmentFace | undefined
+    for (const attachmentId of record.attachmentIds) conversation?.releaseDraftAttachment(attachmentId)
   }
 
   /**

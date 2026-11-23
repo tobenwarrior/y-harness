@@ -350,6 +350,21 @@ export class SessionInputShell implements SessionInput {
   }
 
   /**
+   * Detach unsent draft attachments for a Bot handoff without releasing their
+   * browser-owned files; unsettled submissions stay on the normal disposal path.
+   * @returns the detached attachment ids.
+   */
+  detachDraftAttachments(): readonly DraftAttachmentId[] {
+    if (this.disposed || this.snapshot.phase !== 'plain'
+      || this.detachedDrafts.size > 0 || this.failedDetached.size > 0 || this.attachmentFlights.size > 0) return []
+    const detached = this.attachmentIds
+    if (detached.length === 0) return []
+    this.attachmentIds = []
+    this.publish()
+    return detached
+  }
+
+  /**
    * Clear the draft as a successful-send commit: the editor empties (no undo
    * unit) and the undo history is cut, so Ctrl/Cmd-Z cannot resurrect sent
    * content (the command path gets the same discipline from submit-settled).

@@ -156,6 +156,127 @@ function templateView(id: string, shareCode: string, patch: Partial<BotTemplateV
 const localPermissions = { status: 'resolved' as const, preset: 'research-preset', tools: ['chat', 'read_file'] }
 
 describe('BotWorkspaceController', () => {
+  it('hands the previous Bot draft to Conversation before releasing its Session', async () => {
+    const scout = bot('bot-scout-draft', 'session-scout-draft')
+    const orbit = bot('bot-orbit-draft', 'session-orbit-draft')
+    const { sessions } = sessionsFixture()
+    const retention = {
+      detach: vi.fn(),
+      reacquire: vi.fn(),
+      forget: vi.fn(),
+    }
+    const controller = new BotWorkspaceController(remoteFixture([scout, orbit]), sessions, () => 'unexpected response')
+    controller.setDraftRetention(retention)
+    await controller.load()
+    controller.face().select(orbit.id)
+    expect(retention.detach).toHaveBeenCalledWith(`${String(scout.id)}:${String(scout.sessionId)}`, scout.sessionId)
+    await vi.waitFor(() => {
+      expect(retention.reacquire).toHaveBeenCalledWith(`${String(orbit.id)}:${String(orbit.sessionId)}`, orbit.sessionId)
+    })
+    controller.dispose()
+  })
+
+  it('keeps the previous Bot draft owner when the next Session cannot be retained', async () => {
+    const first = bot('bot-retain-failure-first', 'session-retain-failure-first')
+    const second = bot('bot-retain-failure-second', 'session-retain-failure-second')
+    const firstReference = reference(first.sessionId)
+    const retain = vi.fn<ISessions['retain']>((sessionId) => {
+      if (sessionId === second.sessionId) throw new Error('Session catalog is stale')
+      return firstReference
+    })
+    const sessionsFixtureValue = sessionsFixture()
+    const sessions = sessionsWithList(sessionsFixtureValue, sessionList(second.sessionId, () => true))
+    sessions.retain = retain
+    const retention = {
+      detach: vi.fn(),
+      reacquire: vi.fn(),
+      forget: vi.fn(),
+    }
+    const controller = new BotWorkspaceController(remoteFixture([first, second]), sessions, () => 'unexpected response')
+    controller.setDraftRetention(retention)
+    await controller.load()
+
+    controller.face().select(second.id)
+    expect(retention.detach).toHaveBeenCalledWith(
+      `${String(first.id)}:${String(first.sessionId)}`, first.sessionId,
+    )
+    expect(controller.source.getSnapshot().error).toBe('Session catalog is stale')
+
+    controller.face().select(first.id)
+    await vi.waitFor(() => {
+      expect(retention.reacquire).toHaveBeenCalledWith(
+        `${String(first.id)}:${String(first.sessionId)}`, first.sessionId,
+      )
+    })
+    controller.dispose()
+  })
+
+  it('retains a Bot draft while moving through a shared group and back', async () => {
+    const first = bot('bot-group-draft-first', 'session-group-draft-first')
+    const second = bot('bot-group-draft-second', 'session-group-draft-second')
+    const group = groupView('bot-group-draft-handoff', 'Draft handoff room', [first, second])
+    const remote = remoteFixture([first, second])
+    remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group, messages: [] } }))
+    const { sessions } = sessionsFixture()
+    const retention = {
+      detach: vi.fn(),
+      reacquire: vi.fn(),
+      forget: vi.fn(),
+    }
+    const controller = new BotWorkspaceController(
+      remote, sessions, () => 'unexpected response', undefined, undefined, pendingStoreFixture(),
+    )
+    controller.setDraftRetention(retention)
+    await controller.load()
+
+    controller.face().selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup?.id).toBe(group.id) })
+    expect(retention.detach).toHaveBeenCalledWith(
+      `${String(first.id)}:${String(first.sessionId)}`, first.sessionId,
+    )
+
+    controller.face().select(first.id)
+    await vi.waitFor(() => {
+      expect(retention.reacquire).toHaveBeenCalledWith(
+        `${String(first.id)}:${String(first.sessionId)}`, first.sessionId,
+      )
+    })
+    controller.dispose()
+  })
+
+  it('forgets detached owners when an unselected Bot rotates or is removed', async () => {
+    const first = bot('bot-stale-draft-first', 'session-stale-draft-first')
+    const second = bot('bot-stale-draft-second', 'session-stale-draft-second')
+    const rotated = { ...first, sessionId: 'session-stale-draft-first-new' as SessionId }
+    const remote = remoteFixture([first, second])
+    const { sessions } = sessionsFixture()
+    const retention = {
+      detach: vi.fn(),
+      reacquire: vi.fn(),
+      forget: vi.fn(),
+    }
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+    controller.setDraftRetention(retention)
+    await controller.load()
+
+    controller.face().select(second.id)
+    remote.list.mockResolvedValueOnce({ ok: true, value: { bots: [rotated, second] } })
+    await controller.load()
+    expect(retention.forget).toHaveBeenCalledWith(
+      `${String(first.id)}:${String(first.sessionId)}`,
+    )
+
+    controller.face().select(rotated.id)
+    controller.face().select(second.id)
+    remote.list.mockResolvedValueOnce({ ok: true, value: { bots: [second] } })
+    await controller.load()
+    expect(retention.forget).toHaveBeenCalledWith(
+      `${String(rotated.id)}:${String(rotated.sessionId)}`,
+    )
+    controller.dispose()
+  })
+
   it('opens the primary Bot on startup and keeps the current chat when the primary changes', async () => {
     const scout = bot('bot-scout', 'session-scout')
     const orbit = bot('bot-orbit', 'session-orbit')

@@ -100,6 +100,8 @@ import type {
   AvatarGenerationValue,
 } from '@yharness/avatar-generation/types'
 import type { ISessions, SessionReference } from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
+import type { BotDraftRetention } from '@yharness/client-ui-conversation/client'
 import { createSnapshotStore, type SnapshotStore } from '@yharness/client-store'
 import type { HostObservable } from '@yharness/client-ui-slots'
 import type { RemoteResult } from '@yharness/api-remotes/client'
@@ -516,6 +518,28 @@ export class BotWorkspaceController {
     }
   }
 
+  private draftRetention: BotDraftRetention | undefined
+
+  /**
+   * Bind the Conversation-owned, runtime-only attachment handoff used when a
+   * user changes the selected Bot.
+   * @param retention - Conversation handoff face, or undefined while detached.
+   */
+  setDraftRetention(retention: BotDraftRetention | undefined): void {
+    this.draftRetention = retention
+    if (retention === undefined || this.disposed) return
+    const current = this.source.getSnapshot()
+    const bot = current.bots.find(candidate => candidate.id === current.selectedBotId)
+    const reference = this.selectedReference
+    if (bot === undefined || reference === undefined) return
+    void reference.ready.then(() => {
+      if (!this.disposed && this.selectedReference === reference
+        && this.source.getSnapshot().selectedBotId === bot.id) {
+        retention.reacquire(this.draftOwnerKey(bot), bot.sessionId)
+      }
+    }, () => { /* The selection's normal ready handler reports this failure. */ })
+  }
+
   /** Stop asynchronous reads and release the selected Session. */
   dispose(): void {
     this.disposed = true
@@ -867,6 +891,7 @@ export class BotWorkspaceController {
     if (selectedGroupId !== null) {
       this.selectedReference?.release()
       this.selectedReference = undefined
+      this.forgetStaleBotDrafts(current.bots, result.value.bots)
       const selectionGeneration = this.selectionGeneration
       this.source.set({
         ...current,
@@ -936,6 +961,7 @@ export class BotWorkspaceController {
       this.refreshAfterPending = true
       return
     }
+    this.forgetStaleBotDrafts(current.bots, result.value.bots)
     this.source.set({
       ...this.source.getSnapshot(),
       phase: 'ready',
@@ -1281,6 +1307,7 @@ export class BotWorkspaceController {
     const current = this.source.getSnapshot()
     if (!current.groups.some(group => group.id === id) || current.selectedGroupId === id) return
     const selectionGeneration = ++this.selectionGeneration
+    this.detachSelectedBotDraft()
     this.selectedReference?.release()
     this.selectedReference = undefined
     this.source.set({
@@ -1801,25 +1828,103 @@ export class BotWorkspaceController {
     return bot?.state === 'active' && this.sessions.list.getSnapshot().byId[bot.sessionId] === undefined
   }
 
+  private draftOwnerKey(bot: BotView): string {
+    return this.draftOwnerKeyForSession(bot.id, bot.sessionId)
+  }
+
+  private draftOwnerKeyForSession(botId: BotIdType, sessionId: SessionId): string {
+    return `${String(botId)}:${String(sessionId)}`
+  }
+
+  private previousDraftOwner(
+    previous: SessionReference,
+    previousBot: BotView | undefined,
+  ): { readonly ownerKey: string; readonly sessionId: SessionId } | undefined {
+    const selectedBotId = previousBot?.id ?? this.source.getSnapshot().selectedBotId
+    if (selectedBotId === null) return undefined
+    return {
+      ownerKey: this.draftOwnerKeyForSession(selectedBotId, previous.sessionId),
+      sessionId: previous.sessionId,
+    }
+  }
+
+  private detachSelectedBotDraft(): void {
+    const previous = this.selectedReference
+    if (previous === undefined) return
+    const current = this.source.getSnapshot()
+    const selectedBotId = current.bots.find(bot => bot.id === current.selectedBotId)?.id ?? current.selectedBotId
+    if (selectedBotId === null) return
+    this.draftRetention?.detach(
+      this.draftOwnerKeyForSession(selectedBotId, previous.sessionId), previous.sessionId,
+    )
+  }
+
+  private forgetStaleBotDrafts(previousBots: readonly BotView[], nextBots: readonly BotView[]): void {
+    if (this.draftRetention === undefined) return
+    const nextSessions = new Map(nextBots.map(bot => [String(bot.id), bot.sessionId]))
+    for (const previousBot of previousBots) {
+      const nextSessionId = nextSessions.get(String(previousBot.id))
+      if (nextSessionId === undefined || nextSessionId !== previousBot.sessionId) {
+        this.draftRetention.forget(this.draftOwnerKey(previousBot))
+      }
+    }
+  }
+
   private retainSelected(id: BotIdType | null, bots: readonly BotView[]): string | undefined {
-    this.selectedReference?.release()
-    this.selectedReference = undefined
-    if (id === null) return undefined
+    const previous = this.selectedReference
+    const previousBot = previous === undefined
+      ? undefined
+      : bots.find(bot => bot.id === this.source.getSnapshot().selectedBotId)
+        ?? bots.find(bot => bot.sessionId === previous.sessionId)
+    const previousOwner = previous === undefined ? undefined : this.previousDraftOwner(previous, previousBot)
+    if (id === null) {
+      if (previousOwner !== undefined) this.draftRetention?.detach(previousOwner.ownerKey, previousOwner.sessionId)
+      previous?.release()
+      this.selectedReference = undefined
+      return undefined
+    }
     const bot = bots.find(candidate => candidate.id === id)
-    if (bot === undefined || bot.state !== 'active') return undefined
+    if (bot === undefined || bot.state !== 'active') {
+      if (previousOwner !== undefined) this.draftRetention?.detach(previousOwner.ownerKey, previousOwner.sessionId)
+      previous?.release()
+      this.selectedReference = undefined
+      return undefined
+    }
+    let reference: SessionReference
     try {
-      const reference = this.sessions.retain(bot.sessionId, { source: 'botWorkspace' })
-      this.selectedReference = reference
-      void reference.ready.catch((error: unknown) => {
+      reference = this.sessions.retain(bot.sessionId, { source: 'botWorkspace' })
+    } catch (error: unknown) {
+      if (previousOwner !== undefined) this.draftRetention?.detach(previousOwner.ownerKey, previousOwner.sessionId)
+      previous?.release()
+      this.selectedReference = undefined
+      return error instanceof Error ? error.message : String(error)
+    }
+    if (previous !== undefined && previous !== reference) {
+      if (previousOwner !== undefined) {
+        if (previousBot !== undefined && previousBot.id === bot.id) {
+          if (previousBot.sessionId !== bot.sessionId) this.draftRetention?.forget(previousOwner.ownerKey)
+          else this.draftRetention?.detach(previousOwner.ownerKey, previousOwner.sessionId)
+        } else {
+          this.draftRetention?.detach(previousOwner.ownerKey, previousOwner.sessionId)
+        }
+      }
+      previous.release()
+    }
+    this.selectedReference = reference
+    void reference.ready.then(
+      () => {
+        if (this.disposed || this.selectedReference !== reference
+          || this.source.getSnapshot().selectedBotId !== bot.id) return
+        this.draftRetention?.reacquire(this.draftOwnerKey(bot), bot.sessionId)
+      },
+      (error: unknown) => {
         if (this.selectedReference !== reference || this.disposed) return
         this.selectedReference = undefined
         reference.release()
         this.fail(error instanceof Error ? error.message : String(error))
-      })
-      return undefined
-    } catch (error: unknown) {
-      return error instanceof Error ? error.message : String(error)
-    }
+      },
+    )
+    return undefined
   }
 
   private retry(): Promise<void> {
