@@ -127,6 +127,60 @@ class Tests(unittest.TestCase):
         self.assertEqual(calls[0][1]['env']['DSH_DESKTOP_GITHUB_BUILD_COMMIT'], A)
         self.assertEqual(calls[0][1]['env']['DSH_DESKTOP_OPEN_DEVTOOLS'], '0')
 
+    def test_initial_start_forwards_one_admitted_url(self):
+        calls = []
+
+        class Child:
+            def wait(self):
+                return 0
+
+        def popen(argv, **kwargs):
+            calls.append((argv, kwargs))
+            return Child()
+
+        for url in (
+            'dsh://bots/prompt?id=bot-scout&text=Review%20the%20queue',
+            'dsh://plugins/add?id=%40yharness%2Fexperimental-agent-team-profile',
+        ):
+            with self.subTest(url=url):
+                calls.clear()
+                runner = supervisor.Supervisor(self.u, self.support, self.config, popen=popen)
+                self.assertEqual(runner.run_once(open_url=url), 0)
+                self.assertEqual(calls[0][0], ['/node', '/pnpm', 'run', 'start:desktop', '--', url])
+
+    def test_open_url_admission_matches_desktop_transport_routes(self):
+        valid = 'dsh://bots/prompt?id=bot-scout&text=Review%20the%20queue'
+        self.assertEqual(supervisor.first_admitted_open_url(['https://example.test', valid]), valid)
+        chat = 'dsh://bots/open?id=bot-scout'
+        self.assertEqual(supervisor.first_admitted_open_url([chat]), chat)
+        plugin = 'dsh://plugins/add?id=%40yharness%2Fexperimental-agent-team-profile'
+        self.assertEqual(supervisor.first_admitted_open_url([plugin]), plugin)
+        self.assertEqual(supervisor.first_admitted_open_url(['dsh://open/']), 'dsh://open/')
+        for invalid in (
+            'dsh://bots/prompt?text=',
+            'dsh://bots/prompt?text=ok&text=again',
+            'dsh://bots/prompt?text=ok&unknown=value',
+            'dsh://bots/prompt?text=ok#fragment',
+            'dsh://bots/open?id=',
+            'dsh://bots/open?id=bot-scout&id=bot-other',
+            'dsh://bots/open?id=bot-scout&text=ignored',
+            'dsh://bots/open?unknown=value',
+            'dsh://plugins/add?id=',
+            'dsh://plugins/add?id=plugin&id=other',
+            'dsh://plugins/add?id=plugin&enable=true',
+            'dsh://open?text=ok',
+        ):
+            with self.subTest(invalid=invalid):
+                self.assertIsNone(supervisor.admitted_open_url(invalid))
+
+        for invalid in (
+            'dsh://user:pass@plugins/add?id=plugin',
+            'dsh://plugins:443/add?id=plugin',
+            'dsh://plugins/add?id=plugin#details',
+        ):
+            with self.subTest(invalid=invalid):
+                self.assertIsNone(supervisor.admitted_open_url(invalid))
+
     def test_offline_and_stage_failure_preserve_current(self):
         s = supervisor.Supervisor(self.u, self.support, self.config)
         s.prepare()
@@ -240,6 +294,32 @@ class Tests(unittest.TestCase):
         self.assertEqual(calls[0][1]['env']['DSH_DESKTOP_GITHUB_BUILD_COMMIT'], A)
         self.assertEqual(calls[1][1]['env']['DSH_DESKTOP_GITHUB_BUILD_COMMIT'], B)
 
+    def test_external_url_is_not_replayed_after_managed_restart(self):
+        calls = []
+        outer = self
+        url = 'dsh://bots/prompt?text=Review%20the%20queue'
+
+        class Child:
+            def wait(self):
+                if len(calls) == 1:
+                    outer.u.remote = B
+                    outer.u.stage(B)
+                    request_restart(outer.u.root, A, B)
+                return 0
+
+        class OneRunSupervisor(supervisor.Supervisor):
+            def poll_loop(self):
+                self.stop.wait()
+
+        def popen(*args, **kwargs):
+            calls.append((args, kwargs))
+            return Child()
+
+        runner = OneRunSupervisor(self.u, self.support, self.config, popen=popen)
+        self.assertEqual(runner.serve(open_url=url), 0)
+        self.assertEqual(calls[0][0][-1][-2:], ['--', url])
+        self.assertEqual(calls[1][0][0], ['/node', '/pnpm', 'run', 'start:desktop'])
+
     def test_normal_quit_does_not_relaunch_with_a_staged_update(self):
         calls = []
         outer = self
@@ -308,6 +388,14 @@ class Tests(unittest.TestCase):
              mock.patch.object(supervisor, "focus_existing", create=True) as focus:
             self.assertEqual(supervisor.main(["--serve"]), 0)
         focus.assert_called_once_with(self.support)
+
+    def test_second_launch_passes_admitted_url_to_supervised_instance(self):
+        url = 'dsh://bots/prompt?text=Review%20the%20queue'
+        with supervisor.supervisor_lock(self.support), \
+             mock.patch.object(supervisor, "SUPPORT", self.support), \
+             mock.patch.object(supervisor, "focus_existing", create=True) as focus:
+            self.assertEqual(supervisor.main(["--serve", "--open-url", url]), 0)
+        focus.assert_called_once_with(self.support, open_url=url)
     def test_focus_uses_only_the_managed_app_bundle(self):
         self.u.stage(A)
         self.u.activate(A, between_runs=True)
@@ -319,6 +407,29 @@ class Tests(unittest.TestCase):
         self.assertEqual(command[0], "/usr/bin/osascript")
         self.assertEqual(command[-1], "123")
         self.assertNotIn("/usr/bin/open", command)
+
+    def test_focus_forwards_url_through_electron_single_instance(self):
+        self.u.stage(A)
+        self.u.activate(A, between_runs=True)
+        app = self.u.root / "versions" / A / "apps/desktop/.desktop-build/development/Y harness.app"
+        executable = app / "Contents/MacOS/Electron"
+        executable.parent.mkdir(parents=True)
+        executable.write_text("electron")
+        url = 'dsh://bots/prompt?text=Review%20the%20queue'
+        with mock.patch.object(supervisor.subprocess, "Popen") as popen, \
+             mock.patch.object(supervisor.subprocess, "run") as run:
+            supervisor.focus_existing(self.support, owner_finder=lambda *_: 123, open_url=url)
+        popen.assert_called_once_with(
+            [str(executable), f'--user-data-dir={self.support / "data/electron-user-data"}',
+             str(self.u.root / "versions" / A / "apps/desktop"), url],
+            cwd=str(self.u.root / "versions" / A / "apps/desktop"),
+            stdin=supervisor.subprocess.DEVNULL,
+            stdout=supervisor.subprocess.DEVNULL,
+            stderr=supervisor.subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+        self.assertEqual(run.call_args.args[0][0], "/usr/bin/osascript")
     def test_never_relaunches_a_quit_app_outside_the_supervisor(self):
         self.u.stage(A)
         self.u.activate(A, between_runs=True)
