@@ -398,6 +398,8 @@ export interface ComposerBarOwnerProps {
   /** Open the Workspace picker from the inert composer surface. */
   onRequestWorkspace?: () => void
   placeholder?: string
+  /** Localized prompt used when no composer state supplies its own hint. */
+  defaultPlaceholder?: string
   /** Optional content rendered above the composer surface. */
   accessory?: ReactNode
 }
