@@ -60,6 +60,7 @@ import { DesktopUpdateDialog, type UpdateDialogOptions } from './update-dialog.t
 import { readDesktopRuntime } from './runtime-tree.ts'
 import { DesktopCloudWorkspace } from './cloud-workspace.ts'
 import { DesktopCloudVault } from './cloud-vault-window.ts'
+import { desktopOpenUrlFromArgs, routeDesktopBotPrompt } from './bot-prompt-link.ts'
 import { MacComputer } from './mac-computer.ts'
 import { macDesktop } from './mac-desktop.ts'
 import { DesktopBrowserGuests } from './browser-guests.ts'
@@ -71,6 +72,8 @@ import { DesktopBackgroundNotice } from './background-notice.ts'
 import { applyDesktopCodexEnvironment, desktopCodexNodePath, resolveDesktopCodexEnvironment } from './codex-environment.ts'
 
 let focusPrimaryWindow = (): void => {}
+let deliverOpenUrl: ((url: string) => void) | undefined
+let pendingOpenUrl: string | undefined
 let stopForRecovery = async (): Promise<void> => {}
 let shuttingDown = false
 /**
@@ -91,6 +94,19 @@ const rendererConsole = new RendererConsoleTail()
 // Platform-conventional logs directory (macOS ~/Library/Logs/<name>, otherwise under userData);
 // set before ready so the first fatal report already resolves under it.
 app.setAppLogsPath()
+
+// macOS can deliver `open-url` before `ready`; hold the last request until the
+// Desktop lifecycle has installed its workspace handler. The handler admits
+// only the dedicated Bot route and never passes an external URL to a renderer.
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  if (desktopOpenUrlFromArgs([url]) !== undefined) receiveOpenUrl(url)
+})
+
+function receiveOpenUrl(url: string): void {
+  if (deliverOpenUrl === undefined) pendingOpenUrl = url
+  else deliverOpenUrl(url)
+}
 
 function currentDesktopLocale(): ReturnType<typeof resolveDesktopLocale> {
   return resolveDesktopLocale(windowsLanguage ?? app.getLocale())
@@ -441,6 +457,7 @@ async function main(): Promise<void> {
   })
   const appPreload = fileURLToPath(new URL('./preload-app.cjs', import.meta.url))
   const applicationUrl = `${SCHEME}://app/`
+  let pendingBotPrompt: string | undefined
   let hostUrl: string | undefined
   let hostCookie: string | undefined
   async function resolveMacBotName(sessionId: string, signal: AbortSignal): Promise<string | undefined> {
@@ -1407,6 +1424,16 @@ async function main(): Promise<void> {
     })
     return window
   }
+  const deliverBotPrompt = (): void => {
+    const window = mainWindow
+    if (pendingBotPrompt === undefined || !enteredWorkspace || isQuitting() || isMandatory()
+      || window === undefined || window.isDestroyed()) return
+    const fragment = pendingBotPrompt
+    pendingBotPrompt = undefined
+    if (cloudWorkspace?.isCloudSelected() === true) cloudWorkspace.openBotPrompt(fragment)
+    else window.webContents.send(DESKTOP_IPC.botPromptNavigation, fragment)
+  }
+
   const enterWorkspace = async (): Promise<void> => {
     if (quitting) return
     const window = mainWindow ?? createMainWindow()
@@ -1415,6 +1442,7 @@ async function main(): Promise<void> {
     cloudWorkspace?.attach(window)
     window.show()
     enteredWorkspace = true
+    deliverBotPrompt()
     if (raiseAfterUpdate) {
       raiseAfterUpdate = false
       window.moveTop()
@@ -1451,11 +1479,24 @@ async function main(): Promise<void> {
     window.focus()
   }
 
+  const handleOpenUrl = (url: string): void => {
+    if (url === 'dsh://open' || url === 'dsh://open/') {
+      focusPrimaryWindow()
+      return
+    }
+    const target = routeDesktopBotPrompt(url)
+    if (target === undefined) return
+    pendingBotPrompt = new URL(target).hash
+    if (!enteredWorkspace) return
+    focusPrimaryWindow()
+    deliverBotPrompt()
+  }
+  deliverOpenUrl = handleOpenUrl
+  const queuedOpenUrl = pendingOpenUrl
+  pendingOpenUrl = undefined
+  if (queuedOpenUrl !== undefined) handleOpenUrl(queuedOpenUrl)
+
   if (app.isPackaged || process.env.DSH_DESKTOP_DEV_APP === '1') app.setAsDefaultProtocolClient('dsh')
-  app.on('open-url', (event, url) => {
-    event.preventDefault()
-    if (url === 'dsh://open' || url === 'dsh://open/') focusPrimaryWindow()
-  })
 
   app.on('activate', (_event, hasVisibleWindows) => {
     if (!hasVisibleWindows) focusPrimaryWindow()
@@ -1574,7 +1615,16 @@ async function main(): Promise<void> {
   publishUpdate(updateState)
 }
 
-const ownsDesktopInstance = claimDesktopSingleInstance(app, () => { focusPrimaryWindow() })
+const ownsDesktopInstance = claimDesktopSingleInstance(app, (argv) => {
+  const link = desktopOpenUrlFromArgs(argv)
+  if (link === undefined) focusPrimaryWindow()
+  else receiveOpenUrl(link)
+})
+
+if (ownsDesktopInstance) {
+  const link = desktopOpenUrlFromArgs(process.argv)
+  if (link !== undefined) receiveOpenUrl(link)
+}
 
 if (ownsDesktopInstance) void app.whenReady().then(main).catch(async (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error)
