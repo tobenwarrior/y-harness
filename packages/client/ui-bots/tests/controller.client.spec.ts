@@ -2203,8 +2203,11 @@ describe('BotWorkspaceController', () => {
     expect(listRoutines).toHaveBeenCalledWith({ botId: persisted.id })
     expect(pauseRoutine).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one' })
     expect(resumeRoutine).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one' })
-    expect(routineHistory).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one', limit: 50 })
-    expect(routineHistory).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one', limit: 50, before: MessageId('older-routine-result') })
+    expect(routineHistory).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one', limit: 50, includeExecutionEvidence: true })
+    expect(routineHistory).toHaveBeenCalledWith({
+      botId: persisted.id, routineId: 'routine-one', limit: 50, includeExecutionEvidence: true,
+      before: MessageId('older-routine-result'),
+    })
     expect(deleteRoutine).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one' })
   })
 

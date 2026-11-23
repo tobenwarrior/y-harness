@@ -68,6 +68,7 @@
     "@yharness/session": "workspace:*",
     "@yharness/schedule": "workspace:*",
     "@yharness/skill": "workspace:*",
+    "@yharness/skill-library": "workspace:*",
     "@yharness/scope": "workspace:*",
     "@yharness/subagent": "workspace:*",
     "@yharness/system-prompt": "workspace:*",
@@ -82,6 +83,9 @@
       "optional": true
     },
     "@yharness/mcp-resources": {
+      "optional": true
+    },
+    "@yharness/skill-library": {
       "optional": true
     }
   },
@@ -100,6 +104,7 @@
     "@yharness/session": "workspace:*",
     "@yharness/schedule": "workspace:*",
     "@yharness/skill": "workspace:*",
+    "@yharness/skill-library": "workspace:*",
     "@yharness/scope": "workspace:*",
     "@yharness/subagent": "workspace:*",
     "@yharness/system-prompt": "workspace:*",

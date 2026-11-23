@@ -23,6 +23,7 @@
     { "path": "../../core/tools" },
     { "path": "../../schedule/tool-schedule" },
     { "path": "../../skill/skill" },
+    { "path": "../../skill/skill-library" },
     { "path": "../../subagent/subagent" },
     { "path": "../../api/session-controller/tsconfig.host.json" },
     { "path": "../../client/connection/tsconfig.host.json" },

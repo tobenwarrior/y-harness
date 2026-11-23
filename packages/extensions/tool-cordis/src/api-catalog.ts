@@ -812,7 +812,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: '@Remote(\'routineHistory\') async routineHistory(request: BotRoutineHistoryRequest): Promise<BotRoutineHistoryValue>',
         description: 'Read one bounded routine history page without activating the Bot Session.',
-        parameters: [{ name: 'request', description: 'Bot, routine, page size, and optional timed-delivery cursor.' }],
+        parameters: [{ name: 'request', description: 'Bot, routine, page size, optional cursor, and optional timed execution evidence.' }],
         returns: 'Newest-first timed receipts or event deliveries/results.',
       },
       {
@@ -6165,8 +6165,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type BotRoutineDeleteValue = {\n    readonly id: string;\n    readonly deleted: true;\n} | {\n    readonly id: string;\n    readonly deleted: false;\n    readonly code: \'routine_not_found\';\n};',
   },
   {
+    name: 'BotRoutineExecutionCounts',
+    declaration: 'export interface BotRoutineExecutionCounts {\n    readonly nativeActions: {\n        readonly settled: number;\n        readonly succeeded: number;\n        readonly failed: number;\n    };\n    readonly ordinaryTools: {\n        readonly calls: number;\n        readonly succeeded: number;\n        readonly failed: number;\n    };\n}',
+  },
+  {
+    name: 'BotRoutineExecutionEvidence',
+    declaration: 'export interface BotRoutineExecutionEvidence extends BotRoutineExecutionCounts {\n    readonly messageId: MessageId;\n    readonly status: \'delivery-only\' | \'started\' | \'completed-no-tool-use\' | \'completed-with-tool-use\' | \'ambiguous\' | \'unavailable\';\n    readonly turn?: number;\n    readonly turnStatus?: \'completed\' | \'error\' | \'aborted\' | \'blocked\' | \'max-tokens\' | \'interrupted\' | \'forked\' | \'other\';\n    readonly completedAt?: string;\n}',
+  },
+  {
     name: 'BotRoutineHistoryRequest',
-    declaration: 'export interface BotRoutineHistoryRequest {\n    readonly botId: BotId;\n    readonly routineId: string;\n    readonly limit: number;\n    readonly before?: MessageId;\n}',
+    declaration: 'export interface BotRoutineHistoryRequest {\n    readonly botId: BotId;\n    readonly routineId: string;\n    readonly limit: number;\n    readonly before?: MessageId;\n    readonly includeExecutionEvidence?: true;\n}',
   },
   {
     name: 'BotRoutineHistoryValue',
@@ -6201,8 +6209,12 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type BotRoutineView = BotScheduleRoutineView | BotEventRoutineCatalogView;',
   },
   {
+    name: 'BotScheduleDeliveryRecord',
+    declaration: 'export type BotScheduleDeliveryRecord = ScheduleDeliveryRecord & {\n    readonly executionEvidence?: BotRoutineExecutionEvidence;\n};',
+  },
+  {
     name: 'BotScheduleRoutineHistory',
-    declaration: 'export interface BotScheduleRoutineHistory {\n    readonly kind: \'schedule\';\n    readonly id: ScheduleId;\n    readonly records: readonly ScheduleDeliveryRecord[];\n    readonly earlierRecordsUnavailable: boolean;\n    readonly earlierRecordsPruned: boolean;\n    readonly retention: {\n        readonly days: number;\n        readonly records: number;\n    };\n    readonly nextBefore?: MessageId;\n}',
+    declaration: 'export interface BotScheduleRoutineHistory {\n    readonly kind: \'schedule\';\n    readonly id: ScheduleId;\n    readonly records: readonly BotScheduleDeliveryRecord[];\n    readonly earlierRecordsUnavailable: boolean;\n    readonly earlierRecordsPruned: boolean;\n    readonly retention: {\n        readonly days: number;\n        readonly records: number;\n    };\n    readonly nextBefore?: MessageId;\n}',
   },
   {
     name: 'BotScheduleRoutineView',

@@ -68,6 +68,32 @@ function resultStatusLabel(status: BotEventRoutineResult['status'], t: Translate
   }
 }
 
+type RoutineExecutionEvidence = NonNullable<Extract<BotRoutineHistory, { readonly kind: 'schedule' }>['records'][number]['executionEvidence']>
+
+function routineEvidenceLabel(evidence: RoutineExecutionEvidence | undefined, t: Translate): string {
+  switch (evidence?.status) {
+    case 'started': return t('routineEvidenceStarted')
+    case 'completed-no-tool-use': return t('routineEvidenceNoToolUse')
+    case 'completed-with-tool-use': return t('routineEvidenceToolUse')
+    case 'ambiguous': return t('routineEvidenceAmbiguous')
+    case 'unavailable': return t('routineEvidenceUnavailable')
+    case 'delivery-only':
+    case undefined: return t('routineEvidenceMissing')
+  }
+}
+
+function routineEvidenceTone(evidence: RoutineExecutionEvidence | undefined): 'neutral' | 'info' | 'warning' {
+  switch (evidence?.status) {
+    case 'started': return 'info'
+    case 'completed-with-tool-use': return 'info'
+    case 'completed-no-tool-use': return 'neutral'
+    case 'ambiguous':
+    case 'unavailable':
+    case 'delivery-only':
+    case undefined: return 'neutral'
+  }
+}
+
 function weekdayLabel(day: number, t: Translate): string {
   switch (day) {
     case 1: return t('routineWeekdayMonday')
@@ -190,6 +216,11 @@ function historyRows(history: BotRoutineHistory, t: Translate, options: HistoryR
                 <li key={String(record.messageId)} className={css.routineHistoryRow}>
                   <strong>{historyDate(record.deliveredAt)}</strong>
                   <span>{record.prompt ?? t('routineLegacyDelivery')}</span>
+                  <div className={css.routineHistoryStatus} aria-label={t('routineHistoryStatus')}>
+                    <Tag tone={routineEvidenceTone(record.executionEvidence)}>
+                      {t('routineDeliveryDelivered')} · {routineEvidenceLabel(record.executionEvidence, t)}
+                    </Tag>
+                  </div>
                 </li>
               ))}
             </ul>

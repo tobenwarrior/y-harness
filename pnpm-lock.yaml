@@ -1242,6 +1242,9 @@ importers:
       '@yharness/skill':
         specifier: workspace:*
         version: link:../../skill/skill
+      '@yharness/skill-library':
+        specifier: workspace:*
+        version: link:../../skill/skill-library
       '@yharness/storage':
         specifier: workspace:*
         version: link:../../storage/storage
