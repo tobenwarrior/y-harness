@@ -130,6 +130,7 @@ export function cloudDocument(
       ${status === 'offline' || reconnecting ? `
         <div class="actions"><a class="primary" href="${CONTROL_ORIGIN}/retry">${t('cloudRetry')}</a>
         <a href="${CONTROL_ORIGIN}/configure">${t('cloudChangeServer')}</a></div>` : ''}
+      <div class="actions secondary"><a class="back" href="${CONTROL_ORIGIN}/mac">${macIcon}<span>${t('cloudOpenMac')}</span></a></div>
     </section></main>`
   return `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
     <html lang="en"><meta charset="utf-8">
@@ -140,7 +141,7 @@ export function cloudDocument(
       @media (prefers-color-scheme: dark) { :root { --bg: #1b1b1e; --panel: #232326; --ink: #f0f0f2; --muted: #aaaab2; --line: #36363c; --accent: #72c6a7; --button: #efeff2; --button-ink: #222226; --error: #ff9199 } }
       * { box-sizing: border-box }
       body { margin: 0; background: var(--bg); color: var(--ink) }
-      .back { position: absolute; top: 10px; left: 86px; min-height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 7px; text-decoration: none; color: var(--muted) }
+      .back { min-height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 7px; text-decoration: none; color: var(--muted) }
       .back:hover { background: var(--panel); color: var(--ink) }
       .actions a { text-decoration: none; color: var(--muted) }
       svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; flex: none }
@@ -157,9 +158,10 @@ export function cloudDocument(
       button { margin-top: 5px }
       :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
       .error { color: var(--error); margin: 0 }
-      .actions { display: flex; justify-content: center; gap: 8px; margin-top: 20px }
+      .actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 20px }
+      .actions.secondary { margin-top: 12px }
       .actions a { display: inline-flex; align-items: center }
     </style>
-    <a class="back" href="${CONTROL_ORIGIN}/mac">${macIcon}<span>${t('cloudOpenMac')}</span></a>${body}
+    ${body}
   </html>`)}`
 }
