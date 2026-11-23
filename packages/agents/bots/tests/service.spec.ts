@@ -5250,6 +5250,94 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('routes native managed shell and Computer calls through the exact assigned Agent worker', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Managed shell owner', cwd: fixtureCwd })
+    await close(first.ctx)
+
+    let assignedAgent: Agent | undefined
+    let managed = true
+    const shellExecute = vi.fn(async (_arguments: unknown, execution: ToolRunContext) => {
+      if (execution.agent !== assignedAgent) throw new Error('managed shell received the wrong Agent')
+      return 'managed shell fixture result'
+    })
+    const computerExecute = vi.fn(async (_arguments: unknown, execution: ToolRunContext) => {
+      if (execution.agent !== assignedAgent) throw new Error('managed Computer received the wrong Agent')
+      return { message: 'managed Computer fixture result' }
+    })
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        const agent = ctx.get('agents')?.get(created.bot.sessionId)
+        if (agent === undefined) throw new Error('managed shell test Agent was not created')
+        assignedAgent = agent
+        ctx.effect(() => ctx.tools.register(defineTool({
+          name: 'bash', description: 'Run a scoped shell command.', parameters: { command: { type: 'string', required: true } },
+          output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+          execute: shellExecute,
+        })), 'managed shell fixture tool')
+        ctx.effect(() => ctx.tools.register(defineTool({
+          name: 'vps_computer', description: 'Observe the Bot-managed Computer.',
+          parameters: { action: { type: 'string', required: true } },
+          output: {
+            schema: {
+              type: 'object', additionalProperties: false,
+              properties: { message: { type: 'string', required: true } },
+            },
+            render: (_args, value) => [{ type: 'text', text: value.message }],
+          },
+          execute: computerExecute,
+        })), 'managed Computer fixture tool')
+        ctx.provide('botWorkspaces', {
+          workspace: sessionId => String(sessionId), prepare: async () => {}, installSkill: async () => true,
+          managed: () => managed, managedExecution: candidate => candidate === assignedAgent,
+        })
+      },
+    })
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('managed shell provider was not mounted')
+      const shell = (await provider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'managed_bot_shell')
+      if (shell === undefined) throw new Error('managed shell native tool was not mounted')
+      const computer = (await provider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'vps_computer')
+      if (computer === undefined) throw new Error('managed Computer native tool was not mounted')
+      const context = {
+        callId: 'managed-shell-call', threadId: 'managed-shell-thread', turnId: 'managed-shell-turn', sessionId: created.bot.sessionId,
+        signal: new AbortController().signal, approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      await provider.observe({ phase: 'started', name: 'managed_bot_shell', ...context, arguments: { command: 'printf managed' } })
+      await expect(shell.execute({ command: 'printf managed' }, context)).resolves.toMatchObject({ success: true })
+      expect(shellExecute).toHaveBeenCalledOnce()
+      const firstInvocation = shellExecute.mock.calls[0]
+      expect(firstInvocation?.[0]).toEqual({ command: 'printf managed' })
+      expect(firstInvocation?.[1]?.agent).toBe(assignedAgent)
+      await expect(computer.execute({ action: 'observe' }, { ...context, callId: 'managed-computer-call' })).resolves.toMatchObject({
+        success: true, contentItems: [{ type: 'inputText', text: 'managed Computer fixture result' }],
+      })
+      expect(computerExecute).toHaveBeenCalledOnce()
+      expect(computerExecute.mock.calls[0]?.[0]).toEqual({ action: 'observe' })
+      expect(computerExecute.mock.calls[0]?.[1]?.agent).toBe(assignedAgent)
+      managed = false
+      const unmanagedTools = await provider.resolve({ sessionId: created.bot.sessionId })
+      expect(unmanagedTools.map(tool => tool.name)).not.toContain('managed_bot_shell')
+      expect(unmanagedTools.map(tool => tool.name)).not.toContain('vps_computer')
+      await expect(shell.execute({ command: 'printf managed' }, context)).resolves.toMatchObject({ success: false })
+      expect(shellExecute).toHaveBeenCalledOnce()
+      await expect(computer.execute({ action: 'observe' }, { ...context, callId: 'managed-computer-revoked' })).resolves.toMatchObject({ success: false })
+      expect(computerExecute).toHaveBeenCalledOnce()
+      managed = true
+      assignedAgent = undefined
+      await expect(shell.execute({ command: 'printf managed' }, context)).resolves.toMatchObject({ success: false })
+      expect(shellExecute).toHaveBeenCalledOnce()
+      await expect(computer.execute({ action: 'observe' }, { ...context, callId: 'managed-computer-unbound' })).resolves.toMatchObject({ success: false })
+      expect(computerExecute).toHaveBeenCalledOnce()
+      await expect(provider.replay({ sessionId: created.bot.sessionId })).resolves.toEqual([])
+      await expect(provider.resolve({ sessionId: SessionId('ordinary-session') })).resolves.toEqual([])
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it.each([false, true])('keeps peer delivery working when both Bots are hidden: %s', async (hidden) => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)

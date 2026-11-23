@@ -12,7 +12,12 @@ import type { BotMemoryClient } from '../src/memory.ts'
 import { BotGroupError, BotGroupId, BotGroupMessageId } from '../src/group-chat.ts'
 import type { BotGroupToolHost } from '../src/scoped-tools.ts'
 import { BotId } from '../src/types.ts'
-import { createBotNativeToolProvider, type BotNativeToolContext, type BotNativeToolHost } from '../src/native-tools.ts'
+import {
+  createBotNativeToolProvider,
+  MANAGED_BOT_SHELL_TOOL,
+  type BotNativeToolContext,
+  type BotNativeToolHost,
+} from '../src/native-tools.ts'
 import type { BotGrokHistoryPage } from '../src/grok-history.ts'
 import { UNTRUSTED_TRANSCRIPT_NOTICE, UNTRUSTED_TRANSCRIPT_END } from '../src/collaboration.ts'
 
@@ -160,6 +165,49 @@ describe('native Bot actions', () => {
     await expect(computer.execute({ action: 'click' }, context({ sessionId }))).resolves.toMatchObject({ success: false })
     await expect(provider.replay({ sessionId })).resolves.toEqual([])
     expect(execute).toHaveBeenCalledTimes(1)
+  })
+
+  it('exposes managed Bash only for the assigned owner workspace and never replays after unassignment', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const otherSessionId = SessionId('bot-session-beta')
+    const recorded: BotDynamicToolEvent[] = []
+    const execute = vi.fn(async (arguments_: Record<string, unknown>, received: BotNativeToolContext) => ({
+      success: true,
+      contentItems: [{ type: 'inputText' as const, text: JSON.stringify({ arguments: arguments_, sessionId: received.sessionId }) }],
+    }))
+    let assigned = true
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(),
+      persist: async (event) => { recorded.push(event) },
+      replay: async () => recorded,
+      managedBotShell: async id => assigned && id === sessionId
+        ? { description: 'Run commands in the Bot-managed workspace.', inputSchema: { type: 'object' }, execute }
+        : undefined,
+    })
+    const shell = (await provider.resolve({ sessionId })).find(tool => tool.name === MANAGED_BOT_SHELL_TOOL)
+    if (shell === undefined) throw new Error('managed Bot shell tool missing')
+    expect((await provider.resolve({ sessionId: otherSessionId })).map(tool => tool.name)).not.toContain(MANAGED_BOT_SHELL_TOOL)
+    expect((await provider.resolve({ sessionId, purpose: 'session-title' })).map(tool => tool.name)).not.toContain(MANAGED_BOT_SHELL_TOOL)
+    await expect(shell.execute({ command: 'printf managed' }, context({ sessionId: otherSessionId }))).resolves.toMatchObject({ success: false })
+    expect(execute).not.toHaveBeenCalled()
+
+    const call = {
+      name: MANAGED_BOT_SHELL_TOOL, callId: 'shell-call', threadId: 'thread-1', turnId: 'turn-1', sessionId,
+      arguments: { command: 'printf managed' },
+    }
+    await provider.observe({ phase: 'started', ...call })
+    const result = await shell.execute(call.arguments, context({ sessionId }))
+    await provider.observe({ phase: 'settled', ...call, result })
+    expect(execute).toHaveBeenCalledOnce()
+    expect(execute).toHaveBeenCalledWith(call.arguments, expect.objectContaining({ sessionId }))
+    expect(result).toMatchObject({ success: true })
+
+    await expect(provider.replay({ sessionId, purpose: 'session-title' })).resolves.toEqual([])
+    assigned = false
+    await expect(shell.execute(call.arguments, context({ sessionId }))).resolves.toMatchObject({ success: false })
+    await expect(provider.observe({ phase: 'started', ...call })).rejects.toThrow('managed Bot shell grant is unavailable')
+    await expect(provider.replay({ sessionId })).resolves.toEqual([])
+    expect(execute).toHaveBeenCalledOnce()
   })
 
   it('rechecks a journal grant at invocation and withholds the journal from other Sessions', async () => {

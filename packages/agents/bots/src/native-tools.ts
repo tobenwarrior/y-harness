@@ -130,6 +130,8 @@ export interface BotNativeToolHost {
   readonly vpsComputer?: (sessionId: SessionId) => Promise<Omit<BotNativeTool, 'name'> | undefined>
   /** Resolve the owner-authorized Vault action for an exact live Bot Session. */
   readonly vpsVaultRequest?: (sessionId: SessionId) => Promise<Omit<BotNativeTool, 'name'> | undefined>
+  /** Resolve the scoped Bash action only for an Agent with an assigned managed workspace. */
+  readonly managedBotShell?: (sessionId: SessionId) => Promise<Omit<BotNativeTool, 'name'> | undefined>
 }
 
 /** Context provider shape consumed by the optional native Codex backend. */
@@ -144,9 +146,11 @@ const VPS_JOURNAL_TOOL = 'vps_service_journal'
 export const VPS_COMPUTER_TOOL = 'vps_computer'
 /** The credential request shared by the scoped registry and native provider. */
 export const VPS_VAULT_REQUEST_TOOL = 'request_vps_secret'
+/** The managed workspace Bash action exposed through the native Bot bridge. */
+export const MANAGED_BOT_SHELL_TOOL = 'managed_bot_shell'
 const BOT_TOOL_NAMES = [
   'list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile',
-  'read_own_grok_history', VPS_JOURNAL_TOOL, VPS_COMPUTER_TOOL, VPS_VAULT_REQUEST_TOOL,
+  'read_own_grok_history', VPS_JOURNAL_TOOL, VPS_COMPUTER_TOOL, VPS_VAULT_REQUEST_TOOL, MANAGED_BOT_SHELL_TOOL,
   'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete', 'schedule_pause', 'schedule_resume', 'schedule_history',
   'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
   'list_bot_groups', 'inspect_bot_group', 'create_bot_group', 'update_bot_group', 'send_bot_group_message',
@@ -681,12 +685,14 @@ function vpsJournalTool(resolve: NonNullable<BotNativeToolHost['vpsJournal']>, s
 }
 
 function scopedVpsTool(
-  name: typeof VPS_COMPUTER_TOOL | typeof VPS_VAULT_REQUEST_TOOL,
-  resolve: NonNullable<BotNativeToolHost['vpsComputer']>,
+  name: typeof VPS_COMPUTER_TOOL | typeof VPS_VAULT_REQUEST_TOOL | typeof MANAGED_BOT_SHELL_TOOL,
+  resolve: (sessionId: SessionId) => Promise<Omit<BotNativeTool, 'name'> | undefined>,
   sessionId: SessionId,
   binding: Omit<BotNativeTool, 'name'>,
 ): BotNativeTool {
-  const action = name === VPS_COMPUTER_TOOL ? 'Computer' : 'Vault request'
+  const action = name === VPS_COMPUTER_TOOL
+    ? 'Computer'
+    : name === VPS_VAULT_REQUEST_TOOL ? 'Vault request' : 'managed shell'
   return {
     name,
     description: binding.description,
@@ -1660,6 +1666,8 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
       const computerBinding = options.purpose === undefined ? await computer?.(sessionId) : undefined
       const vault = host.vpsVaultRequest
       const vaultBinding = options.purpose === undefined ? await vault?.(sessionId) : undefined
+      const managedShell = host.managedBotShell
+      const managedShellBinding = options.purpose === undefined ? await managedShell?.(sessionId) : undefined
       const managementTool = (action: 'create' | 'edit'): BotNativeTool => ({
         name: action === 'create' ? 'create_bot' : 'edit_bot_profile',
         description: action === 'create'
@@ -1723,6 +1731,8 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
           ? [] : [scopedVpsTool(VPS_COMPUTER_TOOL, computer, sessionId, computerBinding)]),
         ...(vault === undefined || vaultBinding === undefined
           ? [] : [scopedVpsTool(VPS_VAULT_REQUEST_TOOL, vault, sessionId, vaultBinding)]),
+        ...(managedShell === undefined || managedShellBinding === undefined
+          ? [] : [scopedVpsTool(MANAGED_BOT_SHELL_TOOL, managedShell, sessionId, managedShellBinding)]),
         sendTool(client, host, sessionId),
         memoryListTool(client), memoryRememberTool(client, host, sessionId), memoryForgetTool(client, host, sessionId),
         managementTool('create'), managementTool('edit'),
@@ -1756,6 +1766,10 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
           throw new Error('The VPS Vault request arguments are invalid.')
         }
       }
+      if (event.name === MANAGED_BOT_SHELL_TOOL && event.phase === 'started'
+        && await host.managedBotShell?.(event.sessionId) === undefined) {
+        throw new Error('The managed Bot shell grant is unavailable.')
+      }
       const result = safeResult(event.result)
       await host.persist({
         phase: event.phase, name: event.name, callId: event.callId, threadId: event.threadId,
@@ -1777,10 +1791,13 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
         || (options.purpose === undefined && await host.vpsComputer?.(sessionId) !== undefined)
       const canReplayVault = !events.some(event => event.name === VPS_VAULT_REQUEST_TOOL)
         || (options.purpose === undefined && await host.vpsVaultRequest?.(sessionId) !== undefined)
-      return canReplayJournal && canReplayComputer && canReplayVault ? events : events.filter(event =>
+      const canReplayManagedShell = !events.some(event => event.name === MANAGED_BOT_SHELL_TOOL)
+        || (options.purpose === undefined && await host.managedBotShell?.(sessionId) !== undefined)
+      return canReplayJournal && canReplayComputer && canReplayVault && canReplayManagedShell ? events : events.filter(event =>
         (canReplayJournal || event.name !== VPS_JOURNAL_TOOL)
         && (canReplayComputer || event.name !== VPS_COMPUTER_TOOL)
-        && (canReplayVault || event.name !== VPS_VAULT_REQUEST_TOOL),
+        && (canReplayVault || event.name !== VPS_VAULT_REQUEST_TOOL)
+        && (canReplayManagedShell || event.name !== MANAGED_BOT_SHELL_TOOL),
       )
     },
   }

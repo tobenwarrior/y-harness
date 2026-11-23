@@ -133,7 +133,11 @@ The scoped and native Codex tool `read_own_grok_history` is available during a d
 
 The native Codex bridge exposes `vps_service_journal` for a live owner Bot Session with a VPS journal grant. It records the bounded result in the Bot’s Session and checks the current grant before replaying those records. [VPS journal configuration](../../../docs/user/guide/vps.md#read-a-filtered-journal-feed).
 
-A live owner Bot with a desktop-only VPS grant can call `vps_computer` through native Codex. The bridge runs the registered Computer tool under the Bot’s existing tool policy. The durable action records a reference to the captured image and remains scoped to the granted Session.
+A live owner Bot with an assigned managed or desktop-only VPS grant can call `vps_computer` through native Codex. The bridge runs the registered Computer tool under the Bot’s existing tool policy. The durable action records a reference to the captured image and remains scoped to the granted Session.
+
+### Managed VPS shell
+
+A live owner Bot with an assigned managed VPS workspace can call `managed_bot_shell` through native Codex. The bridge uses the Agent’s registered `bash` tool with its workspace, approvals, sandbox, and cancellation rules. The binding must be current when the tool runs.
 
 ### Shared Bot policy foundation
 

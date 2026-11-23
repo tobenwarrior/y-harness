@@ -14,7 +14,7 @@ import { turnBoundaryProjectionDefinition } from '@yharness/agent-loop'
 import { SessionId } from '@yharness/session'
 import LocalJobRegistry from '@yharness/jobs-local'
 import * as ToolJobs from '@yharness/tool-jobs'
-import ApprovalService from '@yharness/user-approval'
+import ApprovalService, { setApprovalPolicy } from '@yharness/user-approval'
 import type { ApprovalOutcome } from '@yharness/user-approval'
 import { LocalBashExecutor } from '@yharness/bash-local'
 import LocalSubprocessRuntime from '@yharness/subprocess-local'
@@ -736,6 +736,28 @@ describe('sandbox escalation through the generic task producer', () => {
       expect(text(result)).toBe('ok')
       expect(bash.modes).toEqual(['workspace-write'])
       expect(prompted).not.toHaveBeenCalled()
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('allows ordinary confined Bash under never but rejects explicit escalation', async () => {
+    const { ctx, bash } = await setupSandboxed(true)
+    try {
+      const agent = sandboxAgent(undefined, ctx)
+      await ctx.agents.register(agent)
+      setApprovalPolicy(agent.session, 'never')
+      const consulted = vi.fn()
+      ctx.on('approval/request', () => { consulted(); return Promise.resolve<ApprovalOutcome>('allowed-once') })
+
+      const ordinary = await call(ctx, 'bash', { command: 'true', description: 'ordinary confined command' }, agent)
+      expect(ordinary.isError, text(ordinary)).toBe(false)
+      expect(bash.modes).toEqual(['read-only'])
+
+      const escalation = await call(ctx, 'bash', escalate, agent)
+      expect(text(escalation)).toContain('user rejected escalating this command')
+      expect(bash.modes).toEqual(['read-only'])
+      expect(consulted).not.toHaveBeenCalled()
     } finally {
       await ctx.fiber.dispose()
     }
