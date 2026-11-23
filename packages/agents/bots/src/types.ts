@@ -894,6 +894,55 @@ export interface BotGrokHistoryImportRequest extends BotGrokHistoryRequest {
   readonly document: string
 }
 
+/** Stable position used to continue reading one Bot Library page. */
+export interface BotLibraryCursor {
+  /** Session event sequence containing the delivered file declaration. */
+  readonly eventSeq: number
+  /** Zero-based file position within that presented event. */
+  readonly fileIndex: number
+}
+
+/** The safe category shown for one Bot-delivered Library item. */
+export type BotLibraryItemCategory = 'file' | 'image' | 'audio' | 'video'
+
+/** Owner request for a bounded page of files presented by one Bot. */
+export interface BotLibraryRequest {
+  /** Bot whose delivered files should be listed. */
+  readonly botId: BotId
+  /** Number of newest items to return; the Host applies a bounded default when omitted. */
+  readonly limit?: number
+  /** Exclusive position returned by the previous page, so the next page reads older items. */
+  readonly before?: BotLibraryCursor
+}
+
+/** One Bot-created file projection from a durable `deliverables/presented` event. */
+export interface BotLibraryItem {
+  /** Bot that owns the Session containing the presentation event. */
+  readonly botId: BotId
+  /** Session coordinate required by the existing authenticated open/download routes. */
+  readonly sessionId: SessionId
+  /** Stable Session event coordinate for the presented declaration. */
+  readonly eventSeq: number
+  /** Stable file coordinate within the presented declaration. */
+  readonly fileIndex: number
+  /** User-facing label; the original filesystem path is never returned. */
+  readonly label: string
+  /** Coarse media/file badge category for the Library surface. */
+  readonly category: BotLibraryItemCategory
+  /** Creation time copied from the durable Session event. */
+  readonly createdAt: number
+}
+
+/** Owner response for one bounded Bot Library page. */
+export interface BotLibraryValue {
+  /** Bot whose delivered files are listed. */
+  readonly botId: BotId
+  /** Newest-first presented files. */
+  readonly items: readonly BotLibraryItem[]
+  /** Position to pass as `before` when older items remain. */
+  readonly nextBefore?: BotLibraryCursor
+}
+
 /** Import data from a Grok Bot export into an existing, operator-owned Bot. */
 export interface BotGrokImportRequest {
   /** Destination Bot with the Session and roster placement to preserve. */

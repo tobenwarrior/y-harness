@@ -193,6 +193,7 @@ export function apply(ctx: Context): void {
         const face = controller.face()
         return {
           ...face, computer, setComputerTarget, openWorkspaceTab,
+          downloadLibraryFile: ctx.get('presentedFileDownloads')?.url,
           refreshComputerAvailability: (sessionId?: string): void => { computerAvailability.refresh(sessionId) },
           hooks: {
             ...face.hooks,

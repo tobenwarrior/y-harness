@@ -48,6 +48,7 @@
     "apps/web/tests/approval-composer.e2e.ts",
     "apps/web/tests/plan-control-row.e2e.ts",
     "apps/web/tests/bot-workspace.e2e.ts",
+    "apps/web/tests/bot-library.e2e.ts",
     "apps/web/tests/grok-history-attachments.e2e.ts",
     "apps/web/tests/bot-group.e2e.ts",
     "apps/web/tests/bot-conversation.e2e.ts",

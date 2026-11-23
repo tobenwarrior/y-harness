@@ -57,6 +57,7 @@ import type { UserMessage } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
 import type { SessionEvent } from '@yharness/session'
 import type { TurnEndReason } from '@yharness/session'
+import type {} from '@yharness/session-query'
 import { ApiSessionNotFound, type SessionCreateRequest } from '@yharness/api-session-controller'
 import { defineDomain, domainTable, type Domain, type KvTable } from '@yharness/storage-domain'
 import { credentialKey, type CredentialProvider, type CredentialRecord } from '@yharness/credentials'
@@ -138,6 +139,11 @@ import {
   type BotGrokHistoryPage,
   type BotGrokHistoryPageResolvedRequest,
 } from './grok-history.ts'
+import {
+  BOT_LIBRARY_DEFAULT_LIMIT,
+  BOT_LIBRARY_MAX_LIMIT,
+  readBotLibraryPage,
+} from './library.ts'
 import { importGrokBotSkills } from './grok-import-skills.ts'
 import type { BotConnectedAppToolHost, BotGrokHistoryToolHost, BotGroupToolHost } from './scoped-tools.ts'
 import {
@@ -191,6 +197,8 @@ import type {
   BotGrokHistoryImportRequest,
   BotGrokHistoryRequest,
   BotGrokHistoryView,
+  BotLibraryRequest,
+  BotLibraryValue,
   BotGrokImportRequest,
   BotGrokImportValue,
   BotMemoryView,
@@ -7242,6 +7250,53 @@ export class BotService extends TypertRemoteService {
     if (vault === undefined || archive.version !== 2) return archive
     const availableAttachments = await vault.available(id, archive, signal)
     return availableAttachments.length === 0 ? archive : { ...archive, availableAttachments }
+  }
+
+  /**
+   * Read a bounded owner-only Library page from durable Bot-presented files.
+   *
+   * Only `deliverables/presented` events are included. User uploads, imported
+   * Grok attachments, and arbitrary workspace files stay outside this view.
+   * @param request - Bot identity, page size, and optional older-item cursor.
+   * @param signal - Cancellation for storage reads.
+   * @returns Newest-first safe file labels and existing download coordinates.
+   */
+  @Remote('readLibrary')
+  async readLibrary(request: BotLibraryRequest, signal?: AbortSignal): Promise<BotLibraryValue> {
+    if (!isRequestObject(request)) return badRequest('Bot Library request must be an object')
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const limit = request.limit ?? BOT_LIBRARY_DEFAULT_LIMIT
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > BOT_LIBRARY_MAX_LIMIT) {
+      return badRequest(`Bot Library limit must be a safe integer from 1 through ${BOT_LIBRARY_MAX_LIMIT}`)
+    }
+    const before = request.before
+    if (before !== undefined && (!isRequestObject(before)
+      || !Number.isSafeInteger(before.eventSeq) || before.eventSeq < 0
+      || !Number.isSafeInteger(before.fileIndex) || before.fileIndex < 0)) {
+      return badRequest('Bot Library cursor must contain non-negative eventSeq and fileIndex integers')
+    }
+    const bot = await this.readOwnedBot(botId)
+    const sessionQuery = this.ctx.get('sessionQuery')
+    if (sessionQuery === undefined) {
+      throw new RemoteError('gateway/internal', 'Bot Library history is unavailable on this Host.', {})
+    }
+    const observation = await sessionQuery.observeSession(
+      bot.sessionId,
+      signal === undefined ? { projectionMode: 'none' } : { projectionMode: 'none', signal },
+    )
+    try {
+      const events = observation.events
+      return await readBotLibraryPage(bot.id, bot.sessionId, {
+        eventCount: events.length,
+        read: async (offset, length, readSignal) => {
+          readSignal?.throwIfAborted()
+          return events.slice(offset, offset + length)
+        },
+      }, limit, before, signal)
+    } finally {
+      observation[Symbol.dispose]()
+    }
   }
 
   /** Authorize the Bot and read the current durable archive together. */

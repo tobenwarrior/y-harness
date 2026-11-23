@@ -1,0 +1,96 @@
+.modal {
+  inline-size: min(560px, calc(100vw - 32px));
+}
+
+.content {
+  display: flex;
+  min-block-size: 104px;
+  min-inline-size: 0;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.filters {
+  display: flex;
+  gap: 4px;
+}
+
+.filters [aria-pressed='true'] {
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
+}
+
+.section h3 {
+  margin: 0 0 6px;
+  color: var(--yh-alias-label-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.files {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  color: var(--yh-alias-label-primary);
+  text-decoration: none;
+}
+
+.result:hover,
+.result:focus-visible {
+  background: var(--yh-alias-interactive-bg-hover);
+}
+
+.fileIcon,
+.download {
+  flex-shrink: 0;
+}
+
+.download,
+.notice,
+.fileText time {
+  color: var(--yh-alias-label-secondary);
+}
+
+.fileText {
+  display: grid;
+  flex: 1;
+  min-inline-size: 0;
+  gap: 3px;
+  font-size: 13px;
+}
+
+.label {
+  overflow-wrap: anywhere;
+}
+
+.loading,
+.notice,
+.more {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding-block: 10px;
+  font-size: 13px;
+}
+
+.notice {
+  flex-wrap: wrap;
+  text-align: center;
+}
+
+.notice p {
+  margin: 0;
+}

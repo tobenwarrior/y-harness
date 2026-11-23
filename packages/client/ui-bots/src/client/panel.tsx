@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react'
 import type { BotView } from '@yharness/bots/client'
+import type { PresentedFileDownloads } from '@yharness/client-ui-deliverables/client'
 import type { HostObservable, PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime, InjectFace } from '@yharness/client-ui-slots'
 import type { ConversationBot } from '@yharness/client-ui-conversation/client'
 import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
@@ -46,6 +47,7 @@ export type BotsPanelProps =
   & PropsRenderSlots<'bots.conversation' | 'conversation.session.header.agents'>
   & PropsLocale<'bots'>
   & InjectFace<BotWorkspaceFace & {
+    readonly downloadLibraryFile?: PresentedFileDownloads['url'] | undefined
     readonly computer: ComputerClient
     readonly setComputerTarget: (sessionId: string | null) => void
     readonly openWorkspaceTab: (kind: WorkspaceTabKind) => void
@@ -160,7 +162,7 @@ export function BotsRoster({
 export function BotsPanel({
   useWorkspace, useSessionStatus, reference, retryGroup, updateGroup, sendGroupMessage,
   sendGroupMessageWithAttachments, reactGroupMessage, groupsAvailable, loadAvatar,
-  rename, updateProfile, memoryManager, readGrokHistory,
+  rename, updateProfile, memoryManager, readGrokHistory, readLibrary, downloadLibraryFile,
   routineManager, skillManager, SessionProvider, renderSlot, t, share, computer, useComputerAvailability,
   setComputerTarget, useComputerTarget, useComputerIdentity, useComputerSignIn, openWorkspaceTab, useTerminalAvailable, useFilesAvailable,
   useSharedFilesAvailable, refreshComputerAvailability,
@@ -211,6 +213,8 @@ export function BotsPanel({
         bot={selectedBot}
         children={conversation}
         readGrokHistory={readGrokHistory}
+        readLibrary={readLibrary}
+        downloadLibraryFile={downloadLibraryFile}
         workspaceActions={[
           ...(showTerminalAction ? [{
             id: 'terminal',

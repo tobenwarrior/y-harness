@@ -156,6 +156,24 @@ function templateView(id: string, shareCode: string, patch: Partial<BotTemplateV
 const localPermissions = { status: 'resolved' as const, preset: 'research-preset', tools: ['chat', 'read_file'] }
 
 describe('BotWorkspaceController', () => {
+  it('uses the owner Bot and optional file cursor for Library reads', async () => {
+    const existing = bot('bot-library', 'session-library')
+    const value = { botId: existing.id, items: [] }
+    const readLibrary = vi.fn<NonNullable<BotWorkspaceRemote['readLibrary']>>().mockResolvedValue({ ok: true, value })
+    const remote = remoteFixture([existing])
+    const client = new BotWorkspaceController({ ...remote, readLibrary }, sessionsFixture().sessions, () => 'unexpected response')
+    const read = client.face().readLibrary
+    if (read === undefined) throw new Error('Library reader is unavailable.')
+    expect(client.face().readLibrary).toBe(read)
+    await expect(read(existing.id)).resolves.toEqual(value)
+    const before = { eventSeq: 5, fileIndex: 2 }
+    await expect(read(existing.id, before)).resolves.toEqual(value)
+    expect(readLibrary.mock.calls).toEqual([[{ botId: existing.id }], [{ botId: existing.id, before }]])
+    readLibrary.mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'unavailable', {}) })
+    await expect(read(existing.id)).rejects.toThrow('unavailable')
+    expect(new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response').face().readLibrary).toBeUndefined()
+  })
+
   it('routes shared app grants through the owner remote with the current revision', async () => {
     const existing = bot('bot-shared-apps', 'session-shared-apps')
     const access = { botId: existing.id, revision: 3, apps: [{ id: 'github', name: 'GitHub', allowed: false }] }

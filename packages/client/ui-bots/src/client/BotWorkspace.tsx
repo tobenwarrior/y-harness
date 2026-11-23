@@ -12,6 +12,7 @@ import {
   type MenuItem,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
+import type { PresentedFileDownloads } from '@yharness/client-ui-deliverables/client'
 import { randomUUID } from '@yharness/util-crypto'
 import { BotAvatar } from './BotAvatar.tsx'
 import { BotAvatarEditor } from './BotAvatarEditor.tsx'
@@ -32,6 +33,7 @@ import { compactGroupQuote, GROUP_REACTION_OPTIONS } from './group-interactions.
 import { BotMemoryManager } from './BotMemoryManager.tsx'
 import { BotSkillsManager } from './BotSkillsManager.tsx'
 import { BotRoutineManager } from './BotRoutineManager.tsx'
+import { BotLibraryDialog, type ReadBotLibrary } from './BotLibraryDialog.tsx'
 import { GrokHistoryDialog } from './GrokHistoryAction.tsx'
 import type { BotGrokHistoryView } from '@yharness/bots/client'
 import css from './BotWorkspace.module.css'
@@ -1177,12 +1179,14 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
 
 export function BotDetail({
   bot, children, headerActions, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, routineManager,
-  skillManager, routineRevision = 0, loading, workspaceActions = [], readGrokHistory,
+  skillManager, routineRevision = 0, loading, workspaceActions = [], readGrokHistory, readLibrary, downloadLibraryFile,
 }: {
   bot: BotSummary | undefined
   children: ReactNode
   headerActions?: ReactNode
   workspaceActions?: readonly BotToolbarItem[]
+  readLibrary?: ReadBotLibrary | undefined
+  downloadLibraryFile?: PresentedFileDownloads['url'] | undefined
   readGrokHistory?: ((id: string) => Promise<BotGrokHistoryView | null>) | undefined
   t: BotWorkspaceViewProps['t']
   loadAvatar: BotWorkspaceViewProps['loadAvatar']
@@ -1231,6 +1235,7 @@ export function BotDetail({
   const [routineOpen, setRoutineOpen] = useState(false)
   const [shareTarget, setShareTarget] = useState<string | null>(null)
   const [historyTarget, setHistoryTarget] = useState<string | null>(null)
+  const [libraryTarget, setLibraryTarget] = useState<string | null>(null)
   if (bot === undefined) {
     if (loading) {
       return (
@@ -1284,6 +1289,9 @@ export function BotDetail({
     ...(routineManager === undefined ? [] : [{
       id: 'routines', label: t('manageRoutines'), icon: <IconClockOutlineRegular size={16} />, run: () => { setRoutineOpen(true) },
     }]),
+    ...(readLibrary === undefined || downloadLibraryFile === undefined ? [] : [{
+      id: 'library', label: t('libraryTitle'), icon: <IconFolderOpenOutlineRegular size={16} />, run: () => { setLibraryTarget(bot.id) },
+    }]),
     ...(readGrokHistory === undefined ? [] : [{
       id: 'history', label: t('grokHistory'), icon: <IconArchiveOffOutlineRegular size={16} />, run: () => { setHistoryTarget(bot.id) },
     }]),
@@ -1313,11 +1321,15 @@ export function BotDetail({
         </span>
       </header>
       {share !== undefined && (
-        <BotShareDialog key={bot.id} bot={bot} actions={share} open={shareTarget === bot.id}
+        <BotShareDialog key={`share:${bot.id}`} bot={bot} actions={share} open={shareTarget === bot.id}
           onClose={() => { setShareTarget(null) }} t={t} />
       )}
+      {readLibrary !== undefined && downloadLibraryFile !== undefined && libraryTarget === bot.id && (
+        <BotLibraryDialog key={`library:${bot.id}`} botId={bot.id} botName={bot.name} read={readLibrary} downloadUrl={downloadLibraryFile}
+          onClose={() => { setLibraryTarget(null) }} t={t} />
+      )}
       {readGrokHistory !== undefined && (
-        <GrokHistoryDialog key={bot.id} botId={bot.id} botName={bot.name} read={readGrokHistory}
+        <GrokHistoryDialog key={`history:${bot.id}`} botId={bot.id} botName={bot.name} read={readGrokHistory}
           open={historyTarget === bot.id} onClose={() => { setHistoryTarget(null) }} t={t} />
       )}
       {bot.status === 'working' && (bot.preview !== undefined || bot.activity !== undefined) && (

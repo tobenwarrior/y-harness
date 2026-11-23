@@ -10,6 +10,7 @@
  */
 import './file-actions.ts'
 import type { Context as ClientContext } from '@yharness/cordis'
+import type { SessionId } from '@yharness/session/types'
 import type {} from '@yharness/api-remotes/client'
 import type {} from '@yharness/client-connection/client'
 import type { ChatFileMentions } from '@yharness/client-ui-chat/client'
@@ -19,6 +20,7 @@ import type {} from '@yharness/client-ui-renderer/client'
 import type {} from '@yharness/client-ui-sidebar-right/client'
 import type {} from '@yharness/client-ui-settings/client'
 import { changesReviewAddress } from '../changes.ts'
+import { presentedDownloadUrl } from '../presented.ts'
 import { ChangesDiffStore } from './changes-diff.ts'
 import { ChangesSummaryStore } from './changes-summary.ts'
 import { PresentedOpenController } from './present-open.ts'
@@ -31,6 +33,22 @@ import { en, NS, type DeliverablesKey } from './locales.ts'
 import {
   deliverablesDefinition, presentedForClosing, producedFileMentions, selectProducedFiles,
 } from './turn-deliverables.ts'
+
+/** Authenticated downloads for file declarations already accepted by the Host. */
+export interface PresentedFileDownloads {
+  /**
+   * Address one exact file already declared in an accessible Session.
+   * @param sessionId - owning Session.
+   * @param eventSeq - delivery event sequence.
+   * @param fileIndex - original file position in the event.
+   * @returns A document-relative download URL.
+   */
+  url(sessionId: SessionId, eventSeq: number, fileIndex: number): string
+}
+
+declare module '@yharness/cordis' {
+  interface Context { readonly presentedFileDownloads: PresentedFileDownloads }
+}
 
 declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -47,6 +65,7 @@ export const inject = ['slots', 'locale', 'uiConversation', 'remote', 'remote.se
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
+  ctx.provide('presentedFileDownloads', { url: presentedDownloadUrl })
   const opener = new PresentedOpenController()
   const summaries = new ChangesSummaryStore()
   const diffs = new ChangesDiffStore()
