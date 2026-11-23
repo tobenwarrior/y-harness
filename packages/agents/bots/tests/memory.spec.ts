@@ -1,12 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 import { SessionSeq, type SessionEvent } from '@yharness/session'
 import {
+  BOT_MEMORY_ENTRY_LIMIT,
+  BOT_MEMORY_SEARCH_LIMIT,
+  BOT_MEMORY_SEARCH_QUERY_LIMIT,
   BOT_MEMORY_TEXT_LIMIT,
   BotMemoryId,
+  normalizeBotMemorySearchQuery,
   normalizeBotMemoryText,
   parseBotMemoryId,
   projectBotMemories,
   projectBotMemoryState,
+  searchBotMemories,
 } from '../src/memory.ts'
 import { BotId } from '../src/types.ts'
 
@@ -40,6 +45,13 @@ describe('Bot memory projection', () => {
     expect(() => normalizeBotMemoryText(null as never)).toThrow('Memory text must be a string.')
     expect(() => normalizeBotMemoryText('')).toThrow(/Memory text must contain/)
     expect(() => normalizeBotMemoryText('x'.repeat(BOT_MEMORY_TEXT_LIMIT + 1))).toThrow(/Memory text must contain/)
+
+    expect(normalizeBotMemorySearchQuery(undefined)).toBeUndefined()
+    expect(normalizeBotMemorySearchQuery('   ')).toBeUndefined()
+    expect(normalizeBotMemorySearchQuery('  Café ')).toBe('café')
+    expect(() => normalizeBotMemorySearchQuery(42 as never)).toThrow('Memory search query must be a string.')
+    expect(() => normalizeBotMemorySearchQuery('x'.repeat(BOT_MEMORY_SEARCH_QUERY_LIMIT + 1)))
+      .toThrow(/Memory search queries must contain at most/)
   })
 
   it('reconstructs active records and forget tombstones across persisted events', () => {
@@ -105,5 +117,33 @@ describe('Bot memory projection', () => {
       memoryEvent(rememberData('memory-conflict', 'Different note.'), 1, 2),
     ]
     expect(() => projectBotMemories(events, BOT_ID)).toThrow(/conflicting text/)
+  })
+
+  it('retains a larger durable projection while paging and searching bounded results', () => {
+    expect(BOT_MEMORY_ENTRY_LIMIT).toBeGreaterThanOrEqual(180)
+    const memories = Array.from({ length: 180 }, (_, index) => ({
+      id: BotMemoryId(`memory-entry-${String(index + 1)}`),
+      text: `Research entry ${String(index + 1)}`,
+      createdAt: index + 1,
+    }))
+
+    const first = searchBotMemories(memories, {})
+    expect(first.memories).toHaveLength(BOT_MEMORY_SEARCH_LIMIT)
+    expect(first.memories[0]?.id).toBe(BotMemoryId('memory-entry-180'))
+    expect(first.memories.at(-1)?.id).toBe(BotMemoryId('memory-entry-161'))
+    expect(first.nextBefore).toBe(BotMemoryId('memory-entry-161'))
+    if (first.nextBefore === undefined) throw new Error('first memory page did not return a cursor')
+
+    const second = searchBotMemories(memories, { before: first.nextBefore, limit: 7 })
+    expect(second.memories.map(memory => String(memory.id))).toEqual([
+      'memory-entry-160', 'memory-entry-159', 'memory-entry-158', 'memory-entry-157',
+      'memory-entry-156', 'memory-entry-155', 'memory-entry-154',
+    ])
+    expect(second.nextBefore).toBe(BotMemoryId('memory-entry-154'))
+
+    const match = searchBotMemories(memories, { query: '  ENTRY 42 ' })
+    expect(match.memories.map(memory => String(memory.id))).toEqual(['memory-entry-42'])
+    expect(() => searchBotMemories(memories, { limit: BOT_MEMORY_SEARCH_LIMIT + 1 })).toThrow(/between 1 and/)
+    expect(() => searchBotMemories(memories, { before: BotMemoryId('memory-missing') })).toThrow(/cursor was not found/)
   })
 })

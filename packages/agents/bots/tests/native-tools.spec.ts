@@ -28,6 +28,7 @@ function client(): BotCollaborationClient {
     })),
     memory: {
       list: vi.fn<BotMemoryClient['list']>(async () => [{ id: BotMemoryId('memory-one'), text: 'Use dark mode.', createdAt: 1 }]),
+      search: vi.fn<BotMemoryClient['search']>(async () => ({ memories: [{ id: BotMemoryId('memory-one'), text: 'Use dark mode.', createdAt: 1 }] })),
       remember: vi.fn<BotMemoryClient['remember']>(async request => ({
         id: request.memoryId ?? BotMemoryId('memory-created'), text: request.text, createdAt: 2,
       })),
@@ -977,17 +978,66 @@ describe('native Bot actions', () => {
     expect(manage).toHaveBeenCalledOnce()
   })
   it('reads, remembers, and forgets durable memory through native actions', async () => {
+    const sessionId = SessionId('bot-session-alpha')
     const bound = client()
     const provider = createBotNativeToolProvider({ bind: async () => bound, persist: async () => {}, replay: async () => [] })
-    const tools = await provider.resolve({ sessionId: SessionId('bot-session-alpha') })
+    const tools = await provider.resolve({ sessionId })
     const list = tools.find(tool => tool.name === 'list_bot_memory')
+    const search = tools.find(tool => tool.name === 'search_bot_memory')
     const remember = tools.find(tool => tool.name === 'remember_bot_memory')
     const forget = tools.find(tool => tool.name === 'forget_bot_memory')
-    if (list === undefined || remember === undefined || forget === undefined) throw new Error('memory tools missing')
+    if (list === undefined || search === undefined || remember === undefined || forget === undefined) throw new Error('memory tools missing')
 
     const listed = await list.execute({}, context())
     expect(listed.success).toBe(true)
     expect(listed.contentItems[0]?.text).not.toContain('Use dark mode.')
+    const searched = await search.execute({ query: 'dark', limit: 1 }, context())
+    expect(searched.success).toBe(true)
+    expect(searched.contentItems[0]?.text).toContain('Use dark mode.')
+    expect(vi.mocked(bound.memory!.search).mock.calls[0]?.[0]).toMatchObject({ query: 'dark', limit: 1 })
+
+    vi.mocked(bound.memory!.search).mockResolvedValueOnce({
+      memories: [{ id: BotMemoryId('memory-older'), text: 'An older note.', createdAt: 1 }],
+      nextBefore: BotMemoryId('memory-older'),
+    })
+    const paged = await search.execute({ before: 'memory-newer', limit: 2 }, context())
+    expect(paged.success).toBe(true)
+    expect(paged.contentItems[0]?.text).toContain('memory-older')
+    expect(paged.contentItems[0]?.text).toContain('nextBefore')
+
+    await expect(search.execute({ query: 42 }, context())).resolves.toMatchObject({ success: false })
+    await expect(search.execute({ before: 42 }, context())).resolves.toMatchObject({ success: false })
+    await expect(search.execute({ limit: 1.5 }, context())).resolves.toMatchObject({ success: false })
+    await expect(search.execute({ before: 'not-a-memory-cursor' }, context())).resolves.toMatchObject({ success: false })
+
+    const unavailableClient = (() => {
+      const { memory, ...withoutMemory } = client()
+      void memory
+      return withoutMemory
+    })()
+    const unavailable = createBotNativeToolProvider({
+      bind: async () => unavailableClient, persist: async () => {}, replay: async () => [],
+    })
+    const unavailableSearch = (await unavailable.resolve({ sessionId })).find(tool => tool.name === 'search_bot_memory')
+    if (unavailableSearch === undefined) throw new Error('unavailable memory search tool missing')
+    await expect(unavailableSearch.execute({}, context())).resolves.toMatchObject({ success: false })
+
+    const cancelled = new AbortController()
+    cancelled.abort()
+    await expect(search.execute({}, context({ signal: cancelled.signal }))).resolves.toMatchObject({ success: false })
+
+    vi.mocked(bound.memory!.search).mockRejectedValueOnce(new BotMemoryError('memory-not-found', 'No matching memory.'))
+    await expect(search.execute({}, context())).resolves.toMatchObject({ success: false })
+    vi.mocked(bound.memory!.search).mockRejectedValueOnce(new Error('search unavailable'))
+    await expect(search.execute({}, context())).resolves.toMatchObject({ success: false })
+
+    const searchCancelled = new AbortController()
+    vi.mocked(bound.memory!.search).mockImplementationOnce(async () => {
+      searchCancelled.abort()
+      throw new Error('search cancelled')
+    })
+    await expect(search.execute({}, context({ signal: searchCancelled.signal }))).resolves.toMatchObject({ success: false })
+
     const remembered = await remember.execute({ text: 'Keep reviews concise.', memoryId: 'memory-review' }, context())
     expect(remembered.success).toBe(true)
     expect(remembered.contentItems[0]?.text).not.toContain('Keep reviews concise.')
@@ -1601,6 +1651,52 @@ describe('native Bot actions', () => {
     expect((await tool.execute({ name: 'Research' }, context())).success).toBe(true)
     expect(manage).toHaveBeenCalledOnce()
   })
+
+  it('matches every creation identity field and retires settled no-effect retries', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const manage = vi.fn<NonNullable<BotNativeToolHost['manage']>>(async () => ({ id: 'bot-created' }))
+    const replay: readonly BotDynamicToolEvent[] = [
+      {
+        phase: 'started', name: 'create_bot', callId: 'current', threadId: 'wrong-thread', turnId: 'turn-1', sessionId,
+        arguments: { name: 'Thread mismatch' },
+      },
+      {
+        phase: 'settled', name: 'create_bot', callId: 'current', threadId: 'wrong-thread', turnId: 'turn-1', sessionId,
+        arguments: { name: 'Thread mismatch' }, result: { success: true, contentItems: [] },
+      },
+      {
+        phase: 'started', name: 'create_bot', callId: 'current', threadId: 'thread-1', turnId: 'wrong-turn', sessionId,
+        arguments: { name: 'Turn mismatch' },
+      },
+      {
+        phase: 'settled', name: 'create_bot', callId: 'current', threadId: 'thread-1', turnId: 'wrong-turn', sessionId,
+        arguments: { name: 'Turn mismatch' }, result: { success: true, contentItems: [] },
+      },
+      {
+        phase: 'started', name: 'create_bot', callId: 'no-effect', threadId: 'thread-no-effect', turnId: 'turn-no-effect', sessionId,
+        arguments: { name: 'No effect' },
+      },
+      {
+        phase: 'settled', name: 'create_bot', callId: 'no-effect', threadId: 'thread-no-effect', turnId: 'turn-no-effect', sessionId,
+        arguments: { name: 'No effect' },
+        result: { success: false, contentItems: [{ type: 'inputText', text: JSON.stringify({ error: 'approval-denied' }) }] },
+      },
+      {
+        phase: 'started', name: 'create_bot', callId: 'current', threadId: 'thread-1', turnId: 'turn-1', sessionId,
+        arguments: { name: 'Current' },
+      },
+    ]
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => {}, replay: async () => replay, manage,
+    })
+    const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'create_bot')
+    if (create === undefined) throw new Error('create_bot was not registered')
+    await expect(create.execute({ name: 'Current' }, context({
+      sessionId, callId: 'current', threadId: 'thread-1', turnId: 'turn-1',
+    }))).resolves.toMatchObject({ success: true })
+    expect(manage).toHaveBeenCalledOnce()
+  })
+
   it('binds to the live sender, exposes only collaboration actions, and persists bounded lifecycles', async () => {
     const bound = client()
     const persisted: BotDynamicToolEvent[] = []
@@ -1610,7 +1706,7 @@ describe('native Bot actions', () => {
     const tools = await provider.resolve({ sessionId: SessionId('bot-session-alpha') })
     expect(tools.map(tool => tool.name)).toEqual([
       'list_bots', 'inspect_bot', 'send_bot_message',
-      'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
+      'list_bot_memory', 'search_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
       'create_bot', 'edit_bot_profile',
     ])
     expect(tools.find(tool => tool.name === 'inspect_bot')?.description).toContain('dsh-bot:<bot-id>')

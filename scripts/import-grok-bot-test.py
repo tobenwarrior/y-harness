@@ -48,6 +48,19 @@ class ImportGrokBotAttachmentTest(unittest.TestCase):
             encoding='utf-8',
         )
 
+    def memory_source(
+        self,
+        memories: list[dict] | None = None,
+        user_facts: list[dict] | None = None,
+    ) -> pathlib.Path:
+        path = pathlib.Path(self.directory.name) / 'supplemental-memory.json'
+        path.write_text(json.dumps({
+            'version': 1,
+            'memories': memories or [],
+            'user_facts': user_facts or [],
+        }), encoding='utf-8')
+        return path
+
     def vault(self) -> pathlib.Path:
         root = pathlib.Path(self.directory.name) / f'vault-{len(self.vaults)}'
         root.mkdir(mode=0o700)
@@ -411,6 +424,326 @@ class ImportGrokBotAttachmentTest(unittest.TestCase):
         self.assertTrue(calls[1][1]['request']['preview'])
         self.assertFalse(destination.exists())
         self.assertTrue(connection.closed)
+
+    def test_memory_source_preview_skips_truncated_and_deduplicates_without_profile_fields(self):
+        source = self.memory_source(
+            memories=[{'text': 'New memory', 'truncated': False}],
+            user_facts=[
+                {'text': ' New memory ', 'truncated': False},
+                {'text': 'Incomplete fragment', 'truncated': True},
+            ],
+        )
+        calls = []
+
+        class Connection:
+            def close(self):
+                pass
+
+        def invoke(_connection, _cookie, endpoint, **kwargs):
+            calls.append((endpoint, kwargs))
+            if endpoint == 'bots/list':
+                return {'bots': [{'id': 'bot-destination', 'name': 'Destination'}]}
+            self.assertEqual(endpoint, 'bots/importGrokBot')
+            document = json.loads(kwargs['request']['document'])
+            bot = document['bots'][0]
+            self.assertNotIn('persona', bot)
+            self.assertEqual(bot['memories'], ['New memory'])
+            self.assertEqual(bot['user_facts'], [])
+            self.assertEqual(bot['skills'], [])
+            self.assertEqual(bot['routines'], [])
+            self.assertTrue(kwargs['request']['preview'])
+            self.assertTrue(kwargs['request']['memoryOnly'])
+            return {
+                'memories': 1, 'skills': 0, 'routines': 0, 'missingRoutineSkills': [],
+                'memoryCapacity': {'existingRecords': 1, 'newRecords': 1, 'limit': 256},
+            }
+
+        with (
+            patch.object(importer, 'connect', return_value=(Connection(), 'fixture-cookie')),
+            patch.object(importer, 'invoke', side_effect=invoke),
+            patch('sys.argv', [
+                str(pathlib.Path(importer.__file__)), '--memory-source', str(source), '--bot', 'bot-destination',
+            ]),
+            patch('sys.stdout', new_callable=io.StringIO) as output,
+        ):
+            importer.main()
+
+        decoded = json.loads(output.getvalue())
+        self.assertEqual(decoded['mode'], 'memory-preview')
+        self.assertEqual(decoded['memorySource'], {
+            'sourceRecords': 3,
+            'usableRecords': 1,
+            'duplicateRecords': 1,
+            'skippedTruncated': 1,
+            'memoryCapacity': {'existingRecords': 1, 'newRecords': 1, 'limit': 256},
+        })
+        self.assertEqual([endpoint for endpoint, _ in calls], ['bots/list', 'bots/importGrokBot'])
+
+    def test_memory_source_skips_invalid_usable_text_when_marked_truncated(self):
+        source = self.memory_source(memories=[
+            {'text': '', 'truncated': True},
+            {'text': 'x' * 2_001, 'truncated': True},
+            {'text': 'Usable memory', 'truncated': False},
+        ])
+
+        document, stats = importer._read_memory_source(source)
+
+        decoded = json.loads(document)
+        self.assertEqual(decoded['bots'][0]['memories'], ['Usable memory'])
+        self.assertEqual(stats, {
+            'sourceRecords': 3,
+            'usableRecords': 1,
+            'duplicateRecords': 0,
+            'skippedTruncated': 2,
+        })
+
+    def test_memory_source_rejects_non_integer_version_and_truncated_flag(self):
+        version_source = self.memory_source(memories=[])
+        version_source.write_text(json.dumps({
+            'version': 1.0, 'memories': [], 'user_facts': [],
+        }), encoding='utf-8')
+        with self.assertRaises(importer.ImportErrorDetail):
+            importer._read_memory_source(version_source)
+
+        flag_source = self.memory_source(memories=[{'text': 'Memory', 'truncated': 'true'}])
+        with self.assertRaises(importer.ImportErrorDetail):
+            importer._read_memory_source(flag_source)
+
+    def test_memory_source_apply_is_idempotent_across_retry(self):
+        source = self.memory_source(memories=[{'text': 'Retry-safe memory', 'truncated': False}])
+        memory_rows = [{'id': 'memory-existing', 'text': 'Existing memory'}]
+        import_requests = []
+
+        class Connection:
+            def close(self):
+                pass
+
+        def invoke(_connection, _cookie, endpoint, **kwargs):
+            if endpoint == 'bots/list':
+                return {'bots': [{'id': 'bot-destination', 'name': 'Destination'}]}
+            self.assertEqual(endpoint, 'bots/importGrokBot')
+            request = kwargs['request']
+            import_requests.append(request)
+            document = json.loads(request['document'])
+            if request['preview']:
+                new_records = 0 if document['bots'][0]['memories'][0] in [row['text'] for row in memory_rows] else 1
+                return {
+                    'memories': 1, 'skills': 0, 'routines': 0, 'missingRoutineSkills': [],
+                    'memoryCapacity': {
+                        'existingRecords': len(memory_rows), 'newRecords': new_records, 'limit': 256,
+                    },
+                }
+            existing_records = len(memory_rows)
+            new_records = 0 if document['bots'][0]['memories'][0] in [row['text'] for row in memory_rows] else 1
+            if document['bots'][0]['memories'][0] not in [row['text'] for row in memory_rows]:
+                memory_rows.append({'id': 'memory-retry-safe', 'text': document['bots'][0]['memories'][0]})
+            return {
+                'memories': 1, 'skills': 0, 'routines': 0, 'missingRoutineSkills': [],
+                'memoryCapacity': {'existingRecords': existing_records, 'newRecords': new_records, 'limit': 256},
+            }
+
+        def run() -> dict:
+            with (
+                patch.object(importer, 'connect', return_value=(Connection(), 'fixture-cookie')),
+                patch.object(importer, 'invoke', side_effect=invoke),
+                patch('sys.argv', [
+                    str(pathlib.Path(importer.__file__)), '--memory-source', str(source), '--bot', 'bot-destination', '--apply',
+                ]),
+                patch('sys.stdout', new_callable=io.StringIO) as output,
+            ):
+                importer.main()
+            return json.loads(output.getvalue())
+
+        first = run()
+        second = run()
+        self.assertEqual(first['memorySource']['memoryCapacity']['newRecords'], 1)
+        self.assertEqual(second['memorySource']['memoryCapacity']['newRecords'], 0)
+        self.assertEqual(len(memory_rows), 2)
+        self.assertEqual(len(import_requests), 4)
+        self.assertTrue(import_requests[0]['preview'])
+        self.assertFalse(import_requests[1]['preview'])
+        self.assertTrue(import_requests[2]['preview'])
+        self.assertFalse(import_requests[3]['preview'])
+        self.assertTrue(all(request['memoryOnly'] for request in import_requests))
+
+    def test_memory_source_accepts_more_than_the_removed_cli_limit(self):
+        source = self.memory_source(memories=[
+            {'text': f'Memory {index}', 'truncated': False} for index in range(101)
+        ])
+        requests = []
+
+        class Connection:
+            def close(self):
+                pass
+
+        def invoke(_connection, _cookie, endpoint, **kwargs):
+            if endpoint == 'bots/list':
+                return {'bots': [{'id': 'bot-destination', 'name': 'Destination'}]}
+            self.assertEqual(endpoint, 'bots/importGrokBot')
+            requests.append(kwargs['request'])
+            return {
+                'memories': 101, 'skills': 0, 'routines': 0, 'missingRoutineSkills': [],
+                'memoryCapacity': {'existingRecords': 0, 'newRecords': 101, 'limit': 256},
+            }
+
+        with (
+            patch.object(importer, 'connect', return_value=(Connection(), 'fixture-cookie')),
+            patch.object(importer, 'invoke', side_effect=invoke),
+            patch('sys.argv', [
+                str(pathlib.Path(importer.__file__)), '--memory-source', str(source), '--bot', 'bot-destination',
+            ]),
+            patch('sys.stdout', new_callable=io.StringIO) as output,
+        ):
+            importer.main()
+
+        decoded = json.loads(output.getvalue())
+        self.assertEqual(decoded['memorySource']['usableRecords'], 101)
+        self.assertEqual(decoded['memorySource']['memoryCapacity']['newRecords'], 101)
+        self.assertTrue(requests[0]['memoryOnly'])
+
+    def test_legacy_capacity_preview_does_not_invent_host_counts(self):
+        source = self.memory_source(memories=[{'text': 'Legacy capacity', 'truncated': False}])
+        calls = []
+
+        class Connection:
+            def close(self):
+                pass
+
+        def invoke(_connection, _cookie, endpoint, **kwargs):
+            calls.append(endpoint)
+            if endpoint == 'bots/list':
+                return {'bots': [{'id': 'bot-full', 'name': 'Full'}]}
+            raise importer.RemoteRequestError(
+                endpoint, 'gateway/bad-request', importer.MEMORY_CAPACITY_ERROR,
+            )
+
+        with (
+            patch.object(importer, 'connect', return_value=(Connection(), 'fixture-cookie')),
+            patch.object(importer, 'invoke', side_effect=invoke),
+            patch('sys.argv', [
+                str(pathlib.Path(importer.__file__)), '--memory-source', str(source), '--bot', 'bot-full',
+            ]),
+            patch('sys.stdout', new_callable=io.StringIO) as output,
+        ):
+            importer.main()
+
+        decoded = json.loads(output.getvalue())
+        self.assertEqual(decoded['blocked'], 'memory-capacity')
+        self.assertNotIn('memoryCapacity', decoded['memorySource'])
+        self.assertEqual(calls, ['bots/list', 'bots/importGrokBot'])
+
+    def test_invoke_preserves_structured_remote_error_code(self):
+        class Response:
+            status = 200
+
+            def read(self):
+                return json.dumps({
+                    'type': 'server-response', 'rpcId': self.rpc_id,
+                    'result': {'ok': False, 'error': {
+                        'code': 'gateway/bad-request', 'message': 'Synthetic rejection', 'details': {},
+                    }},
+                }).encode()
+
+        class Connection:
+            def request(self, _method, _path, body, headers):
+                del headers
+                self.rpc_id = json.loads(body)['rpcId']
+
+            def getresponse(self):
+                response = Response()
+                response.rpc_id = self.rpc_id
+                return response
+
+        with self.assertRaises(importer.RemoteRequestError) as raised:
+            importer.invoke(Connection(), 'fixture-cookie', 'bots/importGrokBot', request={})
+        self.assertEqual(raised.exception.code, 'gateway/bad-request')
+        self.assertEqual(raised.exception.remote_message, 'Synthetic rejection')
+
+    def test_memory_source_capacity_preview_reports_block_before_import(self):
+        source = self.memory_source(memories=[{'text': 'One more memory', 'truncated': False}])
+        calls = []
+
+        class Connection:
+            def close(self):
+                pass
+
+        def invoke(_connection, _cookie, endpoint, **kwargs):
+            calls.append(endpoint)
+            if endpoint == 'bots/list':
+                return {'bots': [{'id': 'bot-full', 'name': 'Full'}]}
+            self.assertEqual(endpoint, 'bots/importGrokBot')
+            self.assertTrue(kwargs['request']['preview'])
+            self.assertTrue(kwargs['request']['memoryOnly'])
+            return {
+                'memories': 1, 'skills': 0, 'routines': 0, 'missingRoutineSkills': [],
+                'memoryCapacity': {'existingRecords': 100, 'newRecords': 1, 'limit': 100},
+            }
+
+        with (
+            patch.object(importer, 'connect', return_value=(Connection(), 'fixture-cookie')),
+            patch.object(importer, 'invoke', side_effect=invoke),
+            patch('sys.argv', [
+                str(pathlib.Path(importer.__file__)), '--memory-source', str(source), '--bot', 'bot-full',
+            ]),
+            patch('sys.stderr', new_callable=io.StringIO),
+            patch('sys.stdout', new_callable=io.StringIO) as output,
+        ):
+            importer.main()
+
+        decoded = json.loads(output.getvalue())
+        self.assertEqual(decoded['mode'], 'memory-preview')
+        self.assertEqual(decoded['blocked'], 'memory-capacity')
+        self.assertEqual(decoded['memorySource']['memoryCapacity'], {
+            'existingRecords': 100, 'newRecords': 1, 'limit': 100,
+        })
+        self.assertEqual(calls, ['bots/list', 'bots/importGrokBot'])
+
+        calls.clear()
+        with (
+            patch.object(importer, 'connect', return_value=(Connection(), 'fixture-cookie')),
+            patch.object(importer, 'invoke', side_effect=invoke),
+            patch('sys.argv', [
+                str(pathlib.Path(importer.__file__)), '--memory-source', str(source), '--bot', 'bot-full', '--apply',
+            ]),
+            patch('sys.stderr', new_callable=io.StringIO),
+        ):
+            with self.assertRaises(SystemExit) as error:
+                importer.main()
+        self.assertEqual(error.exception.code, 1)
+        self.assertEqual(calls, ['bots/list', 'bots/importGrokBot'])
+
+    def test_memory_source_rejects_malformed_host_capacity(self):
+        source = self.memory_source(memories=[{'text': 'Malformed capacity', 'truncated': False}])
+        calls = []
+
+        class Connection:
+            def close(self):
+                pass
+
+        def invoke(_connection, _cookie, endpoint, **kwargs):
+            calls.append(endpoint)
+            if endpoint == 'bots/list':
+                return {'bots': [{'id': 'bot-destination', 'name': 'Destination'}]}
+            self.assertEqual(kwargs['request']['memoryOnly'], True)
+            return {
+                'memories': 1, 'skills': 0, 'routines': 0, 'missingRoutineSkills': [],
+                'memoryCapacity': {'existingRecords': 1, 'newRecords': 1},
+            }
+
+        with (
+            patch.object(importer, 'connect', return_value=(Connection(), 'fixture-cookie')),
+            patch.object(importer, 'invoke', side_effect=invoke),
+            patch('sys.argv', [
+                str(pathlib.Path(importer.__file__)), '--memory-source', str(source), '--bot', 'bot-destination',
+            ]),
+            patch('sys.stderr', new_callable=io.StringIO) as error_output,
+        ):
+            with self.assertRaises(SystemExit) as error:
+                importer.main()
+
+        self.assertEqual(error.exception.code, 1)
+        self.assertIn(importer.MEMORY_CAPACITY_WIRE_ERROR, error_output.getvalue())
+        self.assertEqual(calls, ['bots/list', 'bots/importGrokBot'])
 
 
 if __name__ == '__main__':

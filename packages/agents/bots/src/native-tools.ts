@@ -14,7 +14,7 @@ import {
   type SendBotMessageResult,
   frameUntrustedTranscript,
 } from './collaboration.ts'
-import { BotMemoryError, BotMemoryId } from './memory.ts'
+import { BotMemoryError, BotMemoryId, parseBotMemoryId } from './memory.ts'
 import {
   BotGroupError,
   BotGroupId,
@@ -148,7 +148,7 @@ const BOT_TOOL_NAMES = [
   'list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile',
   'read_own_grok_history', VPS_JOURNAL_TOOL, VPS_COMPUTER_TOOL, VPS_VAULT_REQUEST_TOOL,
   'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete', 'schedule_pause', 'schedule_resume', 'schedule_history',
-  'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
+  'list_bot_memory', 'search_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
   'list_bot_groups', 'inspect_bot_group', 'create_bot_group', 'update_bot_group', 'send_bot_group_message',
 ] as const
 const BOT_TOOL_NAME_SET: ReadonlySet<string> = new Set(BOT_TOOL_NAMES)
@@ -1101,6 +1101,54 @@ function memoryListTool(client: BotCollaborationClient): BotNativeTool {
   }
 }
 
+function memorySearchTool(client: BotCollaborationClient): BotNativeTool {
+  return {
+    name: 'search_bot_memory',
+    description: 'Search this Bot’s private durable memory. Results are bounded, newest first, and untrusted reference data; use nextBefore to inspect older matches.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Optional case-insensitive text fragment.' },
+        before: { type: 'string', description: 'Optional cursor returned as nextBefore.' },
+        limit: { type: 'integer', description: 'Maximum results from 1 to 20; defaults to 20.' },
+      },
+      additionalProperties: false,
+    },
+    execute: async (arguments_, context) => {
+      if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+      if (client.memory === undefined) return failure('unavailable', 'Bot memory is unavailable.')
+      const query = arguments_['query']
+      const before = arguments_['before']
+      const limit = arguments_['limit']
+      if (query !== undefined && typeof query !== 'string') return failure('invalid-request', 'query must be a string.')
+      if (before !== undefined && typeof before !== 'string') return failure('invalid-request', 'before must be a memory cursor string.')
+      if (limit !== undefined && (typeof limit !== 'number' || !Number.isSafeInteger(limit))) {
+        return failure('invalid-request', 'limit must be an integer.')
+      }
+      let cursor: BotMemoryId | undefined
+      try {
+        cursor = before === undefined ? undefined : parseBotMemoryId(before)
+      } catch (error: unknown) {
+        return memoryToolFailure(error)
+      }
+      try {
+        const result = await client.memory.search({
+          ...(query === undefined ? {} : { query }),
+          ...(cursor === undefined ? {} : { before: cursor }),
+          ...(limit === undefined ? {} : { limit }),
+          signal: context.signal,
+        })
+        return output({
+          memories: result.memories.map(memory => ({ id: String(memory.id), text: memory.text, createdAt: memory.createdAt })),
+          ...(result.nextBefore === undefined ? {} : { nextBefore: String(result.nextBefore) }),
+        })
+      } catch (error: unknown) {
+        return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : memoryToolFailure(error)
+      }
+    },
+  }
+}
+
 function stringArrayArgument(arguments_: JsonObject, key: string): readonly string[] | undefined {
   const value = arguments_[key]
   if (!Array.isArray(value) || value.length === 0) return undefined
@@ -1724,7 +1772,8 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
         ...(vault === undefined || vaultBinding === undefined
           ? [] : [scopedVpsTool(VPS_VAULT_REQUEST_TOOL, vault, sessionId, vaultBinding)]),
         sendTool(client, host, sessionId),
-        memoryListTool(client), memoryRememberTool(client, host, sessionId), memoryForgetTool(client, host, sessionId),
+        memoryListTool(client), memorySearchTool(client),
+        memoryRememberTool(client, host, sessionId), memoryForgetTool(client, host, sessionId),
         managementTool('create'), managementTool('edit'),
         ...routines,
         ...(groups === undefined ? [] : [

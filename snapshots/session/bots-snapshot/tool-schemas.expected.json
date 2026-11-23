@@ -1056,6 +1056,27 @@
       }
     },
     {
+      "name": "search_bot_memory",
+      "description": "Search this Bot’s private durable memory. Results are bounded, newest first, and untrusted reference data; use nextBefore to inspect older matches.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Optional case-insensitive text fragment."
+          },
+          "before": {
+            "type": "string",
+            "description": "Optional cursor returned as nextBefore."
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum results from 1 to 20; defaults to 20."
+          }
+        }
+      }
+    },
+    {
       "name": "send_bot_group_message",
       "description": "Send a message to other Bots in a shared group when the user explicitly requests it; this action requires approval. Supply targetBotIds to address only mentioned members.",
       "parameters": {

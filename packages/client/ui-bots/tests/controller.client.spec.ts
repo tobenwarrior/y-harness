@@ -4020,4 +4020,34 @@ describe('BotWorkspaceController', () => {
     expect(disposedPublishController.source.getSnapshot()).toEqual(beforeDisposedPublish)
     expect(disposedPublishRemote.listTemplates?.mock.calls.length ?? 0).toBe(templateReadsBeforePublish)
   })
+
+  it('reports both optional history outcomes and rejected retry callbacks', async () => {
+    const original = bot('bot-retry-callbacks', 'session-retry-callbacks')
+    const remote = remoteFixture([original])
+    const readGrokHistory = vi.fn<NonNullable<BotWorkspaceRemote['readGrokHistory']>>()
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'history unavailable', {}) })
+      .mockResolvedValueOnce({ ok: true, value: null })
+    remote.readGrokHistory = readGrokHistory
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    const face = controller.face()
+
+    await expect(face.readGrokHistory?.(original.id)).rejects.toThrow('history unavailable')
+    await expect(face.readGrokHistory?.(original.id)).resolves.toBeNull()
+
+    const load = vi.spyOn(controller, 'load')
+    load.mockRejectedValueOnce(new Error('group retry failed'))
+    face.retryGroup()
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().groupError).toBe('group retry failed') })
+    load.mockRejectedValueOnce('group retry string')
+    face.retryGroup()
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().groupError).toBe('group retry string') })
+
+    load.mockRejectedValueOnce(new Error('roster retry failed'))
+    face.retry()
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().error).toBe('roster retry failed') })
+    load.mockRejectedValueOnce('roster retry string')
+    face.retry()
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().error).toBe('roster retry string') })
+    controller.dispose()
+  })
 })

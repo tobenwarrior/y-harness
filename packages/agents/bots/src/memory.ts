@@ -42,12 +42,34 @@ export interface BotMemoryForgetRequest {
   readonly signal?: AbortSignal
 }
 
+/** Bounded owner query for durable Bot memory text. */
+export interface BotMemorySearchRequest {
+  /** Case-insensitive text fragment. Omit it to page through every active record. */
+  readonly query?: string
+  /** Continue with records older than this result id. */
+  readonly before?: BotMemoryId
+  /** Maximum records to return. Defaults to the bounded search page size. */
+  readonly limit?: number
+  /** Cancellation from the model tool or provider bridge. */
+  readonly signal?: AbortSignal
+}
+
+/** One bounded page returned by an owner memory search. */
+export interface BotMemorySearchValue {
+  /** Matching active records in newest-first order. */
+  readonly memories: readonly BotMemoryRecord[]
+  /** Cursor for an older page when more matching records remain. */
+  readonly nextBefore?: BotMemoryId
+}
+
 /** Provider-facing operations scoped to one trusted Bot Session. */
 export interface BotMemoryClient {
   /** Save one memory, or idempotently replay it when the request supplies a stable id. */
   readonly remember: (request: BotMemoryRememberRequest) => Promise<BotMemoryRecord>
   /** List the current Bot's durable memories in creation order. */
   readonly list: (signal?: AbortSignal) => Promise<readonly BotMemoryRecord[]>
+  /** Search active memory text and return one bounded newest-first page. */
+  readonly search: (request: BotMemorySearchRequest) => Promise<BotMemorySearchValue>
   /** Logically remove one memory by its stable identity; append-only history remains. */
   readonly forget: (request: BotMemoryForgetRequest) => Promise<void>
 }
@@ -98,8 +120,17 @@ const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
 /** Maximum text admitted into one model-visible memory entry. */
 export const BOT_MEMORY_TEXT_LIMIT = 2_000
 
-/** Maximum active entries included in one Bot memory projection. */
-export const BOT_MEMORY_ENTRY_LIMIT = 100
+/** Maximum active durable entries retained by one Bot. */
+export const BOT_MEMORY_ENTRY_LIMIT = 256
+
+/** Maximum active entries rendered into the existing Bot system prompt. */
+export const BOT_MEMORY_PROMPT_ENTRY_LIMIT = 100
+
+/** Maximum records returned by one owner memory search page. */
+export const BOT_MEMORY_SEARCH_LIMIT = 20
+
+/** Maximum case-insensitive query length accepted by owner memory search. */
+export const BOT_MEMORY_SEARCH_QUERY_LIMIT = 256
 
 /** Validate and brand a durable memory identity from a model or wire boundary.
  * @param value - Candidate memory identity from a model or wire boundary.
@@ -123,6 +154,49 @@ export function normalizeBotMemoryText(value: string): string {
     throw new BotMemoryError('memory-invalid', `Memory text must contain 1-${String(BOT_MEMORY_TEXT_LIMIT)} characters.`)
   }
   return text
+}
+
+/** Normalize an optional owner memory search query.
+ * @param value - Optional case-insensitive text fragment.
+ * @returns A trimmed query or undefined when the query is omitted or blank.
+ */
+export function normalizeBotMemorySearchQuery(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string') throw new BotMemoryError('memory-invalid', 'Memory search query must be a string.')
+  const query = value.trim()
+  if (Array.from(query).length > BOT_MEMORY_SEARCH_QUERY_LIMIT) {
+    throw new BotMemoryError('memory-invalid', `Memory search queries must contain at most ${String(BOT_MEMORY_SEARCH_QUERY_LIMIT)} characters.`)
+  }
+  return query.length === 0 ? undefined : query.normalize('NFKC').toLowerCase()
+}
+
+/** Search a projected memory map without exposing more than one bounded page.
+ * @param memories - Active durable records for one Bot.
+ * @param request - Query, cursor, and page limit.
+ * @returns Matching records and an optional cursor for the older page.
+ */
+export function searchBotMemories(
+  memories: Iterable<BotMemoryRecord>,
+  request: BotMemorySearchRequest,
+): BotMemorySearchValue {
+  const limit = request.limit ?? BOT_MEMORY_SEARCH_LIMIT
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > BOT_MEMORY_SEARCH_LIMIT) {
+    throw new BotMemoryError('memory-invalid', `Memory search limits must be between 1 and ${String(BOT_MEMORY_SEARCH_LIMIT)}.`)
+  }
+  const query = normalizeBotMemorySearchQuery(request.query)
+  const ordered = [...memories].sort((left, right) => right.createdAt - left.createdAt || String(right.id).localeCompare(String(left.id)))
+  const start = request.before === undefined
+    ? 0
+    : (() => {
+      const index = ordered.findIndex(memory => memory.id === request.before)
+      if (index < 0) throw new BotMemoryError('memory-not-found', 'The memory search cursor was not found.')
+      return index + 1
+    })()
+  const matching = ordered.slice(start).filter(memory => query === undefined || memory.text.normalize('NFKC').toLowerCase().includes(query))
+  const page = matching.slice(0, limit)
+  const last = page.at(-1)
+  if (matching.length > page.length && last !== undefined) return { memories: page, nextBefore: last.id }
+  return { memories: page }
 }
 
 function invalidStoredMemory(message: string): BotMemoryError {
