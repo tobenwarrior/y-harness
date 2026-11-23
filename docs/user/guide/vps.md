@@ -414,6 +414,8 @@ python3 ~/.yharness-vps/source/scripts/import-grok-bot.py ./grok-bot-export.json
 
 For a file with several bots, add `--source-name` to choose one. Repeat the command with `--apply` to import into the destination bot's existing chat and folder. The tool adds memories and user facts to the bot's memory, installs exported skill definitions in the destination Bot's execution workspace, and creates scheduled routines paused. Managed VPS Bots publish those skill files in their private Computer volume; desktop-only and ordinary Bots retain their existing Host workspace. Open the bot's routine manager to review the timing and resume each routine when ready. The preview lists any routine skill references that lack a definition in the export. App connections, chat transcripts, and event-triggered routines require separate setup.
 
+Use the same preview and apply commands for a version-one `grok-bot-memory-completion` export. It adds complete notes to the destination Bot’s private memory. The preview reports truncated and unretrieved entries under `memoryGaps`. Open **Manage memories** from the Bot’s options to verify the imported notes.
+
 If a routine references Grok's `box-desktop` skill, copy the [VPS Computer compatibility skill](../../../apps/cli/config/examples/skills/box-desktop/SKILL.md) into `.agents/skills/box-desktop/SKILL.md` in the Bot's execution workspace. For a managed VPS Bot, use its Computer workspace or `podman cp` after identifying the container; for a desktop-only or ordinary Bot, use the Host directory at `~/.yharness-vps/bots/<bot-session-id>`. Select an image-capable model in that Bot’s chat. Test a desktop observation and review any routine that needs network access before resuming it.
 
 ## Check the service

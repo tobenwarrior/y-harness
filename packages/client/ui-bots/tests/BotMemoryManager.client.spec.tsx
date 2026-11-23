@@ -55,6 +55,29 @@ describe('BotMemoryManager', () => {
     expect(screen.queryByRole('listitem', { name: /memory-one/ })).toBeNull()
   })
 
+  it('searches note text without displaying internal memory ids', async () => {
+    renderManager({
+      list: vi.fn(async () => [
+        { id: 'memory-one', text: 'Keep handoffs concise.', createdAt: 1 },
+        { id: 'memory-two', text: 'Review quarterly notes.', createdAt: 2 },
+      ]),
+      update: vi.fn(),
+      remove: vi.fn(),
+    })
+
+    const search = await screen.findByRole('searchbox', { name: 'Search memories' })
+    expect(screen.getByText('2 saved')).toBeTruthy()
+    expect(screen.queryByText('memory-one')).toBeNull()
+    fireEvent.change(search, { target: { value: ' QUARTERLY ' } })
+    expect(screen.getByText('Review quarterly notes.')).toBeTruthy()
+    expect(screen.queryByText('Keep handoffs concise.')).toBeNull()
+
+    fireEvent.change(search, { target: { value: 'unmatched text' } })
+    expect(screen.getByText('No matching memories.')).toBeTruthy()
+    fireEvent.change(search, { target: { value: '' } })
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+  })
+
   it('keeps the loaded memory visible and reports an edit failure', async () => {
     const actions: BotMemoryManagerActions = {
       list: vi.fn(async () => [{ id: 'memory-one', text: 'Keep handoffs concise.', createdAt: 1 }]),

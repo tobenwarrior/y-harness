@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  Button, IconCloseOutlineRegular, IconEditOutlineRegular, IconTrashOutlineRegular, Modal, StateDot, Tooltip,
+  Button, IconCloseOutlineRegular, IconEditOutlineRegular, IconSidebarSearchOutlineRegular,
+  IconTrashOutlineRegular, Input, Modal, StateDot, Tooltip,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import { BotAvatar } from './BotAvatar.tsx'
@@ -41,6 +42,7 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
   const [memories, setMemories] = useState<readonly BotMemorySummary[]>([])
   const [loading, setLoading] = useState(false)
   const [loadAttempt, setLoadAttempt] = useState(0)
+  const [query, setQuery] = useState('')
   const [editor, setEditor] = useState<MemoryEditor | null>(null)
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [working, setWorking] = useState<string | null>(null)
@@ -68,8 +70,11 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
   useEffect(() => {
     if (!open) return
     setEditor(null)
+    setQuery('')
   }, [bot.id, loadAttempt, open])
 
+  const searchText = query.trim().toLocaleLowerCase()
+  const matches = searchText === '' ? memories : memories.filter(memory => memory.text.toLocaleLowerCase().includes(searchText))
   const editingId = editor?.id ?? null
   const draft = editor?.draft ?? ''
 
@@ -135,7 +140,7 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
         description={t('memoryManagerDescription')}
         closeLabel={t('close')}
         className={css.memoryModal as string}
-        contentClassName={css.memoryModalContent as string}
+        contentClassName={css.memoryBrowserContent as string}
         footer={<Button variant="ghost" onClick={onClose}>{t('close')}</Button>}
       >
         <div className={css.memoryManagerHeading}>
@@ -159,17 +164,32 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
             <span>{t('memoryEmptyDescription')}</span>
           </div>
         )}
-        {!loading && memories.length > 0 && (
+        {!loading && error !== 'load' && memories.length > 0 && (
+          <div className={css.memorySearchRow}>
+            <Input
+              type="search"
+              className={css.memorySearchInput as string}
+              icon={<IconSidebarSearchOutlineRegular size={16} />}
+              aria-label={t('memorySearch')}
+              placeholder={t('memorySearch')}
+              value={query}
+              onChange={(event) => { setQuery(event.currentTarget.value) }}
+              disabled={editingId !== null || working !== null}
+            />
+            <span className={css.memoryCount}>{t('memorySavedCount', { count: String(memories.length) })}</span>
+          </div>
+        )}
+        {!loading && error !== 'load' && memories.length > 0 && matches.length === 0 && (
+          <div className={css.memoryEmpty} role="status">{t('memoryNoMatches')}</div>
+        )}
+        {!loading && matches.length > 0 && (
           <ul className={css.memoryList} aria-label={t('memoryListLabel')}>
-            {memories.map((memory) => {
+            {matches.map((memory) => {
               const editing = editingId === memory.id
               const busy = working === memory.id
+              const date = memoryDate(memory.createdAt)
               return (
                 <li key={memory.id} className={css.memoryRow} aria-label={memory.id}>
-                  <div className={css.memoryRowMeta}>
-                    <span className={css.memoryId}>{memory.id}</span>
-                    {memoryDate(memory.createdAt) !== '' && <time dateTime={new Date(memory.createdAt).toISOString()}>{memoryDate(memory.createdAt)}</time>}
-                  </div>
                   {editing
                     ? (
                       <div className={css.memoryEditor}>
@@ -197,16 +217,19 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
                       </div>
                     )
                     : <p className={css.memoryText}>{memory.text}</p>}
-                  {!editing && (
-                    <div className={css.memoryRowActions}>
-                      <Tooltip label={t('memoryEdit')} side="top" portal>
-                        <Button variant="ghost" size="sm" aria-label={`${t('memoryEdit')} ${memory.id}`} icon={<IconEditOutlineRegular size={14} />} onClick={() => { beginEdit(memory.id, memory.text) }} />
-                      </Tooltip>
-                      <Tooltip label={t('memoryRemove')} side="top" portal>
-                        <Button variant="ghost" size="sm" aria-label={`${t('memoryRemove')} ${memory.id}`} icon={<IconTrashOutlineRegular size={14} />} onClick={() => { setConfirmingId(memory.id); setError(null); setRemoveError(false) }} />
-                      </Tooltip>
-                    </div>
-                  )}
+                  <div className={css.memoryRowMeta}>
+                    {date !== '' && <time dateTime={new Date(memory.createdAt).toISOString()}>{date}</time>}
+                    {!editing && (
+                      <div className={css.memoryRowActions}>
+                        <Tooltip label={t('memoryEdit')} side="top" portal>
+                          <Button variant="ghost" size="sm" aria-label={`${t('memoryEdit')} ${memory.id}`} icon={<IconEditOutlineRegular size={14} />} onClick={() => { beginEdit(memory.id, memory.text) }} />
+                        </Tooltip>
+                        <Tooltip label={t('memoryRemove')} side="top" portal>
+                          <Button variant="ghost" size="sm" aria-label={`${t('memoryRemove')} ${memory.id}`} icon={<IconTrashOutlineRegular size={14} />} onClick={() => { setConfirmingId(memory.id); setError(null); setRemoveError(false) }} />
+                        </Tooltip>
+                      </div>
+                    )}
+                  </div>
                 </li>
               )
             })}

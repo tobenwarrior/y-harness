@@ -99,7 +99,31 @@ const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
 export const BOT_MEMORY_TEXT_LIMIT = 2_000
 
 /** Maximum active entries included in one Bot memory projection. */
-export const BOT_MEMORY_ENTRY_LIMIT = 100
+export const BOT_MEMORY_ENTRY_LIMIT = 256
+
+/** Maximum number of Unicode code points across all active memories. */
+const BOT_MEMORY_TOTAL_TEXT_LIMIT = 200_000
+
+/**
+ * Check memory capacity without changing the active memory projection.
+ * @param texts - Complete text of the proposed active memory entries.
+ * @returns Whether the entry count and combined text fit the Bot's memory budget.
+ */
+export function fitsBotMemoryCapacity(texts: readonly string[]): boolean {
+  return texts.length <= BOT_MEMORY_ENTRY_LIMIT
+    && texts.reduce((length, text) => length + Array.from(text).length, 0) <= BOT_MEMORY_TOTAL_TEXT_LIMIT
+}
+
+/**
+ * Reject an edit or a new memory that would exceed the active memory budget.
+ * @param texts - Complete text of the proposed active memory entries.
+ */
+export function assertBotMemoryCapacity(texts: readonly string[]): void {
+  if (!fitsBotMemoryCapacity(texts)) {
+    throw new BotMemoryError('memory-limit',
+      `A Bot can retain up to ${String(BOT_MEMORY_ENTRY_LIMIT)} active memories and ${String(BOT_MEMORY_TOTAL_TEXT_LIMIT)} characters in total.`)
+  }
+}
 
 /** Validate and brand a durable memory identity from a model or wire boundary.
  * @param value - Candidate memory identity from a model or wire boundary.

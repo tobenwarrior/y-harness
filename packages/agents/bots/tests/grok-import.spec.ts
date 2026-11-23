@@ -84,6 +84,49 @@ describe('Grok Bot export admission', () => {
       .toThrow(/memory limit/i)
   })
 
+  it('recovers complete supplemental memories and reports incomplete entries', () => {
+    const document = JSON.stringify({
+      format: 'grok-bot-memory-completion', version: 1, bot_name: 'Research Bot',
+      reported_total: 6, retrieved_total: 4,
+      memories: [
+        { text: ' Use source links ', source: 'own_profile', truncated: false },
+        { text: 'An unfinished sentence', source: 'own_profile', truncated: true },
+      ],
+      user_facts: [
+        { text: 'Use source links', source: 'own_profile', truncated: false },
+        { text: 'Report at the end of the day', source: 'shared_journal', truncated: false },
+      ],
+    })
+
+    expect(parseGrokImport(document, ' research bot ')).toEqual({
+      name: 'Research Bot',
+      memories: ['Use source links', 'Report at the end of the day'],
+      skills: [], routines: [],
+      memoryGaps: { truncated: 1, unretrieved: 2 },
+    })
+    expect(() => parseGrokImport(document, 'Other Bot')).toThrow(/select exactly one/i)
+  })
+
+  it.each([
+    { reported_total: 1, retrieved_total: 2 },
+    { reported_total: 0, retrieved_total: 1 },
+  ])('rejects a supplemental export whose counts do not match its records', (counts) => {
+    const document = JSON.stringify({
+      format: 'grok-bot-memory-completion', version: 1, bot_name: 'Research Bot',
+      ...counts,
+      memories: [{ text: 'Use source links', source: 'own_profile', truncated: false }],
+      user_facts: [],
+    })
+    expect(() => parseGrokImport(document)).toThrow(/counts/i)
+  })
+
+  it('keeps the previous maximum combined memory text even with room for additional short entries', () => {
+    const full = Array.from({ length: 100 }, (_item, index) => String(index).padEnd(2000, 'x'))
+    expect(parseGrokImport(encodeExport({ name: 'Research Bot', memories: full })).memories).toHaveLength(100)
+    expect(() => parseGrokImport(encodeExport({ name: 'Research Bot', memories: [...full, 'Extra fact'] })))
+      .toThrow(/memory limit/i)
+  })
+
   it('rejects credential fields and text even in an unselected Bot', () => {
     const selected = { name: 'Research Bot' }
     expect(() => parseGrokImport(encodeExport(selected, {
