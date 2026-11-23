@@ -132,8 +132,6 @@ it('opens current and imported items for just the selected Bot', async () => {
     expect(path === null ? null : await readFile(path, 'utf8')).toBe(report)
 
     if (images !== undefined) {
-      await dialog.getByRole('button', { name: 'Links', exact: true }).click()
-      await external.waitFor()
       await mkdir(images, { recursive: true })
       for (const [width, colorScheme, filename] of [
         [1440, 'dark', 'desktop-dark.png'], [480, 'light', 'narrow-light.png'],
@@ -143,7 +141,12 @@ it('opens current and imported items for just the selected Bot', async () => {
         await page.locator('body[data-ds-dark-theme]').waitFor({ state: colorScheme === 'dark' ? 'visible' : 'detached' })
         const bounds = await dialog.boundingBox()
         expect(bounds === null || bounds.x < 0 || bounds.x + bounds.width > width).toBe(false)
+        await dialog.getByRole('button', { name: 'Links', exact: true }).click()
+        await external.waitFor()
         await page.screenshot({ path: join(images, filename), animations: 'disabled' })
+        await dialog.getByRole('button', { name: 'Files', exact: true }).click()
+        await archiveFile.waitFor()
+        await page.screenshot({ path: join(images, `files-${filename}`), animations: 'disabled' })
       }
       await page.setViewportSize({ width: 1440, height: 920 })
     }
