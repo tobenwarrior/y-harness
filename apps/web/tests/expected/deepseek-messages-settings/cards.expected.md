@@ -9,49 +9,34 @@
     - button "Agent presets"
   - button "Open configuration file"
   - button "Close"
-  - heading "Models" [level=2]
-  - paragraph: Connect a subscription or API provider to choose its models in Y Harness.
-  - text: ChatGPT subscription
-  - button "Edit ChatGPT subscription": Edit
-  - text: Nous Portal
-  - button "Edit Nous Portal": Edit
-  - text: Grok subscription
-  - button "Edit Grok subscription": Edit
-  - list:
-    - listitem:
-      - text: DeepSeek
-      - img "API key configured"
-      - button "Edit DeepSeek (deepseek-official)": Edit
-      - text: DeepSeek deepseek-official API key
-      - textbox "API key":
-        - /placeholder: Configured — enter a new value to replace
-      - group:
-        - text: Customized settings Base URL
-        - textbox "Base URL":
-          - /placeholder: https://api.deepseek.com/anthropic
-        - text: Use an API endpoint compatible with Anthropic Messages.
-        - region "Models":
-          - text: Models Using the adapter defaults
-          - textbox "Model ID 1":
-            - /placeholder: Model ID
-            - text: deepseek-flash
-          - textbox "Display name 1":
-            - /placeholder: Display name
-            - text: DeepSeek-V4.1-Flash
-          - button "Model options 1"
-          - button "Delete model 1"
-          - textbox "Model ID 2":
-            - /placeholder: Model ID
-            - text: deepseek-v4-pro
-          - textbox "Display name 2":
-            - /placeholder: Display name
-            - text: DeepSeek-V4-Pro
-          - button "Model options 2"
-          - button "Delete model 2"
-          - button "Add model"
-      - button "Cancel"
-      - button "Apply"
-  - button "Add model provider"
-  - group "Decision advice":
-    - heading "Decision advice" [level=3]
-    - text: Advanced ⌄
+  - button "Back to providers"
+  - heading "DeepSeek" [level=3]
+  - text: deepseek-official API key
+  - textbox "API key":
+    - /placeholder: Configured — enter a new value to replace
+  - group:
+    - text: Customized settings Base URL
+    - textbox "Base URL":
+      - /placeholder: https://api.deepseek.com/anthropic
+    - text: Use an API endpoint compatible with Anthropic Messages.
+    - region "Models":
+      - text: Models Using the adapter defaults
+      - textbox "Model ID 1":
+        - /placeholder: Model ID
+        - text: deepseek-flash
+      - textbox "Display name 1":
+        - /placeholder: Display name
+        - text: DeepSeek-V4.1-Flash
+      - button "Model options 1"
+      - button "Delete model 1"
+      - textbox "Model ID 2":
+        - /placeholder: Model ID
+        - text: deepseek-v4-pro
+      - textbox "Display name 2":
+        - /placeholder: Display name
+        - text: DeepSeek-V4-Pro
+      - button "Model options 2"
+      - button "Delete model 2"
+      - button "Add model"
+  - button "Cancel"
+  - button "Apply"

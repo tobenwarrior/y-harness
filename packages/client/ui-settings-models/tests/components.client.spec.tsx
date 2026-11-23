@@ -429,6 +429,8 @@ describe('ModelsSection', () => {
     expect(screen.getByRole('alert').textContent).toBe(failure)
     fireEvent.click(screen.getByRole('button', { name: openaiCopy(en.editProvider) }))
     expect(await screen.findByLabelText(en.keyInput)).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toBe(failure)
+    fireEvent.click(screen.getByRole('button', { name: en.backToProviders }))
     expect(screen.getByRole('button', { name: en.add })).toBeTruthy()
   })
 
@@ -698,6 +700,24 @@ describe('ModelsSection', () => {
       await Promise.resolve()
     })
     expect(onClose).toHaveBeenCalledWith(true)
+  })
+
+  it('omits the route label when the provider id is already the display name', async () => {
+    const { face } = scriptedFace()
+    const { ProviderEditor } = await import('../src/client/ProviderEditor.tsx')
+    render(<ProviderEditor
+      provider="DeepSeek"
+      displayName="DeepSeek"
+      namespace={wireNamespaces()[0]!}
+      schema={settingsSchema}
+      settingsPath={[]}
+      operations={operationsWith(face)}
+      t={t}
+      readOnly={false}
+      onClose={() => {}}
+    />)
+
+    expect(screen.getAllByText('DeepSeek')).toHaveLength(1)
   })
 
   it('applies customized deepseek fields as path ops', async () => {
@@ -1523,14 +1543,24 @@ describe('ModelsSection', () => {
     expect(screen.getByText<HTMLButtonElement>(en.add).disabled).toBe(true)
   })
 
-  it('toggles the row editor closed on a second edit click and on cancel', async () => {
+  it('opens a focused provider detail view and returns without saving', async () => {
     const { mutate } = await mountSection()
     const edit = screen.getByRole('button', { name: openaiCopy(en.editProvider) })
     fireEvent.click(edit)
     await waitFor(() => { expect(screen.queryAllByLabelText(en.keyInput).length).toBe(1) })
-    fireEvent.click(edit)
+    const back = screen.getByRole('button', { name: en.backToProviders })
+    expect(document.activeElement).toBe(back)
+    expect(document.querySelector('[data-yh-part="provider-detail"]')).not.toBeNull()
+    expect(screen.queryByRole('heading', { name: en.title })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.add })).toBeNull()
+    expect(screen.getByText(en.codexTitle).closest('[hidden]')).not.toBeNull()
+    fireEvent.click(back)
     expect(screen.queryAllByLabelText(en.keyInput)).toHaveLength(0)
-    fireEvent.click(edit)
+    expect(screen.getByRole('heading', { name: en.title })).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.add })).toBeTruthy()
+    expect(screen.getByText(en.codexTitle).closest('[hidden]')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: openaiCopy(en.editProvider) }))
+    fireEvent.click(screen.getByRole('button', { name: openaiCopy(en.editProvider) }))
     await waitFor(() => { expect(screen.queryAllByLabelText(en.keyInput).length).toBe(1) })
     fireEvent.click(screen.getByText(en.cancel))
     expect(screen.queryAllByLabelText(en.keyInput)).toHaveLength(0)
