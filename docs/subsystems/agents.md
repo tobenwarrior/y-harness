@@ -335,6 +335,14 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('importGrokBot') async importGrokBot(request: BotGrokImportRequest, signal?: AbortSignal): Promise<BotGrokImportValue>
 
 /**
+ * Preview or apply exact owner-reviewed connected-app mappings from a Grok export.
+ * @param request - Destination Bot, export labels, reviewed mappings, and optional revision.
+ * @param signal - Optional cancellation signal for the serialized apply.
+ * @returns Per-source classifications, the reviewed Bot revision, and grant changes made by an apply.
+ */
+@Remote('importGrokConnectedApps') async importGrokConnectedApps( request: BotGrokConnectedAppImportRequest, signal?: AbortSignal, ): Promise<BotGrokConnectedAppImportValue>
+
+/**
  * List active memories for a Bot without accepting a model-supplied Session id.
  * @param request - Durable Bot id whose private projection should be read.
  * @returns active memory rows owned by that Bot.

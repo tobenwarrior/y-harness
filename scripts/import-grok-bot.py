@@ -12,10 +12,52 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 MAX_DOCUMENT_BYTES = 512 * 1024
+MAX_MAPPING_BYTES = 64 * 1024
 
 
 class ImportErrorDetail(Exception):
     """Error safe to print without printing the export or sign-in link."""
+
+
+def read_connected_app_map(path):
+    """Read an owner-reviewed exact connector map without inferring identities."""
+    if not path.is_absolute() or not path.is_file():
+        raise ImportErrorDetail('Choose an absolute connected-app map file.')
+    try:
+        raw = path.read_bytes()
+    except OSError as error:
+        raise ImportErrorDetail('Could not read the connected-app map file.') from error
+    if len(raw) > MAX_MAPPING_BYTES:
+        raise ImportErrorDetail('The connected-app map must be at most 64 KiB.')
+    try:
+        payload = json.loads(raw.decode('utf-8-sig'))
+    except (UnicodeDecodeError, ValueError) as error:
+        raise ImportErrorDetail('The connected-app map must be valid UTF-8 JSON.') from error
+    if not isinstance(payload, list):
+        raise ImportErrorDetail('The connected-app map must be a JSON array.')
+    mappings = []
+    seen_indexes = set()
+    for index, item in enumerate(payload):
+        if not isinstance(item, dict) or set(item) != {'sourceIndex', 'sourceLabel', 'targetServerName'}:
+            raise ImportErrorDetail(f'Connected-app map entry {index} has invalid fields.')
+        source_index = item['sourceIndex']
+        source_label = item['sourceLabel']
+        target_server_name = item['targetServerName']
+        if isinstance(source_index, bool) or not isinstance(source_index, int) or source_index < 0:
+            raise ImportErrorDetail(f'Connected-app map entry {index} has an invalid source index.')
+        if source_index in seen_indexes:
+            raise ImportErrorDetail('Connected-app map source indexes must be unique.')
+        if not isinstance(source_label, str) or not source_label or source_label.strip() != source_label or len(source_label) > 160:
+            raise ImportErrorDetail(f'Connected-app map entry {index} has an invalid source label.')
+        if not isinstance(target_server_name, str) or not target_server_name or target_server_name.strip() != target_server_name or len(target_server_name) > 128:
+            raise ImportErrorDetail(f'Connected-app map entry {index} has an invalid target server name.')
+        seen_indexes.add(source_index)
+        mappings.append({
+            'sourceIndex': source_index,
+            'sourceLabel': source_label,
+            'targetServerName': target_server_name,
+        })
+    return mappings
 
 
 def connect():
@@ -66,6 +108,10 @@ def main():
     parser.add_argument('export', type=Path)
     parser.add_argument('--bot', required=True, help='Exact destination Bot name or id')
     parser.add_argument('--source-name', help='Source Bot name for exports containing several Bots')
+    parser.add_argument('--connected-app-map', type=Path,
+                        help='Absolute JSON map for reviewed connected-app grants. This mode imports apps only.')
+    parser.add_argument('--expected-updated-at', type=int,
+                        help='Revision printed by a reviewed connected-app preview. Required with --apply.')
     parser.add_argument('--apply', action='store_true', help='Write entries. By default, preview only.')
     options = parser.parse_args()
     try:
@@ -74,6 +120,7 @@ def main():
         if len(raw) > MAX_DOCUMENT_BYTES:
             raise ImportErrorDetail('Choose a Grok Bot export of at most 512 KiB.')
         document = raw.decode('utf-8-sig')
+        mappings = None if options.connected_app_map is None else read_connected_app_map(options.connected_app_map)
         connection, cookie = connect()
         try:
             bots = invoke(connection, cookie, 'bots/list', request={'includeHidden': True})['bots']
@@ -83,8 +130,23 @@ def main():
             request = {'botId': matches[0]['id'], 'document': document, 'preview': not options.apply}
             if options.source_name is not None:
                 request['sourceName'] = options.source_name
-            result = invoke(connection, cookie, 'bots/importGrokBot', request=request)
-            print(json.dumps({'mode': 'import' if options.apply else 'preview', **result}, ensure_ascii=False))
+            if mappings is None:
+                if options.expected_updated_at is not None:
+                    raise ImportErrorDetail('--expected-updated-at is only valid with --connected-app-map.')
+                result = invoke(connection, cookie, 'bots/importGrokBot', request=request)
+                print(json.dumps({'mode': 'import' if options.apply else 'preview', **result}, ensure_ascii=False))
+            else:
+                if options.apply:
+                    if options.expected_updated_at is None or options.expected_updated_at < 0:
+                        raise ImportErrorDetail('Pass the non-negative updatedAt from the connected-app preview with --expected-updated-at.')
+                elif options.expected_updated_at is not None:
+                    raise ImportErrorDetail('--expected-updated-at is only valid with --apply.')
+                request['mappings'] = mappings
+                if options.apply:
+                    request['expectedUpdatedAt'] = options.expected_updated_at
+                result = invoke(connection, cookie, 'bots/importGrokConnectedApps', request=request)
+                mode = 'connected-app-import' if options.apply else 'connected-app-preview'
+                print(json.dumps({'mode': mode, **result}, ensure_ascii=False))
         finally:
             connection.close()
     except ImportErrorDetail as error:

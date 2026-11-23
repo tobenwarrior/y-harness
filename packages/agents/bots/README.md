@@ -251,6 +251,12 @@ The identity text stays prefix-stable until the Bot name or role description cha
 
 The scoped model runtime can call `list_connected_apps` to see the MCP app catalog and each Bot's grant. When the Host mounts the GitHub App provider, the owner-local scope also exposes `request_app_connection` with `{ appId: "github" }`. It returns only `connected`, `sign-in-required`, or `unavailable` and never starts device authorization or returns a URL or token. The UI uses presentation metadata on the `sign-in-required` result to show the owner’s connect prompt. Shared and group scopes never receive this owner-only tool. An ordinary MCP tool or shared MCP resource operation whose named server is not granted fails before its body runs with a message that names the app and directs the user to Bot settings. The denial retains `BOT_APP_ACCESS_REQUIRED` structured metadata for Host routing while the model sees only the concise reason. If the durable Bot row is unavailable, MCP app execution also fails closed instead of treating missing policy as approval. The user can grant or revoke access from the connected-app dialog; the decision is durable and applies to later scoped MCP tool calls. Native Codex actions do not claim access to this catalog: their provider-independent action surface cannot dispatch an MCP app tool.
 
+##### Reviewed connector import
+
+```markdown
+The owner may separately review connector labels in a Grok export with `importGrokConnectedApps` or `scripts/import-grok-bot.py --connected-app-map`. A map records the source position and exact label together with the exact configured MCP `serverName`; labels never infer a connector and no credential or shared-app grant is imported. Preview classifies each mapped entry as connected, unconnected, missing, ambiguous, or unavailable and returns the Bot's `updatedAt` revision. Apply must send that unchanged preview revision before adding only eligible grants, including configured connectors that are temporarily disconnected. Unrelated existing allow and deny ids remain intact, and an unresolved or stale map is rejected without a partial write.
+```
+
 #### Token effect
 
 The list tool and an access-denial message consume tokens only when the Bot calls an app or asks for the catalog. Access checks do not add a model-visible turn when a granted tool runs.
