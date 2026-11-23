@@ -19,8 +19,19 @@ it('offers a return to Mac and reconnect actions without an address bar', () => 
   expect(markup).toContain(en.cloudOpenMac)
   expect(markup).toContain(en.cloudReconnecting)
   expect(markup).toContain('href="https://workspace.invalid/retry"')
+  expect(markup).toContain('<div class="actions secondary"><a class="back" href="https://workspace.invalid/mac">')
+  expect(markup).not.toContain('position: absolute')
   expect(markup).not.toContain('<nav')
   expect(markup).not.toMatch(/127\.0\.0\.1|token=|name="target"/u)
+})
+
+it('keeps the Mac escape below the Cloud setup form', () => {
+  const markup = decodeURIComponent(cloudDocument(en, 'setup').split(',')[1]!)
+  const formEnd = markup.indexOf('</form>')
+  const macLink = markup.indexOf('<a class="back" href="https://workspace.invalid/mac">')
+  expect(formEnd).toBeGreaterThan(-1)
+  expect(macLink).toBeGreaterThan(formEnd)
+  expect(markup).not.toContain('position: absolute')
 })
 
 it('limits remote traffic to the tunnel and its matching WebSocket port', () => {
