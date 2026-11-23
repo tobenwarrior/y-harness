@@ -64,6 +64,14 @@ describe('Bot Library event projection', () => {
       [2, 'image', 'photo.PNG'],
       [1, 'file', 'report.pdf'],
     ])
+    expect(media.items[1]?.previewable).toBe(true)
+  })
+
+  it('keeps active SVG media download-only', async () => {
+    const page = await readBotLibraryPage(botId, sessionId, reader([
+      presented(0, 1, [{ path: 'vector.svg' }]),
+    ]), 1)
+    expect(page.items[0]).toMatchObject({ category: 'image', previewable: false })
   })
 
   it('seeks through files sharing one event and then older events without duplicates', async () => {

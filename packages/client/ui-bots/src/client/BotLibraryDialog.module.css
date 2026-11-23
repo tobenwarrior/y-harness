@@ -56,9 +56,40 @@
   flex-shrink: 0;
 }
 
+.preview,
+.fileInfo {
+  display: flex;
+  min-inline-size: 0;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+}
+
+.preview {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.preview:focus-visible {
+  outline: 2px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
+  outline-offset: -2px;
+  border-radius: var(--yh-radius-sm);
+}
+
 .download,
 .notice,
 .fileText time {
+  color: var(--yh-alias-label-secondary);
+}
+
+.download {
+  display: inline-flex;
+  align-items: center;
   color: var(--yh-alias-label-secondary);
 }
 

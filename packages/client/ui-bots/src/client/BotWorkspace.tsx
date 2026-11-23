@@ -12,7 +12,7 @@ import {
   type MenuItem,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
-import type { PresentedFileDownloads } from '@yharness/client-ui-deliverables/client'
+import type { PresentedFileDownloads, PresentedFilePreviews } from '@yharness/client-ui-deliverables/client'
 import { randomUUID } from '@yharness/util-crypto'
 import { BotAvatar } from './BotAvatar.tsx'
 import { BotAvatarEditor } from './BotAvatarEditor.tsx'
@@ -1179,7 +1179,7 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
 
 export function BotDetail({
   bot, children, headerActions, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, routineManager,
-  skillManager, routineRevision = 0, loading, workspaceActions = [], readGrokHistory, readLibrary, downloadLibraryFile,
+  skillManager, routineRevision = 0, loading, workspaceActions = [], readGrokHistory, readLibrary, downloadLibraryFile, previewLibraryFile,
 }: {
   bot: BotSummary | undefined
   children: ReactNode
@@ -1187,6 +1187,7 @@ export function BotDetail({
   workspaceActions?: readonly BotToolbarItem[]
   readLibrary?: ReadBotLibrary | undefined
   downloadLibraryFile?: PresentedFileDownloads['url'] | undefined
+  previewLibraryFile?: PresentedFilePreviews['url'] | undefined
   readGrokHistory?: ((id: string) => Promise<BotGrokHistoryView | null>) | undefined
   t: BotWorkspaceViewProps['t']
   loadAvatar: BotWorkspaceViewProps['loadAvatar']
@@ -1326,6 +1327,7 @@ export function BotDetail({
       )}
       {readLibrary !== undefined && downloadLibraryFile !== undefined && libraryTarget === bot.id && (
         <BotLibraryDialog key={`library:${bot.id}`} botId={bot.id} botName={bot.name} read={readLibrary} downloadUrl={downloadLibraryFile}
+          {...(previewLibraryFile === undefined ? {} : { previewUrl: previewLibraryFile })}
           onClose={() => { setLibraryTarget(null) }} t={t} />
       )}
       {readGrokHistory !== undefined && (

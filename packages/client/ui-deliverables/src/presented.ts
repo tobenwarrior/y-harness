@@ -9,6 +9,9 @@ export const PRESENT_OPEN_PATH = '/api/present.open'
 /** Authenticated GET route for downloading one file declared in a Session. */
 export const PRESENT_DOWNLOAD_PATH = '/api/present.download'
 
+/** Authenticated GET route for previewing one supported raster image declared in a Session. */
+export const PRESENT_PREVIEW_PATH = '/api/present.preview'
+
 /** Authenticated desktop availability and destination metadata. */
 export const PRESENT_HOST_PATH = '/api/present.host'
 
@@ -76,6 +79,17 @@ export function presentedFileUrl(sessionId: SessionId, seq: number, index: numbe
  */
 export function presentedDownloadUrl(sessionId: SessionId, seq: number, index: number): string {
   return fileActionUrl(PRESENT_DOWNLOAD_PATH.slice(1), sessionId, seq, index)
+}
+
+/**
+ * Address a supported raster image for an authenticated inline preview.
+ * @param sessionId - viewed Session.
+ * @param seq - delivery event sequence.
+ * @param index - file index in the event's files array.
+ * @returns document-relative image preview URL.
+ */
+export function presentedPreviewUrl(sessionId: SessionId, seq: number, index: number): string {
+  return fileActionUrl(PRESENT_PREVIEW_PATH.slice(1), sessionId, seq, index)
 }
 
 function fileActionUrl(route: string, sessionId: SessionId, seq: number, index: number): string {

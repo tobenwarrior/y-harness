@@ -13,7 +13,7 @@ import { SessionQueryError } from '@yharness/session-query'
 import type { SessionEventReadRequest } from '@yharness/session-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { registerPresentOpen } from '../src/present-open.ts'
-import { presentedFileUrl, PRESENT_OPEN_PATH } from '../src/presented.ts'
+import { presentedFileUrl, presentedPreviewUrl, PRESENT_OPEN_PATH, PRESENT_PREVIEW_PATH } from '../src/presented.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -22,7 +22,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-async function fixture() {
+async function fixture(maxFileBytes = 1024) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-present-open-'))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const cwd = join(root, 'workspace')
@@ -36,7 +36,9 @@ async function fixture() {
   ctx.provide('sandboxPolicy', { workspaceRoot: cwd } as never)
   await ctx.plugin({
     inject: ['fs', 'sandboxPolicy'],
-    apply: (scope) => { new WorkspaceFiles(scope, { maxBytes: 1024, maxFileBytes: 1024, maxLines: 100, maxEntries: 100 }) },
+    apply: (scope) => {
+      new WorkspaceFiles(scope, { maxBytes: 1024, maxFileBytes, maxLines: 100, maxEntries: 100 })
+    },
   })
   const resolveAgent = vi.fn<Context['sessionController']['resolveAgent']>(() => { throw new Error('Agent activation is unavailable') })
   const readEvent = vi.fn(async (request: SessionEventReadRequest) => {
@@ -59,7 +61,13 @@ async function fixture() {
   const download = (query = '?sessionId=owner&seq=7&index=0', signal?: AbortSignal) => handler.fetch(new Request(
     `http://localhost/api/present.download${query}`, { signal: signal ?? null },
   ))
-  return { applications, root, cwd, ctx, fiber, file, session, readEvent, open, opener, handler, resolveAgent, desktop, download }
+  const preview = (query = '?sessionId=owner&seq=7&index=0', signal?: AbortSignal) => handler.fetch(new Request(
+    `http://localhost${PRESENT_PREVIEW_PATH}${query}`, { signal: signal ?? null },
+  ))
+  return {
+    applications, root, cwd, ctx, fiber, file, session, readEvent, open, opener, handler, resolveAgent,
+    desktop, download, preview, scope: { sessionId: SessionId('owner'), workspaceRoot: cwd },
+  }
 }
 
 describe('Presented workspace file native open route', () => {
@@ -187,6 +195,69 @@ describe('Presented workspace file native open route', () => {
     expect(disposed).toBe(false)
     release.resolve(undefined)
     await Promise.all([request, disposal])
+  })
+})
+
+describe('Presented workspace raster preview route', () => {
+  it('serves supported raster images with deliberate inline headers', async () => {
+    const { cwd, file, preview } = await fixture()
+    const bytes = Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3)
+    file.path = 'chart.PNG'
+    await writeFile(join(cwd, file.path), bytes)
+    expect(presentedPreviewUrl(SessionId('owner'), 7, 0)).toBe('api/present.preview?sessionId=owner&seq=7&index=0')
+    const response = await preview()
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toBe('image/png')
+    expect(response.headers.get('content-length')).toBe(String(bytes.byteLength))
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.headers.get('content-disposition')).toBeNull()
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes)
+  })
+
+  it.each(['notes.md', 'graphic.svg', 'page.html', 'reserved.__proto__'])('refuses non-raster declarations without reading them: %s', async (path) => {
+    const { cwd, file, preview } = await fixture()
+    file.path = path
+    await writeFile(join(cwd, path), '<svg>not an image preview</svg>')
+    const response = await preview()
+    expect(response.status).toBe(415)
+    expect(await response.text()).not.toContain(path)
+  })
+
+  it('refuses unauthorized and mismatched coordinates', async () => {
+    const { preview } = await fixture()
+    expect((await preview('?sessionId=other&seq=7&index=0')).status).toBe(404)
+    expect((await preview('?sessionId=owner&seq=8&index=0')).status).toBe(404)
+    expect((await preview('?sessionId=owner&seq=7&index=1')).status).toBe(404)
+  })
+
+  it('refuses oversized raster images with no partial response', async () => {
+    const { cwd, file, preview } = await fixture(16 * 1024 * 1024)
+    file.path = 'large.png'
+    await writeFile(join(cwd, file.path), new Uint8Array(8 * 1024 * 1024 + 1))
+    expect((await preview()).status).toBe(413)
+  })
+
+  it('does not return bytes when the image changes during the verified read', async () => {
+    const { cwd, ctx, file, preview, scope } = await fixture()
+    file.path = 'chart.png'
+    const bytes = Uint8Array.of(137, 80, 78, 71)
+    await writeFile(join(cwd, file.path), bytes)
+    const expected = await ctx.workspaceFiles.stat(scope, file.path, new AbortController().signal)
+    vi.spyOn(ctx.workspaceFiles, 'stat')
+      .mockResolvedValueOnce(expected)
+      .mockResolvedValueOnce({ ...expected, version: 'changed-after-read' })
+    const response = await preview()
+    expect(response.status).toBe(409)
+    expect(await response.text()).not.toContain(file.path)
+  })
+
+  it('reports missing raster files without exposing the source path', async () => {
+    const { file, preview } = await fixture()
+    file.path = 'missing.png'
+    const response = await preview()
+    expect(response.status).toBe(404)
+    expect(await response.text()).not.toContain(file.path)
   })
 })
 
