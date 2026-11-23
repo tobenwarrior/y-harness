@@ -275,7 +275,7 @@ describe.skipIf(MODE === 'record')('web e2e: Bot conversation presentation', () 
     expect(results).toHaveLength(1)
     expect(results[0]?.isError).not.toBe(true)
     expect(results[0]?.content).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'text', text: expect.stringContaining(SCHEDULE_TOOL_OUTPUT) }),
+      expect.objectContaining({ type: 'text', text: expect.stringContaining(SCHEDULE_TOOL_OUTPUT) as string }),
     ]))
     const trigger = surface.locator('[data-turn-trigger]').filter({ hasText: 'Automation task' }).last()
     await expect.poll(() => trigger.count(), { timeout: 30_000 }).toBe(1)
