@@ -10962,6 +10962,9 @@ importers:
       '@modelcontextprotocol/client':
         specifier: 2.0.0
         version: 2.0.0
+      '@yharness/credentials':
+        specifier: workspace:*
+        version: link:../../credentials/credentials
       '@yharness/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery

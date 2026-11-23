@@ -38,6 +38,7 @@
     "@yharness/system-prompt": "workspace:*"
   },
   "dependencies": {
+    "@yharness/credentials": "workspace:*",
     "@yharness/schemastery": "workspace:~",
     "@modelcontextprotocol/client": "2.0.0",
     "@yharness/util-values": "workspace:*"

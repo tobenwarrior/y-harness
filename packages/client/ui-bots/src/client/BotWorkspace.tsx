@@ -1631,10 +1631,7 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
                 <span className={css.connectedAppIcon} data-app-id={app.id} aria-hidden="true">{connectedAppMark(app, name)}</span>
                 <span className={css.connectedAppCopy}>
                   <strong>{name}</strong>
-                  <span>{app.description ?? t('connectedAppDescription', { name })}</span>
-                  <span className={app.allowed ? css.connectedAppAllowed : css.connectedAppBlocked}>
-                    {app.allowed ? t('connectedAppAllowed') : t('connectedAppBlocked')}
-                  </span>
+                  {app.description !== undefined && <span>{app.description}</span>}
                 </span>
                 <Button
                   variant={app.allowed ? 'ghost' : 'outline'}
