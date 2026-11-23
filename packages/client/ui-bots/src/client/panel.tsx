@@ -162,7 +162,7 @@ export function BotsRoster({
 export function BotsPanel({
   useWorkspace, useSessionStatus, reference, retryGroup, updateGroup, sendGroupMessage,
   sendGroupMessageWithAttachments, reactGroupMessage, groupsAvailable, loadAvatar,
-  rename, updateProfile, memoryManager, readGrokHistory, readLibrary, downloadLibraryFile,
+  rename, updateProfile, memoryManager, readGrokHistory, readLibrary, readGrokLibrary, downloadLibraryFile,
   routineManager, skillManager, SessionProvider, renderSlot, t, share, computer, useComputerAvailability,
   setComputerTarget, useComputerTarget, useComputerIdentity, useComputerSignIn, openWorkspaceTab, useTerminalAvailable, useFilesAvailable,
   useSharedFilesAvailable, refreshComputerAvailability,
@@ -214,6 +214,7 @@ export function BotsPanel({
         children={conversation}
         readGrokHistory={readGrokHistory}
         readLibrary={readLibrary}
+        readGrokLibrary={readGrokLibrary}
         downloadLibraryFile={downloadLibraryFile}
         workspaceActions={[
           ...(showTerminalAction ? [{

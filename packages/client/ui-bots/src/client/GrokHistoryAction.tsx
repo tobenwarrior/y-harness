@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import type { BotGrokHistoryView } from '@yharness/bots/client'
 import { Button, IconDownloadOutlineRegular, Modal, StateDot, Tooltip } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
+import { grokAttachmentDownloadUrl } from './grok-attachment-download.ts'
 import css from './BotWorkspace.module.css'
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
@@ -36,11 +37,6 @@ function hasVerifiedAttachment(
   return history.availableAttachments.some(attachment => (
     attachment.sourceId === sourceId && attachment.sourceSequence === message.sourceSequence
   ))
-}
-
-function attachmentDownloadUrl(botId: string, sourceId: string, sourceSequence: number): string {
-  const query = new URLSearchParams({ botId, sourceId, sourceSequence: String(sourceSequence) })
-  return `/api/bots/grokHistory/downloadAttachment?${query}`
 }
 
 /**
@@ -114,7 +110,7 @@ export function GrokHistoryDialog({
                   <Tooltip label={t('grokHistoryDownloadTooltip')} side="top" portal>
                     <a
                       className={css.grokHistoryDownload}
-                      href={attachmentDownloadUrl(botId, sourceId, message.sourceSequence)}
+                      href={grokAttachmentDownloadUrl(botId, sourceId, message.sourceSequence)}
                       aria-label={t('grokHistoryDownloadAttachment', { name: message.text })}
                       download
                     >

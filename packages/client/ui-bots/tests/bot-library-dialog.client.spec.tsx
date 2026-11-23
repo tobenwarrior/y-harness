@@ -5,7 +5,7 @@ import { BotId, type BotLibraryFileItem, type BotLibraryValue } from '@yharness/
 import { makeTranslate } from '@yharness/client-test-runtime'
 import { SessionId } from '@yharness/session/types'
 import { BotDetail } from '../src/client/BotWorkspace.tsx'
-import type { ReadBotLibrary } from '../src/client/BotLibraryDialog.tsx'
+import type { ReadBotLibrary, ReadGrokBotLibrary } from '../src/client/BotLibraryDialog.tsx'
 import { en } from '../src/client/locales.ts'
 
 afterEach(() => { cleanup(); vi.useRealTimers() })
@@ -18,10 +18,12 @@ const row = (patch: Partial<BotLibraryFileItem> = {}): BotLibraryFileItem => ({
   botId, sessionId, ...archive, label: 'notes.md', category: 'file', createdAt: new Date(2026, 10, 25, 9).getTime(), ...patch,
 })
 
-function openLibrary(read: ReadBotLibrary): void {
+function openLibrary(read: ReadBotLibrary, readImported?: ReadGrokBotLibrary): void {
   render(<BotDetail bot={{ id: botId, name: 'Scout', accent: 'teal', identity: 'browse' }}
-    loading={false} loadAvatar={undefined} children={<p>Existing conversation</p>} readLibrary={read} downloadLibraryFile={(session, seq, index) => `api/present.download?sessionId=${session}&seq=${seq}&index=${index}`} t={t} />)
+    loading={false} loadAvatar={undefined} children={<p>Existing conversation</p>} readLibrary={read} readGrokLibrary={readImported}
+    downloadLibraryFile={(session, seq, index) => `api/present.download?sessionId=${session}&seq=${seq}&index=${index}`} t={t} />)
   expect(read).not.toHaveBeenCalled()
+  if (readImported !== undefined) expect(readImported).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
   fireEvent.click(screen.getByRole('menuitem', { name: en.libraryTitle }))
 }
@@ -55,6 +57,45 @@ it('loads only when opened, filters, and appends older deliveries using the prov
   fireEvent.click(screen.getByRole('button', { name: en.close }))
   expect(screen.queryByRole('dialog', { name: en.libraryTitle })).toBeNull()
   expect(screen.getByText('Existing conversation')).toBeTruthy()
+})
+
+it('adds imported links and verified files to the existing Library filters', async () => {
+  const read = vi.fn<ReadBotLibrary>().mockResolvedValue({ botId, items: [row()] })
+  const source = { botId, origin: 'grok-history' as const, sourceId: 'archive-fixture', sourceSequence: 2, itemIndex: 0, createdAt: null }
+  const readImported = vi.fn<ReadGrokBotLibrary>().mockResolvedValue({ botId, items: [
+    { ...source, category: 'file', label: 'Recovered plan.pdf' },
+    { ...source, sourceSequence: 1, category: 'link', label: 'Recovered runbook', url: 'https://docs.example.com/archive' },
+  ] })
+  openLibrary(read, readImported)
+  const recovered = await screen.findByRole('link', { name: 'Download Recovered plan.pdf' })
+  expect(recovered.getAttribute('href')).toBe('/api/bots/grokHistory/downloadAttachment?botId=bot-fixture&sourceId=archive-fixture&sourceSequence=2')
+  expect(screen.getByRole('link', { name: 'Download notes.md' })).toBeTruthy()
+  expect(screen.getByRole('heading', { name: en.libraryUndated })).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: en.libraryLinks }))
+  const link = screen.getByRole('link', { name: 'Open Recovered runbook' })
+  expect(link.getAttribute('href')).toBe('https://docs.example.com/archive')
+  expect(link.textContent).toContain(en.libraryImportedGrok)
+  expect(screen.queryByRole('link', { name: 'Download Recovered plan.pdf' })).toBeNull()
+  expect(readImported).toHaveBeenCalledExactlyOnceWith(botId, undefined)
+})
+
+it('keeps current items visible and continues with the imported page cursor after a retry', async () => {
+  const read = vi.fn<ReadBotLibrary>().mockResolvedValue({ botId, items: [row()] })
+  const before = { sourceId: 'primary', sourceSequence: 2, itemIndex: 0 }
+  const source = { ...before, botId, origin: 'grok-history' as const, createdAt: null, category: 'file' as const }
+  const readImported = vi.fn<ReadGrokBotLibrary>()
+    .mockRejectedValueOnce(new Error('fixture unavailable'))
+    .mockResolvedValueOnce({ botId, items: [{ ...source, label: 'Imported.pdf' }], nextBefore: before })
+    .mockResolvedValueOnce({ botId, items: [{ ...source, sourceSequence: 1, label: 'Older.pdf' }] })
+  openLibrary(read, readImported)
+  expect((await screen.findByRole('alert')).textContent).toContain(en.libraryImportedLoadFailed)
+  expect(await screen.findByRole('link', { name: 'Download notes.md' })).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: en.retry }))
+  await screen.findByRole('link', { name: 'Download Imported.pdf' })
+  fireEvent.click(screen.getByRole('button', { name: en.libraryShowMore }))
+  await screen.findByRole('link', { name: 'Download Older.pdf' })
+  expect(readImported.mock.calls).toEqual([[botId, undefined], [botId, undefined], [botId, before]])
+  expect(read).toHaveBeenCalledOnce()
 })
 
 it('filters web links and opens them without using the file download route', async () => {
