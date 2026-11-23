@@ -34,7 +34,7 @@ sudo /usr/bin/python3 -I /opt/yharness/release/scripts/setup-vps-account.py inst
 
 Use `--owner` from the regular SSH account that will open Cloud. Port 3080 is required for the Mac workspace. Setup installs the sign-in helper in that account and makes the private link available to that account over a local socket. Then [open Cloud with your usual SSH destination](#open-y-harness). If that account already has a different `~/.local/bin/yharness-vps`, setup keeps it and reports the conflict.
 
-Set `--chromium` to the absolute path of an administrator-installed Chromium executable. On a fresh installation, this prepares an isolated Browser for each owner Bot and opens an empty Cloud Vault for the SSH owner. Add website accounts in **Cloud → Vault** and grant shared access or automatic sign-in there when needed. Omit `--chromium` for a desktop-only VPS. On repeat runs, setup keeps the existing Browser and Vault policies. Manage a custom installation through the [isolated Browser settings](#enable-an-isolated-browser-for-selected-bots) and [Vault settings](#manage-service-secrets-from-the-mac-app).
+Set `--chromium` to the absolute path of an administrator-installed Chromium executable. On a fresh installation, this prepares an isolated Browser for each owner Bot and opens an empty Cloud Vault for the SSH owner. Add website accounts in **Workspace → Vault** and grant shared access or automatic sign-in there when needed. Omit `--chromium` for a desktop-only VPS. On repeat runs, setup keeps the existing Browser and Vault policies. Manage a custom installation through the [isolated Browser settings](#enable-an-isolated-browser-for-selected-bots) and [Vault settings](#manage-service-secrets-from-the-mac-app).
 
 For a Web-only connection, omit `--owner` and `--chromium` and choose an available `--port`. Run `sudo /usr/bin/python3 -I /opt/yharness/release/scripts/setup-vps-account.py url --port PORT` to get the private sign-in link. Use the selected port for both sides of the [SSH forward](#open-y-harness).
 
@@ -52,7 +52,7 @@ The dedicated account sees the original workspace path with the new account's fi
 
 ## Open Y Harness
 
-On macOS, choose **Workspace → Open Cloud Workspace** in Y Harness and enter the SSH host name or alias you use in Terminal. The app needs a verified host key and an SSH key or agent that can sign in without prompting. It remembers your selection and connects automatically. Cloud opens the bots, chats, and providers stored on the server. Use that Cloud workspace on each device to continue the same chats while the VPS runs your jobs and schedules. The **Mac** switch opens your separate local workspace.
+On macOS, choose **Workspace → Open Cloud Workspace** in Y Harness and enter the SSH host name or alias you use in Terminal. The app needs a verified host key and an SSH key or agent that can sign in without prompting. It remembers your selection and connects automatically. Cloud opens the bots, chats, and providers stored on the server. Use that Cloud workspace on each device to continue the same chats while the VPS runs your jobs and schedules. Choose **Workspace → Open Mac Workspace** to return to your local workspace.
 
 To use a browser, keep local port 3080 free. On your computer, replace `your-vps` with the SSH destination you normally use and run:
 
@@ -223,7 +223,7 @@ To update the worker, stop its service and both sockets when idle, then run the 
 
 ### Approve a saved website login
 
-Use the Mac app's **Cloud → Vault → Websites** to save a login. Enable `--saved-logins` when installing the isolated browser worker and set `botComputers.isolatedBrowser.savedLogins` to `true` in the private Web profile. Both options default to off. The Mac app, Web release, and installed VPS Vault script all need to support saved login approvals.
+Use the Mac app's **Workspace → Vault → Websites** to save a login. Enable `--saved-logins` when installing the isolated browser worker and set `botComputers.isolatedBrowser.savedLogins` to `true` in the private Web profile. Both options default to off. The Mac app, Web release, and installed VPS Vault script all need to support saved login approvals.
 
 In a direct Bot chat, ask the Bot to sign in. Open **Approve sign-in** and check the website and destination. Choose a saved login or enter one in the secure form. The request expires after five minutes. Declining or stopping the turn releases the browser.
 
@@ -245,13 +245,13 @@ The secure form supports one visible one-time-code field in a same-site HTTPS PO
 
 ### Import saved website logins
 
-In the Mac app, open **Cloud → Vault → Websites** and choose **Import CSV…**. Select a password export under 5 MB from 1Password, Chrome, Edge, Safari, Apple Passwords, Firefox, Bitwarden, or LastPass. Review the website and account details and choose **Import** to save the listed personal logins.
+In the Mac app, open **Workspace → Vault → Websites** and choose **Import CSV…**. Select a password export under 5 MB from 1Password, Chrome, Edge, Safari, Apple Passwords, Firefox, Bitwarden, or LastPass. Review the website and account details and choose **Import** to save the listed personal logins.
 
 The Mac reads the CSV locally. After you confirm, it sends each eligible login over the private Cloud connection and the VPS Vault encrypts it. The review skips duplicate websites and usernames, invalid or unsupported rows, and accounts that exceed the 64 personal login limit. If an import is interrupted, review the file again to retry. Vault checks for duplicates again before each write.
 
 ### Let a private routine sign in automatically
 
-In **Cloud → Vault → Websites**, save the website login for the Bot that should use it and turn on **Use automatically** for that account. This requires the standard Cloud Vault broker and updated versions of the Mac app, Cloud, and isolated browser worker. The Bot can use the account on the saved HTTPS website in its direct owner chat and time-based routines, including while the Mac is off.
+In **Workspace → Vault → Websites**, save the website login for the Bot that should use it and turn on **Use automatically** for that account. This requires the standard Cloud Vault broker and updated versions of the Mac app, Cloud, and isolated browser worker. The Bot can use the account on the saved HTTPS website in its direct owner chat and time-based routines, including while the Mac is off.
 
 After setting up Desktop Vault and the isolated browser, run `sudo /usr/local/sbin/yharness-vault enable-login-automation` on the VPS to start the standard broker. Website sign-in setup preserves the existing service key grants.
 
@@ -261,7 +261,7 @@ Turn off automatic sign-in or remove the account to withdraw access. Replacing t
 
 ### Let a shared Bot use its browser
 
-Open **Cloud → Vault → Bot access** in Y Harness. Under **Shared browsers**, enable the Bots whose collaborators should be able to browse. The list shows Bots with an isolated browser configured on this VPS. The setting takes effect in existing chats and persists when Cloud restarts. Each private shared chat and each Bot in a shared group has its own browser profile.
+Open **Workspace → Vault → Bot access** in Y Harness. Under **Shared browsers**, enable the Bots whose collaborators should be able to browse. The list shows Bots with an isolated browser configured on this VPS. The setting takes effect in existing chats and persists when Cloud restarts. Each private shared chat and each Bot in a shared group has its own browser profile.
 
 Turn off a Bot’s shared browser access to end its current shared browsing and pending sign-ins. Turning access back on starts a fresh browser for each of its shared chats. The Bot’s main chat keeps its own browser.
 
@@ -321,7 +321,7 @@ Run `sudo /usr/local/sbin/yharness-vault deny-desktop` to remove Desktop managem
 
 ### Save website logins from the Mac app
 
-Install the current VPS Vault command and update the Mac app. In **Cloud → Vault → Websites**, choose **Add login**. Enter the HTTPS website, a label you can recognize, and the account details. Vault binds each login to that exact HTTPS host and port. The list shows the website and label. To update a login, choose **Replace** and enter the current account details again. Choose **Remove** to delete it from Vault.
+Install the current VPS Vault command and update the Mac app. In **Workspace → Vault → Websites**, choose **Add login**. Enter the HTTPS website, a label you can recognize, and the account details. Vault binds each login to that exact HTTPS host and port. The list shows the website and label. To update a login, choose **Replace** and enter the current account details again. Choose **Remove** to delete it from Vault.
 
 Website logins are encrypted on the VPS. You can [approve a saved login](#approve-a-saved-website-login) from a direct Bot chat with the isolated browser enabled.
 
@@ -329,7 +329,7 @@ To assign an account to a particular Bot, select it under **Saved for** when add
 
 ### Let a Bot request a key in chat
 
-Update the Mac app and Cloud. Once the service is available in Desktop Vault, open **Cloud → Vault → Bot access**. Choose **Grant access**, then select the bot and service and enter the key name. Grant changes take effect while Cloud is running.
+Update the Mac app and Cloud. Once the service is available in Desktop Vault, open **Workspace → Vault → Bot access**. Choose **Grant access**, then select the bot and service and enter the key name. Grant changes take effect while Cloud is running.
 
 Open that bot’s Cloud chat and ask it to request the key. Choose **Enter key securely** on the card and enter the value in the Mac Vault window. The bot receives the result of the request. The service loads the key on its next start. Use **API keys** in Vault to replace or revoke a saved key.
 
@@ -347,7 +347,7 @@ Desktop Vault checks how the running Cloud workspace manages requests before ena
 
 ### Let a shared Bot request a key
 
-Open **Cloud → Vault → Bot access**. When granting an exact service and key, choose **Owner and shared chats** under **Available in**. To share an existing grant, choose that setting on its row.
+Open **Workspace → Vault → Bot access**. When granting an exact service and key, choose **Owner and shared chats** under **Available in**. To share an existing grant, choose that setting on its row.
 
 A collaborator can ask the Bot to request the key. Open the Bot’s main chat as the owner and choose **Enter key securely**. Vault verifies the collaborator still has access before saving the key. The configured service loads it on its next start. A collaborator receives the outcome in their own chat. Any connected app used by the Bot still follows its app permissions.
 
@@ -400,7 +400,7 @@ Run `sudo /usr/local/sbin/yharness-vault deny-desktop` to remove Desktop managem
 
 ### Save website logins from the Mac app
 
-Install the current VPS Vault command and update the Mac app. In **Cloud → Vault → Websites**, choose **Add login**. Enter the HTTPS website, a label you can recognize, and the account details. Vault binds each login to that exact HTTPS host and port. The list shows the website and label. To update a login, choose **Replace** and enter the current account details again. Choose **Remove** to delete it from Vault.
+Install the current VPS Vault command and update the Mac app. In **Workspace → Vault → Websites**, choose **Add login**. Enter the HTTPS website, a label you can recognize, and the account details. Vault binds each login to that exact HTTPS host and port. The list shows the website and label. To update a login, choose **Replace** and enter the current account details again. Choose **Remove** to delete it from Vault.
 
 Website logins are encrypted on the VPS and available for owner management. Use [Computer panel](#watch-and-control-the-computer) to sign in on a Bot's desktop. Removing a saved login leaves existing website sessions active until you sign out or revoke them with the website.
 

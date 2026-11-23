@@ -7,7 +7,7 @@ import {
 import type { SubagentAddress } from '@yharness/subagent/client'
 import type { SessionId } from '@yharness/session/types'
 import {
-  IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, IconRefreshOutlineRegular, StateDot, Tooltip,
+  IconBranchOutlineRegular, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, IconRefreshOutlineRegular, StateDot, Tooltip,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale, PropsRuntime, TranslateNS } from '@yharness/client-ui-slots'
 import { NS } from './locales.ts'
@@ -45,6 +45,7 @@ interface CatalogRowsProps {
   refreshProjection: (parentSessionId: SessionId) => void
   toggleBranch: (childSessionId: SessionId) => void
   closeCatalog: () => void
+  agents?: boolean
 }
 
 function treeItems(root: HTMLDivElement | null): HTMLElement[] {
@@ -200,7 +201,7 @@ function isKnownLeaf(catalog: SubagentCatalogSnapshot | undefined): boolean {
 /** Render one catalog level and recurse only through explicitly expanded rows. */
 function CatalogRows({
   parentSessionId, currentSessionId, catalog, catalogs, summaries, expanded, level,
-  openChild, openChildAside, refreshProjection, toggleBranch, closeCatalog, t,
+  openChild, openChildAside, refreshProjection, toggleBranch, closeCatalog, agents, t,
 }: CatalogRowsProps & { t: TranslateNS<typeof NS> }) {
   const [now, setNow] = useState(() => Date.now())
   const running = catalog.entries.some(entry => entry.activity === 'running')
@@ -247,7 +248,10 @@ function CatalogRows({
           : completed
             ? t('activity.completed')
             : t('activity.inactive')
-        const secondary = [summary?.title, mode, activity]
+        const selection = summary?.projectionValues?.modelSelection?.lastUsed
+        const secondary = (agents === true
+          ? [selection?.model, activity]
+          : [summary?.title, mode, activity])
           .filter(value => value !== undefined)
           .join(' · ')
         const totalTokens = tokenTotal(summary?.projectionValues?.tokenUsage)
@@ -256,10 +260,10 @@ function CatalogRows({
           entry.activity,
           now,
         )
-        const tokenMetric = totalTokens === undefined
+        const tokenMetric = agents === true || totalTokens === undefined
           ? undefined
           : t('tokens.total', { value: formatTokens(totalTokens, t) })
-        const durationMetric = durationMs === undefined
+        const durationMetric = durationMs === undefined || (agents === true && durationMs === 0)
           ? undefined
           : {
             compact: formatDuration(durationMs, t),
@@ -270,7 +274,8 @@ function CatalogRows({
           .join(' · ')
 
         const open = (): void => {
-          openChild({
+          const openSession = agents === true ? openChildAside : openChild
+          openSession({
             parentSessionId,
             childSessionId: entry.id,
             mode: entry.mode,
@@ -350,7 +355,7 @@ function CatalogRows({
                     )}
                   </span>
                 )}
-                {!isCurrent && (
+                {!isCurrent && agents !== true && (
                   <Tooltip label={t('open.sidebar')} side="bottom" align="end">
                     <button
                       type="button"
@@ -387,6 +392,7 @@ function CatalogRows({
                       refreshProjection={refreshProjection}
                       toggleBranch={toggleBranch}
                       closeCatalog={closeCatalog}
+                      {...(agents === true ? { agents } : {})}
                       t={t}
                     />
                   )}
@@ -409,8 +415,8 @@ interface CatalogDropdownSharedProps extends SubagentCatalogInjected {
 
 type CatalogDropdownProps = CatalogDropdownSharedProps & (
   | {
-    /** Descendant-count control. */
-    variant: 'count'
+    /** Descendant-count control or the compact Bot agent activity control. */
+    variant: 'count' | 'agents'
     currentSessionId?: never
     displayTitle?: never
     openTitle?: never
@@ -464,6 +470,7 @@ function CatalogDropdown({
   const [open, setOpen] = useState(false)
   const [menuPosition, setMenuPosition] = useState<CSSProperties>()
   const [expanded, setExpanded] = useState<ReadonlySet<SessionId>>(() => new Set())
+  const [showPrevious, setShowPrevious] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -513,6 +520,7 @@ function CatalogDropdown({
       setOpen(false)
       setMenuPosition(undefined)
       setExpanded(new Set())
+      setShowPrevious(false)
     }
     if (restoreFocus) queueMicrotask(() => { triggerRef.current?.focus() })
   }
@@ -610,13 +618,30 @@ function CatalogDropdown({
     pinnedRef.current = false
     setOpen(false)
     setExpanded(new Set())
+    setShowPrevious(false)
   }, [visible, open])
 
   if (!visible) return null
 
+  const agents = variant === 'agents'
+  const activeEntries = agents
+    ? directChildren.filter(entry => entry.activity === 'running').sort((a, b) => b.createdAt - a.createdAt)
+    : directChildren
+  const previous = agents
+    ? directChildren.filter(entry => entry.activity === 'inactive').sort((a, b) => b.createdAt - a.createdAt)
+    : []
+  const currentCatalog = { ...presentedCatalog, entries: activeEntries }
+  const rows = {
+    parentSessionId: rootSessionId, currentSessionId, catalogs, summaries, expanded, level: 1,
+    openChild, openChildAside, refreshProjection, toggleBranch, closeCatalog: () => { changeOpen(false) }, agents, t,
+  }
+
   const focusAt = (index: number): void => {
     const items = treeItems(menuRef.current)
-    if (items.length === 0) return
+    if (items.length === 0) {
+      if (agents) menuRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
+      return
+    }
     items[(index + items.length) % items.length]?.focus()
   }
 
@@ -650,25 +675,27 @@ function CatalogDropdown({
     >
       <button
         ref={triggerRef}
-        onMouseEnter={scheduleHoverOpen}
+        onMouseEnter={agents ? undefined : scheduleHoverOpen}
         type="button"
         className={variant === 'switcher'
           ? `${css.switcherTrigger} ${ancestorSwitcher ? css.ancestorSwitcherTrigger : ''}`
-          : css.trigger}
+          : agents ? css.agentsTrigger : css.trigger}
         aria-haspopup="tree"
         aria-expanded={open}
         aria-label={variant === 'switcher'
           ? t('switcher.aria', { title: switcherDisplayTitle })
-          : t(
-            runningCount > 0 ? runningCountKey : totalCountKey,
-            { count: runningCount > 0 ? runningCount : directCount },
-          )}
+          : agents ? t('agents.aria', { count: directCount, running: runningCount })
+            : t(
+              runningCount > 0 ? runningCountKey : totalCountKey,
+              { count: runningCount > 0 ? runningCount : directCount },
+            )}
         onClick={openTitle === undefined
           ? () => {
             cancelHoverOpen()
             cancelHoverClose()
             pinnedRef.current = true
-            if (!open) changeOpen(true)
+            if (agents && open) changeOpen(false)
+            else if (!open) changeOpen(true)
           }
           : () => {
             cancelHoverOpen()
@@ -684,7 +711,13 @@ function CatalogDropdown({
       >
         {variant === 'switcher'
           ? <span className={css.switcherTitle}>{switcherDisplayTitle}</span>
-          : (
+          : agents ? (
+            <>
+              {runningCount > 0 ? <StateDot state="ongoing" size={15} /> : <IconBranchOutlineRegular size={16} />}
+              <span className={css.agentsLabel}>{t('agents.label')}</span>
+              <span className={css.agentsCount}>{runningCount || directCount}</span>
+            </>
+          ) : (
             <>
               {runningCount > 0 && (
                 <span className={css.activitySlot}>
@@ -696,7 +729,7 @@ function CatalogDropdown({
           )}
         {variant === 'switcher'
           ? <SubagentSwitcherIcon />
-          : <IconChevronDownOutlineRegular className={open ? css.triggerOpen : undefined} />}
+          : !agents && <IconChevronDownOutlineRegular className={open ? css.triggerOpen : undefined} />}
       </button>
       {open && createPortal((
         <div
@@ -706,22 +739,30 @@ function CatalogDropdown({
           onMouseEnter={cancelHoverClose}
           onMouseLeave={scheduleHoverClose}
         >
-          <div className={css.menuBody} role="tree" aria-label={t('tree.aria')}>
-            <CatalogRows
-              parentSessionId={rootSessionId}
-              currentSessionId={currentSessionId}
-              catalog={presentedCatalog}
-              catalogs={catalogs}
-              summaries={summaries}
-              expanded={expanded}
-              level={1}
-              openChild={openChild}
-              openChildAside={openChildAside}
-              refreshProjection={refreshProjection}
-              toggleBranch={toggleBranch}
-              closeCatalog={() => { changeOpen(false) }}
-              t={t}
-            />
+          <div className={css.menuBody} role={agents ? undefined : 'tree'} aria-label={agents ? undefined : t('tree.aria')}>
+            {agents && (
+              <div className={css.agentsHeading}>
+                <span>{t('agents.label')}</span>
+                {runningCount > 0 && <span className={css.agentsRunning}>{t('agents.running', { count: runningCount })}</span>}
+              </div>
+            )}
+            {agents ? (activeEntries.length > 0 || currentCatalog.state === 'error') && (
+              <div role="tree" aria-label={t('tree.aria')}><CatalogRows catalog={currentCatalog} {...rows} /></div>
+            ) : <CatalogRows catalog={currentCatalog} {...rows} />}
+            {previous.length > 0 && (
+              <>
+                <button type="button" className={css.previousAgents} aria-expanded={showPrevious}
+                  onClick={() => { setShowPrevious(value => !value) }}>
+                  {showPrevious ? <IconChevronDownOutlineRegular size={14} /> : <IconChevronRightOutlineRegular size={14} />}
+                  {t('agents.previous', { count: previous.length })}
+                </button>
+                {showPrevious && (
+                  <div role="tree" aria-label={t('agents.previous', { count: previous.length })}>
+                    <CatalogRows catalog={{ state: 'ready', error: null, entries: previous }} {...rows} />
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       ), document.body)}
@@ -802,5 +843,31 @@ export function SubagentHeaderLineage({
         />
       )}
     </>
+  )
+}
+
+/** Session scope and navigation for an embedded agent activity control. */
+export type SubagentActivityProps =
+  PropsRuntime<'conversation.session.header.agents'> & SubagentCatalogInjected & PropsLocale<typeof NS>
+
+/** Render the agent list for the current embedded Session.
+ * @param props - Session scope, navigation callbacks, and localized copy.
+ * @returns An Agents control when the Session has children or a catalog read needs retrying.
+ */
+export function SubagentActivity({
+  sessionId, useSessions, useSessionStatus, openChild, openChildAside, refreshProjection, beforeOpen, t,
+}: SubagentActivityProps) {
+  return (
+    <CatalogDropdown
+      key={sessionId}
+      rootSessionId={sessionId}
+      variant="agents"
+      useSessions={useSessions}
+      useSessionStatus={useSessionStatus}
+      openChild={openChild}
+      openChildAside={(address) => { beforeOpen?.(); openChildAside(address) }}
+      refreshProjection={refreshProjection}
+      t={t}
+    />
   )
 }

@@ -55,14 +55,20 @@ export function DecisionSettings(props: DecisionSettingsProps): ReactNode {
   const state = props.useDecision(value => value)
   useEffect(() => { props.ensureDecision() }, [props.ensureDecision])
   if (state.status === null && (state.phase === 'idle' || state.phase === 'loading')) return <section className={css.loading} data-testid="decision-settings" role="status" aria-label={props.t('loading')}><IconLoadingOutlineRegular size={18} /></section>
-  return <section className={css.card} aria-label={props.t('decisionTitle')} data-testid="decision-settings">
-    <h3 className={css.title}>{props.t('decisionTitle')}</h3><p className={css.hint}>{props.t('decisionHint')}</p><p className={css.hint}>{props.t('decisionNativeHint')}</p>
-    {state.error && <p className={css.error} role="alert">{props.t('decisionError')}</p>}
-    {state.status !== null && <DecisionForm key={state.status.configuration.revision}
-      state={state} status={state.status} t={props.t} loadDecisionControls={props.loadDecisionControls}
-      saveDecision={props.saveDecision} previewDecision={props.previewDecision} />}
-    <Button size="sm" variant="ghost" disabled={state.phase === 'loading' || state.busy} onClick={props.refreshDecision}>{props.t('refresh')}</Button>
-  </section>
+  return <details className={css.card} aria-label={props.t('decisionTitle')} data-testid="decision-settings">
+    <summary className={css.summary}>
+      <h3 className={css.title}>{props.t('decisionTitle')}</h3>
+      <span className={css.advanced}>{props.t('decisionAdvanced')}</span>
+    </summary>
+    <div className={css.content}>
+      <p className={css.hint}>{props.t('decisionHint')}</p><p className={css.hint}>{props.t('decisionNativeHint')}</p>
+      {state.error && <p className={css.error} role="alert">{props.t('decisionError')}</p>}
+      {state.status !== null && <DecisionForm key={state.status.configuration.revision}
+        state={state} status={state.status} t={props.t} loadDecisionControls={props.loadDecisionControls}
+        saveDecision={props.saveDecision} previewDecision={props.previewDecision} />}
+      <Button size="sm" variant="ghost" disabled={state.phase === 'loading' || state.busy} onClick={props.refreshDecision}>{props.t('refresh')}</Button>
+    </div>
+  </details>
 }
 
 /**

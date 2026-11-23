@@ -1,1 +1,1 @@
-- button "Open VPS files"
+- menuitem "Private workspace"
