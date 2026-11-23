@@ -1,4 +1,5 @@
 import importlib.util
+import fcntl
 import json
 import os
 import plistlib
@@ -39,12 +40,19 @@ class InstallerTest(unittest.TestCase):
             tool.chmod(0o700)
         self.calls = []
         self.registration_calls = []
+        self.sign_calls = []
 
     def compile(self, args, check):
         self.calls.append((args, check))
         app = Path(args[args.index("-o") + 1])
-        (app / "Contents").mkdir(parents=True)
+        (app / "Contents" / "MacOS").mkdir(parents=True)
         (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps({"CFBundleName": "Y Harness"}))
+        executable = app / "Contents" / "MacOS" / "applet"
+        executable.write_text("launcher")
+        executable.chmod(0o700)
+
+    def sign(self, app):
+        self.sign_calls.append(Path(app))
 
     def register(self, args, check, **kwargs):
         self.registration_calls.append((args, check, kwargs))
@@ -109,6 +117,53 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(marker.read_text(), "installed launcher")
         self.assertFalse(self.calls)
 
+    def test_upgrade_replaces_only_launcher_and_bootstrap(self):
+        app = installer.install(self.home, self.source, self.compile, resolve_tool=self.which)
+        support = self.home / "Library/Application Support/Y Harness GitHub"
+        data = support / "data"
+        managed = support / "managed"
+        data.mkdir()
+        managed.mkdir()
+        (data / "profile").write_text("keep profile")
+        (managed / "current").write_text("keep versions")
+        runtime = (support / "bootstrap" / "runtime.json").read_bytes()
+        result = installer.upgrade_existing(
+            self.home, self.source, self.compile, register=self.register, sign=self.sign)
+        self.assertEqual(result, app)
+        self.assertEqual((data / "profile").read_text(), "keep profile")
+        self.assertEqual((managed / "current").read_text(), "keep versions")
+        self.assertEqual((support / "bootstrap" / "runtime.json").read_bytes(), runtime)
+        self.assertTrue(self.sign_calls)
+        self.assertEqual(app.stat().st_mode & 0o777, 0o700)
+        values = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+        self.assertEqual(values["CFBundleURLTypes"][0]["CFBundleURLSchemes"], ["dsh"])
+        self.assertTrue(any(path.name.startswith(".launcher-backup-") for path in support.iterdir()))
+        self.assertTrue(any(path.name.startswith(".bootstrap-backup-") for path in support.iterdir()))
+        self.assertEqual(self.registration_calls[-1][0][-2:], ["-f", str(app)])
+        upgrade_script = self.calls[-1][0][self.calls[-1][0].index("-e") + 1]
+        self.assertIn('bootstrap/github-desktop-bootstrap.py"', upgrade_script)
+        self.assertNotIn(".bootstrap-upgrade-", upgrade_script)
+        installer.upgrade_existing(
+            self.home, self.source, self.compile, register=self.register, sign=self.sign)
+        self.assertEqual((data / "profile").read_text(), "keep profile")
+        self.assertEqual((managed / "current").read_text(), "keep versions")
+
+    def test_upgrade_refuses_a_running_managed_supervisor(self):
+        installer.install(self.home, self.source, self.compile, resolve_tool=self.which)
+        support = self.home / "Library/Application Support/Y Harness GitHub"
+        lock = support / ".supervisor.lock"
+        lock.touch(mode=0o600)
+        fd = os.open(lock, os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaisesRegex(RuntimeError, "quit Y Harness"):
+                installer.upgrade_existing(self.home, self.source, self.compile, sign=self.sign)
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+        self.assertFalse(self.sign_calls)
+        self.assertFalse(any(path.name.startswith(".bootstrap-upgrade-") for path in support.iterdir()))
+
     def test_parent_symlink_and_source_symlink_are_rejected(self):
         (self.home / "Applications").symlink_to(self.root)
         with self.assertRaises(ValueError):
@@ -163,6 +218,21 @@ class InstallerTest(unittest.TestCase):
         app = installer.install(self.home, self.source, resolve_tool=self.which, register=self.register)
         self.assertTrue((app / "Contents/Info.plist").is_file())
         self.assertTrue((app / "Contents/MacOS/applet").is_file())
+        verified = subprocess.run(
+            [installer.CODESIGN, "--verify", "--deep", "--strict", str(app)],
+            capture_output=True, text=True)
+        self.assertEqual(verified.returncode, 0, verified.stderr)
+
+    @unittest.skipUnless(sys.platform == "darwin", "AppleScript compiler is macOS-only")
+    def test_real_upgrade_signs_an_existing_launcher_bundle(self):
+        app = installer.install(self.home, self.source, resolve_tool=self.which, register=self.register)
+        result = installer.upgrade_existing(self.home, self.source, register=self.register)
+        self.assertEqual(result, app)
+        verified = subprocess.run(
+            [installer.CODESIGN, "--verify", "--deep", "--strict", str(app)],
+            capture_output=True, text=True)
+        self.assertEqual(verified.returncode, 0, verified.stderr)
+        self.assertEqual(app.stat().st_mode & 0o777, 0o700)
     @unittest.skipUnless(sys.platform == "darwin", "AppleScript compiler is macOS-only")
     def test_documented_command_installs_into_an_isolated_home(self):
         home = self.root / "isolated-home"
