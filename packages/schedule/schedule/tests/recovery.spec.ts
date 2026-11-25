@@ -83,7 +83,7 @@ it('skips occurrences missed before startup and delivers the next regular occurr
     onContext: ctx => contexts.push(ctx),
     beforeService: async (ctx) => {
       agent = agentFor(ctx)
-      vi.mocked(ctx.sessionController.resolveAgent).mockResolvedValue({ agent })
+      vi.spyOn(ctx.sessionController, 'resolveAgent').mockResolvedValue({ agent })
     },
   })
   expect(await test.service.catalog()).toEqual([
@@ -131,7 +131,7 @@ it('still delivers the occurrence due at startup and the overdue one-shot', asyn
     backend: new JsonStorageBackend(root),
     onContext: ctx => contexts.push(ctx),
     beforeService: async (ctx) => {
-      vi.mocked(ctx.sessionController.resolveAgent).mockResolvedValue({ agent: agentFor(ctx) })
+      vi.spyOn(ctx.sessionController, 'resolveAgent').mockResolvedValue({ agent: agentFor(ctx) })
     },
   })
   await test.service.catalog()
