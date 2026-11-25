@@ -10,9 +10,10 @@ import { MessageId } from '@yharness/llm/brand'
 import { afterEach, beforeEach, expect, it, vi, type MockInstance } from 'vitest'
 import ScheduleService from '../src/index.ts'
 import { scheduleDomain } from '../src/storage.ts'
-import { ScheduleId } from '../src/domain.ts'
+import { createEveryScheduleRecord, ScheduleId } from '../src/domain.ts'
 import { ScheduleRuntime } from '../src/runtime.ts'
-import { agentFor, harness } from './harness.ts'
+import { agentFor, gatedScheduleBackend, harness } from './harness.ts'
+import { MemoryMediaPool } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 
 const roots: string[] = []
 const contexts: Context[] = []
@@ -208,6 +209,47 @@ it.each([
   await ctx.plugin(ScheduleService)
   expect(await ctx.schedule.catalog()).toHaveLength(2)
   expect(await readFile(path, 'utf8')).toBe(repaired)
+})
+
+it('closes the domain and preserves an armed task when startup normalization cannot be written', async () => {
+  const pool = new MemoryMediaPool()
+  let rejectStartupWrite = false
+  const backend = gatedScheduleBackend(pool, {
+    putRecord: async (table) => {
+      if (rejectStartupWrite && table === 'tasks') throw new Error('startup normalization write failed')
+    },
+  })
+  const sessionId = SessionId('startup-write-failure')
+  const id = ScheduleId('startup-write-failure')
+  const record = {
+    ...createEveryScheduleRecord(id, 'Run the recovery check', 60, Date.now() - 120_000, 'Recovery check'),
+    scheduledAt: '2026-09-15T23:59:00.000Z',
+  }
+  const task = { sessionId, record, status: 'active' as const }
+  let observed: { ctx: Context; facility: DomainFacility; resolveCalls: () => number } | undefined
+  const startup = harness({
+    pool, backend, config: { skipMissedRecurringOnStartup: true }, onContext: ctx => contexts.push(ctx),
+    beforeService: async (ctx, facility) => {
+      const domain = await facility.open(scheduleDomain)
+      await domain.table('tasks').put(id, task)
+      await domain.close()
+      rejectStartupWrite = true
+      const resolve = vi.spyOn(ctx.sessionController, 'resolveAgent')
+      observed = { ctx, facility, resolveCalls: () => resolve.mock.calls.length }
+    },
+  })
+  await expect(startup).rejects.toThrow('startup normalization write failed')
+  if (observed === undefined) throw new Error('Schedule dependencies did not initialize')
+  const { ctx, facility } = observed
+  expect(ctx.get('schedule')).toBeUndefined()
+  expect(facility.get('schedule')).toBeUndefined()
+  expect(observed.resolveCalls()).toBe(0)
+  expect(vi.getTimerCount()).toBe(0)
+  expect(pool.media.get('schedule')?.tables.get('tasks')?.get(id)).toEqual(task)
+
+  const reopened = await facility.open(scheduleDomain)
+  expect(reopened.table('tasks').get(id)).toEqual(task)
+  await reopened.close()
 })
 
 it.each([
