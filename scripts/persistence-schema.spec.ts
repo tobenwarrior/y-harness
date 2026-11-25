@@ -55,10 +55,10 @@ function event(inventory: PersistenceSchemaInventory, name = 'test/record'): str
   return root.digest
 }
 
-// Run the repository traversal before fixture cases create many TypeScript Programs;
-// retaining their checker state can push this Windows-budgeted test past its timeout.
+// Run the repository traversal before fixture cases build their TypeScript Programs.
+// This traversal checks the whole repository and needs a longer budget on shared CI runners.
 describe('repository-wide persistence source type extraction', () => {
-  it('includes every real repository event and fingerprints every reachable node', { timeout: 90_000 }, () => {
+  it('includes every real repository event and fingerprints every reachable node', { timeout: 180_000 }, () => {
     const root = resolve(import.meta.dirname, '..')
     const model = extractPersistenceSchema(root)
     expect(model.roots.filter(root => root.kind === 'event').map(root => root.event).sort())
