@@ -2333,6 +2333,13 @@
   line-height: 16px;
 }
 
+.mcpActionGroupMeta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
 .mcpActionRows {
   display: flex;
   flex-direction: column;

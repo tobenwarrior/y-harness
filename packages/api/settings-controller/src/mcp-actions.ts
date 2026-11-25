@@ -12,6 +12,9 @@ const actionChange = z.object({
   enabled: z.boolean(),
 })
 
+/** Maximum time a manual connector retry may hold the settings request open. */
+const RECONNECT_SETTLE_TIMEOUT_MS = 10_000
+
 function configuredCatalog(ctx: Context): Map<string, McpActionCatalog> {
   const catalogs = new Map<string, McpActionCatalog>()
   ctx.emit('mcp/actions/catalog', (catalog) => { catalogs.set(catalog.serverName, catalog) })
@@ -37,6 +40,21 @@ function cancelled(signal: AbortSignal): void {
 
 function unavailable(): RemoteError<'settings/mcp-action-rejected'> {
   return new RemoteError('settings/mcp-action-rejected', 'This connector action cannot be changed here.', {})
+}
+
+/** Wait for a selected connector's retry attempt without making the settings request unbounded. */
+function waitForReconnect(settled: Promise<void>): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, RECONNECT_SETTLE_TIMEOUT_MS)
+    timer.unref()
+    void settled.then(() => {
+      clearTimeout(timer)
+      resolve()
+    }, () => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
 }
 
 /** List the redacted action catalog for the workspace owner's connector settings.
@@ -99,5 +117,34 @@ export async function setMcpActionEnabled(
     cancelled(signal)
     throw new RemoteError('settings/mcp-action-rejected', 'Could not save the connector action change.', {}, { cause: error })
   }
+  return listMcpActions(ctx)
+}
+
+/** Ask one configured connector to retry with its current Host-owned auth.
+ * @param ctx - Host context containing the active connector entries.
+ * @param serverName - Configured connector namespace selected by the owner.
+ * @param signal - Caller cancellation for the reconnect request.
+ * @returns Redacted connector views after the retry attempt settles or the bounded wait expires.
+ */
+export async function reconnectMcpConnector(
+  ctx: Context,
+  serverName: string,
+  signal: AbortSignal,
+): Promise<McpActionServerView[]> {
+  const parsed = z.string().min(1).safeParse(serverName)
+  if (!parsed.success) throw new RemoteError('gateway/bad-request', 'The connector name is invalid.', {})
+  cancelled(signal)
+  const catalog = configuredCatalog(ctx).get(parsed.data)
+  if (catalog === undefined) throw unavailable()
+  let settled: Promise<void> | undefined
+  ctx.emit('mcp/actions/reconnect', {
+    serverName: catalog.serverName,
+    entryId: catalog.entryId,
+    onSettled: (next) => {
+      if (settled === undefined) settled = next
+    },
+  })
+  if (settled !== undefined) await waitForReconnect(settled)
+  cancelled(signal)
   return listMcpActions(ctx)
 }

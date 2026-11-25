@@ -70,6 +70,8 @@ type BotMcpActionFace = {
   readonly loadMcpActions?: () => Promise<readonly McpActionServerView[]>
   /** Change one workspace-wide connector action and return the reconciled catalog. */
   readonly setMcpActionEnabled?: (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
+  /** Retry one disconnected workspace connector with its existing Host-owned authentication. */
+  readonly reconnectMcpConnector?: (serverName: string) => Promise<readonly McpActionServerView[]>
 }
 
 export type BotsRosterProps =
@@ -129,7 +131,7 @@ export function BotsRoster({
   wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, selectGroup,
   create, createGroup, groupsAvailable, organize, templateActions, retry, loadAvatar, avatarEditor, share, sharedClient, t,
   loadConnectedApps, loadMcpActions, githubAppSignIn,
-  setConnectedAppAccess, setMcpActionEnabled,
+  setConnectedAppAccess, setMcpActionEnabled, reconnectMcpConnector,
 }: BotsRosterProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -153,6 +155,7 @@ export function BotsRoster({
       onSetConnectedAppAccess={setConnectedAppAccess}
       onLoadMcpActions={loadMcpActions}
       onSetMcpActionEnabled={setMcpActionEnabled}
+      onReconnectMcpConnector={reconnectMcpConnector}
       githubAppSignIn={githubAppSignIn}
       onRetry={retry}
       loadAvatar={loadAvatar}

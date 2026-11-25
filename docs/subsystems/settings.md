@@ -120,6 +120,13 @@ Host service backing the generated `ctx.remote.settings` namespace. Configuratio
  */
 @Remote setMcpActionEnabled(serverName: string, actionName: string, enabled: boolean, signal: AbortSignal): Promise<McpActionServerView[]>
 
+/** Request a fresh connection generation for one configured connector.
+ * @param serverName - Configured connector name.
+ * @param signal - Caller cancellation for the reconnect request.
+ * @returns Redacted connector metadata after the retry attempt or its bounded wait.
+ */
+@Remote reconnectMcpConnector(serverName: string, signal: AbortSignal): Promise<McpActionServerView[]>
+
 /**
  * Merge a patch into one namespace's stored user section.
  * @param ns - namespace key to write.

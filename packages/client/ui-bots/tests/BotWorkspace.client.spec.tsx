@@ -3217,6 +3217,75 @@ describe('Bot roster and detail', () => {
     expect(loadMcpActions).toHaveBeenCalledOnce()
   })
 
+  it('offers an exact reconnect action for an offline connector', async () => {
+    const offline: McpActionServerView = {
+      serverName: 'Workspace Fixture', connected: false, editable: false,
+      actions: [{ name: 'inspect_record', enabled: true }],
+    }
+    const online: McpActionServerView = {
+      ...offline, connected: true, editable: true,
+    }
+    const loadMcpActions = vi.fn().mockResolvedValue([offline])
+    const reconnectMcpConnector = vi.fn().mockResolvedValue([online])
+    renderSplitWorkspace({
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: vi.fn().mockResolvedValue([online]),
+      onReconnectMcpConnector: reconnectMcpConnector,
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    const group = await within(dialog).findByRole('group', { name: 'Workspace Fixture' })
+    fireEvent.click(within(group).getByRole('button', { name: 'Reconnect' }))
+    await waitFor(() => {
+      expect(reconnectMcpConnector).toHaveBeenCalledWith('Workspace Fixture')
+      expect(within(dialog).getByText('Connected')).toBeTruthy()
+    })
+    expect(within(dialog).getByRole('switch', { name: 'inspect_record' }).getAttribute('disabled')).toBeNull()
+  })
+
+  it('shows a reconnect failure without losing the connector catalog', async () => {
+    const pending = Promise.withResolvers<readonly McpActionServerView[]>()
+    const offline: McpActionServerView = {
+      serverName: 'Workspace Fixture', connected: false, editable: false,
+      actions: [{ name: 'inspect_record', enabled: true }],
+    }
+    const loadMcpActions = vi.fn().mockResolvedValue([offline])
+    const reconnectMcpConnector = vi.fn()
+      .mockReturnValueOnce(pending.promise)
+      .mockRejectedValueOnce('connector unavailable')
+    renderSplitWorkspace({
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: vi.fn().mockResolvedValue([offline]),
+      onReconnectMcpConnector: reconnectMcpConnector,
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    const group = await within(dialog).findByRole('group', { name: 'Workspace Fixture' })
+    fireEvent.click(within(group).getByRole('button', { name: 'Reconnect' }))
+    await waitFor(() => {
+      const reconnectButton = within(group).getByRole('button', { name: 'Reconnecting…' })
+      expect(reconnectButton.getAttribute('disabled')).not.toBeNull()
+    })
+    pending.reject(new Error('connector unavailable'))
+    await waitFor(() => {
+      expect(reconnectMcpConnector).toHaveBeenCalledWith('Workspace Fixture')
+      expect(within(dialog).getByRole('alert').textContent).toContain('connector unavailable')
+    })
+    fireEvent.click(within(group).getByRole('button', { name: 'Reconnect' }))
+    await waitFor(() => {
+      expect(reconnectMcpConnector).toHaveBeenCalledTimes(2)
+      expect(within(dialog).getByRole('alert').textContent).toContain('The connector could not be reconnected. Try again.')
+    })
+  })
+
   it('fences connector action saves after the dialog closes', async () => {
     const firstSave = Promise.withResolvers<readonly McpActionServerView[]>()
     const secondSave = Promise.withResolvers<readonly McpActionServerView[]>()

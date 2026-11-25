@@ -28,7 +28,7 @@ import type {} from '@yharness/tools'
 export { createMcpToolDefinition } from './tools.ts'
 export type { McpResult, McpToolDefinitionOptions } from './tools.ts'
 export type { ReconnectConfig, ResolvedReconnectPolicy } from './connection.ts'
-export type { McpActionCatalog } from './action-catalog.ts'
+export type { McpActionCatalog, McpActionReconnectRequest } from './action-catalog.ts'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'mcp-client'

@@ -29,7 +29,7 @@ Mount this package as a Loader entry in a profile that serves browser configurat
 
 `settings.openSettingsDocument()` prepares the provider-owned document and opens it with the native text editor; it accepts no browser-supplied filesystem target.
 
-`settings.listMcpActions()` lists discovered connector actions with their enabled state. `settings.setMcpActionEnabled()` edits one discovered action on a profile-owned connection through the configuration editor. Both calls return connector and action names and descriptions without exposing raw connection configuration.
+`settings.listMcpActions()` lists discovered connector actions with their enabled state. `settings.setMcpActionEnabled()` edits one discovered action on a profile-owned connection through the configuration editor. `settings.reconnectMcpConnector()` asks the Host to retry one disconnected configured connector using its existing authentication, waits for the selected retry attempt or a bounded timeout, and then returns the redacted catalog. It never accepts or returns credentials. These calls return connector and action names and descriptions without exposing raw connection configuration.
 
 -----
 

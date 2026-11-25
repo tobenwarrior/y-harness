@@ -3292,6 +3292,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Connector action metadata after configuration reconciliation.',
       },
       {
+        signature: '@Remote reconnectMcpConnector(serverName: string, signal: AbortSignal): Promise<McpActionServerView[]>',
+        description: 'Request a fresh connection generation for one configured connector.',
+        parameters: [{ name: 'serverName', description: 'Configured connector name.' }, { name: 'signal', description: 'Caller cancellation for the reconnect request.' }],
+        returns: 'Redacted connector metadata after the retry attempt or its bounded wait.',
+      },
+      {
         signature: '@Remote update( ns: string, patch: Record<string, JsonValue>, expectedRevision: number | undefined, ): Promise<SettingsNamespaceView>',
         description: 'Merge a patch into one namespace\'s stored user section.',
         parameters: [{ name: 'ns', description: 'namespace key to write.' }, { name: 'patch', description: 'fields to merge into the user section.' }, { name: 'expectedRevision', description: 'revision the caller read; `undefined` writes unconditionally.' }],
@@ -5246,6 +5252,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'Synchronously read action catalogs from eligible loader-owned MCP plugins.',
     description: 'Synchronously read action catalogs from eligible loader-owned MCP plugins.',
     parameters: [{ name: 'accept', description: 'callback receiving one server\'s current action catalog.' }],
+  },
+  {
+    name: 'mcp/actions/reconnect',
+    mode: 'emit',
+    signature: '\'mcp/actions/reconnect\'(request: McpActionReconnectRequest): void',
+    summary: 'Ask one loader-owned connector to retire its current generation and reconnect using its current Host-owned authentication.',
+    description: 'Ask one loader-owned connector to retire its current generation and reconnect using its current Host-owned authentication.',
+    parameters: [{ name: 'request', description: 'Exact server and loader entry identity selected by the Host.' }],
   },
   {
     name: 'permission-presets/catalog-changed',
@@ -7782,6 +7796,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'McpActionCatalog',
     declaration: 'export interface McpActionCatalog {\n    readonly serverName: string;\n    readonly entryId: string;\n    readonly authKind?: \'github-app\';\n    readonly connected: boolean;\n    readonly actions: readonly {\n        readonly name: string;\n        readonly description?: string;\n        readonly enabled: boolean;\n    }[];\n}',
+  },
+  {
+    name: 'McpActionReconnectRequest',
+    declaration: 'export interface McpActionReconnectRequest {\n    readonly serverName: string;\n    readonly entryId: string;\n    readonly onSettled: (settled: Promise<void>) => void;\n}',
   },
   {
     name: 'McpResourceProvider',

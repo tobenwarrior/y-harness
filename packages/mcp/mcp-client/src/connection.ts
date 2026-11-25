@@ -359,7 +359,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     if (isDisposed() || transportCloseUnconfirmed || revision !== authRevision) return
     if (!await ready()) return
     if (isDisposed() || revision !== authRevision) return
-    settling = beginConnection(false)
+    await beginConnection(false)
   }
 
   /** Read the optional provider without making it a required plugin dependency. */
@@ -377,22 +377,41 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     }
   }
 
-  function scheduleAuthRefresh(ready: () => Promise<boolean>): void {
+  function scheduleAuthRefresh(ready: () => Promise<boolean>): Promise<void> {
     const revision = ++authRevision
     const retired = prepareCredentialRefresh()
     authRefreshChain = authRefreshChain.then(() => refreshAfterAuthChange(revision, ready, retired))
+    return authRefreshChain
+  }
+
+  /** Restart this exact connector without exposing credentials to the caller. */
+  const reconnectReady = (): Promise<boolean> => {
+    if (bearerTokenRef !== undefined) return hasBearerCredential(bearerTokenRef)
+    if (githubAppAuthorization) {
+      const auth = githubAppAuthService()
+      return auth === undefined ? Promise.resolve(false) : hasGithubAppAuthorization(auth)
+    }
+    return Promise.resolve(true)
+  }
+
+  if (entryId !== undefined) {
+    ctx.on('mcp/actions/reconnect', (request) => {
+      if (disposed || request.serverName !== config.serverName || request.entryId !== entryId) return
+      const settled = scheduleAuthRefresh(reconnectReady)
+      request.onSettled(settled)
+    })
   }
 
   if (bearerTokenRef !== undefined) {
     ctx.on('credentials/reference-updated', (ref) => {
       if (disposed || ref !== bearerTokenRef) return
-      scheduleAuthRefresh(() => hasBearerCredential(bearerTokenRef))
+      void scheduleAuthRefresh(reconnectReady)
     })
   } else if (githubAppAuthorization) {
     ctx.on('github-app-auth/connection-changed', () => {
       const auth = githubAppAuthService()
       if (disposed || auth === undefined) return
-      scheduleAuthRefresh(() => hasGithubAppAuthorization(auth))
+      void scheduleAuthRefresh(reconnectReady)
     })
   }
 

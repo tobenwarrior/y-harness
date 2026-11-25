@@ -19,7 +19,7 @@ import { Remote, RemoteError, TypertRemoteService } from '@yharness/typert-proto
 import type { JsonValue } from '@yharness/util-values'
 import { z } from 'zod'
 import { CredentialsController } from './credentials.ts'
-import { listMcpActions, setMcpActionEnabled } from './mcp-actions.ts'
+import { listMcpActions, reconnectMcpConnector, setMcpActionEnabled } from './mcp-actions.ts'
 import type { McpActionServerView, SettingsDocumentOpenValue } from './types.ts'
 
 export { CredentialsController } from './credentials.ts'
@@ -122,6 +122,16 @@ export class SettingsController extends TypertRemoteService {
   @Remote
   setMcpActionEnabled(serverName: string, actionName: string, enabled: boolean, signal: AbortSignal): Promise<McpActionServerView[]> {
     return setMcpActionEnabled(this.ctx, serverName, actionName, enabled, signal)
+  }
+
+  /** Request a fresh connection generation for one configured connector.
+   * @param serverName - Configured connector name.
+   * @param signal - Caller cancellation for the reconnect request.
+   * @returns Redacted connector metadata after the retry attempt or its bounded wait.
+   */
+  @Remote
+  reconnectMcpConnector(serverName: string, signal: AbortSignal): Promise<McpActionServerView[]> {
+    return reconnectMcpConnector(this.ctx, serverName, signal)
   }
 
   /**

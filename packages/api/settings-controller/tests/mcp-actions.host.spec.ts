@@ -40,7 +40,12 @@ async function workspace() {
   const entry = ctx.configEditor.entries().find(row => row.options.id === 'first')!
   await ctx.configEditor.edit(entry, raw => ({ ...raw, serverName: 'records', disabledTools: ['peer'] }))
   await ctx.plugin(SettingsController)
-  return { ...fixture, controller: ctx.settingsController, disconnect: () => { connected = false } }
+  return {
+    ...fixture,
+    controller: ctx.settingsController,
+    disconnect: () => { connected = false },
+    setConnected: (next: boolean) => { connected = next },
+  }
 }
 
 it('persists an exact action while retaining its peer and private configuration', async () => {
@@ -123,4 +128,53 @@ it('rejects action edits if the config or the live discovery changes before the 
   await expect(controller.setMcpActionEnabled('records', actionName, false, signal()))
     .rejects.toMatchObject({ code: 'settings/mcp-action-rejected' })
   expect(await readFile(profile.patchPath, 'utf8')).toBe(before)
+})
+
+it('requests a reconnect for the exact disconnected connector without exposing config', async () => {
+  const { controller, ctx, disconnect, setConnected } = await workspace()
+  const requests: Array<{ readonly serverName: string; readonly entryId: string }> = []
+  ctx.on('mcp/actions/reconnect', (request) => {
+    requests.push({ serverName: request.serverName, entryId: request.entryId })
+    setConnected(true)
+    request.onSettled(Promise.resolve())
+    request.onSettled(Promise.withResolvers<undefined>().promise)
+  }, { global: true })
+  disconnect()
+  await expect(controller.reconnectMcpConnector('records', signal())).resolves.toMatchObject([
+    { serverName: 'records', connected: true, editable: true },
+  ])
+  expect(requests).toEqual([{ serverName: 'records', entryId: 'include:first' }])
+  await expect(controller.reconnectMcpConnector('', signal())).rejects.toMatchObject({ code: 'gateway/bad-request' })
+  await expect(controller.reconnectMcpConnector('missing', signal())).rejects.toMatchObject({ code: 'settings/mcp-action-rejected' })
+  await expect(controller.reconnectMcpConnector('records', AbortSignal.abort())).rejects.toMatchObject({ code: 'gateway/cancelled' })
+  expect(JSON.stringify(requests)).not.toContain('token')
+})
+
+it('returns the current catalog when the connector has gone away or its retry fails', async () => {
+  const { controller, ctx, disconnect } = await workspace()
+  disconnect()
+  const offline = [{ serverName: 'records', connected: false, editable: false }]
+  await expect(controller.reconnectMcpConnector('records', signal())).resolves.toMatchObject(offline)
+
+  ctx.on('mcp/actions/reconnect', (request) => {
+    request.onSettled(Promise.reject(new Error('Transport unavailable')))
+  }, { global: true })
+  await expect(controller.reconnectMcpConnector('records', signal())).resolves.toMatchObject(offline)
+})
+
+it('returns an offline view if the transport does not finish reconnecting within the settings request', async () => {
+  const { controller, ctx, disconnect } = await workspace()
+  disconnect()
+  const retry: PromiseWithResolvers<void> = Promise.withResolvers()
+  ctx.on('mcp/actions/reconnect', (request) => { request.onSettled(retry.promise) }, { global: true })
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    const pending = controller.reconnectMcpConnector('records', signal())
+    const result = expect(pending).resolves.toMatchObject([{ serverName: 'records', connected: false }])
+    await vi.advanceTimersByTimeAsync(10_000)
+    await result
+  } finally {
+    retry.resolve()
+    vi.useRealTimers()
+  }
 })
