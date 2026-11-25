@@ -647,8 +647,8 @@ export class BotWorkspaceController {
         const result = signal === undefined
           ? await readGrokHistory(request)
           : await readGrokHistory(request, signal)
-        if (!result.ok) throw new Error(result.error.message)
-        return result.value
+        if (result.ok) return result.value
+        throw new Error(result.error.message)
       } }),
       loadAvatar: (botId, avatar) => this.loadAvatar(botId, avatar),
       ...(
