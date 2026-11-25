@@ -12382,8 +12382,13 @@ describe('durable Bot roster', () => {
       await expect(first.service.importGrokHistory(request)).resolves.toEqual({ messages: 2 })
       await expect(first.service.importGrokHistory(request)).resolves.toEqual({ messages: 2 })
       await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
-        source: 'grok-bot', version: 1, firstCachedSequence: 4, messages: messages.slice(1),
+        source: 'grok-bot', version: 1, firstCachedSequence: 4, messages: [{
+          ...messages[1], text: 'Changed answer',
+        }],
       }) })).rejects.toThrow('would remove or change')
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
+        source: 'grok-bot', version: 1, firstCachedSequence: 4, messages: messages.slice(1),
+      }) })).resolves.toEqual({ messages: 2 })
       expect((await first.ctx.sessionController.inspect(sessionId)).events).toEqual(events)
     } finally {
       await close(first.ctx)
@@ -12507,7 +12512,8 @@ describe('durable Bot roster', () => {
 
       const sourceRemoved = { ...structuredClone(enriched), sources: undefined }
       await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(sourceRemoved) }))
-        .rejects.toThrow('would remove or change')
+        .resolves.toEqual({ messages: 6 })
+      await expect(first.service.readGrokHistory({ botId })).resolves.toEqual(enriched)
 
       await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
         source: 'grok-bot', version: 1, firstCachedSequence: 1, messages: [
