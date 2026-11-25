@@ -316,21 +316,47 @@ function messageConflict(message: BotGrokHistoryMessage, incoming: BotGrokHistor
   if (message.timestampMs !== null && message.timestampMs !== incoming.timestampMs) return true
   for (const key of ['author', 'fromBot', 'incomplete'] as const) {
     const value = message[key]
-    if (value !== undefined && incoming[key] !== value) return true
+    const incomingValue = incoming[key]
+    if (value !== undefined && incomingValue !== undefined && incomingValue !== value) return true
   }
   return false
 }
 
-function validateSourceSuperset(
+function mergeMessage(message: BotGrokHistoryMessage, incoming: BotGrokHistoryMessage): BotGrokHistoryMessage {
+  if (messageConflict(message, incoming)) throw new Error('Grok history message conflict')
+  return {
+    ...message,
+    ...(message.timestampMs === null && incoming.timestampMs !== null ? { timestampMs: incoming.timestampMs } : {}),
+    ...(message.author === undefined && incoming.author !== undefined ? { author: incoming.author } : {}),
+    ...(message.fromBot === undefined && incoming.fromBot !== undefined ? { fromBot: incoming.fromBot } : {}),
+    ...(message.incomplete === undefined && incoming.incomplete !== undefined ? { incomplete: incoming.incomplete } : {}),
+  }
+}
+
+function mergeHistorySection(
   current: { readonly firstCachedSequence: number; readonly messages: readonly BotGrokHistoryMessage[] },
   incoming: { readonly firstCachedSequence: number; readonly messages: readonly BotGrokHistoryMessage[] },
-): void {
-  if (incoming.firstCachedSequence > current.firstCachedSequence) throw new Error('Grok history source coverage conflict')
-  const incomingBySequence = new Map(incoming.messages.map(message => [message.sourceSequence, message]))
-  for (const message of current.messages) {
-    const replacement = incomingBySequence.get(message.sourceSequence)
-    if (replacement === undefined || messageConflict(message, replacement)) throw new Error('Grok history message conflict')
+): { readonly firstCachedSequence: number; readonly messages: readonly BotGrokHistoryMessage[] } {
+  if (incoming.messages.length === 0) throw new Error('Grok history message conflict')
+  const firstIncoming = incoming.messages[0]
+  if (firstIncoming !== undefined && firstIncoming.sourceSequence < incoming.firstCachedSequence) {
+    throw new Error('Grok history source coverage conflict')
   }
+  const messagesBySequence = new Map(current.messages.map(message => [message.sourceSequence, message]))
+  for (const message of incoming.messages) {
+    const existing = messagesBySequence.get(message.sourceSequence)
+    messagesBySequence.set(message.sourceSequence, existing === undefined ? message : mergeMessage(existing, message))
+  }
+  if (messagesBySequence.size > GROK_HISTORY_MAX_MESSAGES) throw new Error('Grok history archive exceeds the message limit')
+  return {
+    firstCachedSequence: Math.min(current.firstCachedSequence, incoming.firstCachedSequence),
+    messages: [...messagesBySequence.values()].sort((left, right) => left.sourceSequence - right.sourceSequence),
+  }
+}
+
+function mergeCompleteness(current: boolean | undefined, incoming: boolean | undefined, subject: string): false | undefined {
+  if (current === false && incoming !== false) throw new Error(`Grok history ${subject} completeness marker was removed`)
+  return current === false || incoming === false ? false : undefined
 }
 
 /**
@@ -338,25 +364,50 @@ function validateSourceSuperset(
  * @param current - Existing durable archive, if any.
  * @param incoming - Newly reviewed archive.
  * @returns The additive archive to persist.
- * @throws When an import downgrades the version or removes recovered records, metadata, or completeness markers.
+ * @throws When an import downgrades the version, changes recovered facts, removes completeness markers,
+ * or exceeds a message, source, or byte limit.
  */
 export function mergeGrokHistoryArchives(
   current: BotGrokHistoryArchive,
   incoming: BotGrokHistoryArchive,
 ): BotGrokHistoryArchive {
   if (current.version === 2 && incoming.version !== 2) throw new Error('Grok history archive version cannot be downgraded')
-  validateSourceSuperset(current, incoming)
-  if (current.complete === false && incoming.complete !== false) throw new Error('Grok history completeness marker was removed')
+  const primary = mergeHistorySection(current, incoming)
+  const complete = mergeCompleteness(current.complete, incoming.complete, 'archive')
   const currentSources = current.version === 2 ? current.sources ?? [] : []
   const incomingSources = incoming.version === 2 ? incoming.sources ?? [] : []
+  const currentById = new Map(currentSources.map(source => [source.id, source]))
   const incomingById = new Map(incomingSources.map(source => [source.id, source]))
-  for (const source of currentSources) {
-    const replacement = incomingById.get(source.id)
-    if (replacement === undefined || replacement.label !== source.label) throw new Error('Grok history supplemental source changed')
-    validateSourceSuperset(source, replacement)
-    if (source.complete === false && replacement.complete !== false) throw new Error('Grok history source completeness marker was removed')
+  const mergedSources = currentSources.map((currentSource) => {
+    const incomingSource = incomingById.get(currentSource.id)
+    if (incomingSource === undefined) return currentSource
+    if (incomingSource.label !== currentSource.label) throw new Error('Grok history supplemental source changed')
+    const merged = mergeHistorySection(currentSource, incomingSource)
+    const sourceComplete = mergeCompleteness(currentSource.complete, incomingSource.complete, 'source')
+    return {
+      ...incomingSource,
+      firstCachedSequence: merged.firstCachedSequence,
+      messages: merged.messages,
+      ...(sourceComplete === false ? { complete: false as const } : {}),
+    }
+  })
+  for (const incomingSource of incomingSources) {
+    if (!currentById.has(incomingSource.id)) mergedSources.push(incomingSource)
   }
-  return incoming
+  if (mergedSources.length > GROK_HISTORY_MAX_SOURCES) throw new Error('Grok history archive exceeds the source limit')
+  const mergedArchive: BotGrokHistoryArchive = {
+    source: 'grok-bot',
+    version: incoming.version,
+    firstCachedSequence: primary.firstCachedSequence,
+    messages: primary.messages,
+    ...(complete === false ? { complete: false as const } : {}),
+    ...(mergedSources.length === 0 ? {} : { sources: mergedSources }),
+  }
+  const maxBytes = mergedArchive.version === 1 ? GROK_HISTORY_V1_MAX_BYTES : GROK_HISTORY_MAX_BYTES
+  if (Buffer.byteLength(JSON.stringify(mergedArchive)) > maxBytes) {
+    throw new Error('Grok history archive exceeds the byte limit')
+  }
+  return mergedArchive
 }
 
 /**

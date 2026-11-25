@@ -95,7 +95,7 @@ Source: [`packages/settings/settings/src/index.ts`](../../packages/settings/sett
 
 ### `ctx.settingsController` — `SettingsController`
 
-Host service backing the generated `ctx.remote.settings` namespace. Every remote read uses `redactSecrets: true`, so a `role('secret')` field cannot ride a response. Writes expose the settings service's merge, replacement, and path-addressed operations, and classify every provider refusal as `settings/conflict` or `settings/rejected` with the service's message.
+Host service backing the generated `ctx.remote.settings` namespace. Configuration reads redact secret fields. Connector reads return discovery metadata. Form writes classify stale revisions and provider refusals separately.
 
 ```ts cordis-catalog
 /**
@@ -105,6 +105,27 @@ Host service backing the generated `ctx.remote.settings` namespace. Every remote
  * @throws RemoteError when no settings provider is mounted.
  */
 @Remote describe(): SettingsDescribeValue
+
+/** List discovered actions for the workspace's configured MCP connectors.
+ * @returns Redacted connector and action metadata for the owner UI.
+ */
+@Remote listMcpActions(): McpActionServerView[]
+
+/** Set whether a discovered connector action is available in this workspace.
+ * @param serverName - Configured connector name.
+ * @param actionName - Exact raw name from the connector's action list.
+ * @param enabled - Desired action availability.
+ * @param signal - Caller cancellation for the profile edit.
+ * @returns Connector action metadata after configuration reconciliation.
+ */
+@Remote setMcpActionEnabled(serverName: string, actionName: string, enabled: boolean, signal: AbortSignal): Promise<McpActionServerView[]>
+
+/** Request a fresh connection generation for one configured connector.
+ * @param serverName - Configured connector name.
+ * @param signal - Caller cancellation for the reconnect request.
+ * @returns Redacted connector metadata after the retry attempt or its bounded wait.
+ */
+@Remote reconnectMcpConnector(serverName: string, signal: AbortSignal): Promise<McpActionServerView[]>
 
 /**
  * Merge a patch into one namespace's stored user section.
@@ -146,6 +167,8 @@ Host service backing the generated `ctx.remote.settings` namespace. Every remote
  */
 @Remote async openSettingsDocument(signal: AbortSignal): Promise<SettingsDocumentOpenValue>
 ```
+
+Types: [McpActionServerView](mcp.md)
 
 Source: [`packages/api/settings-controller/src/index.ts`](../../packages/api/settings-controller/src/index.ts)
 

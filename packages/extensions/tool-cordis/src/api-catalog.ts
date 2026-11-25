@@ -684,6 +684,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'visible rows by default, with pinned rows first and creation time as the stable tie-breaker.',
       },
       {
+        signature: '@Remote(\'searchMessages\') async searchMessages(request: BotMessageSearchRequest): Promise<BotMessageSearchValue>',
+        description: 'Search visible messages across the owner\'s direct Bot Sessions.\n\nThe Bot roster is the authorization source: the Session query provider never receives an unrestricted corpus request. The returned sequence is the provider\'s exact matching event sequence so the Client can open the matching Bot transcript without guessing from snippets.',
+        parameters: [{ name: 'request', description: 'Literal message query.' }],
+        returns: 'A bounded owner-scoped page of visible Bot message matches.',
+      },
+      {
         signature: '@Remote(\'listTemplates\') async listTemplates(_request: BotTemplateListRequest): Promise<BotTemplateListValue>',
         description: 'List published Bot configuration snapshots, including revoked rows.',
         parameters: [{ name: '_request', description: 'Empty list request reserved for future cursor paging.' }],
@@ -832,6 +838,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Import private memories, workspace skills, and paused cron routines into an existing Bot.',
         parameters: [{ name: 'request', description: 'Destination Bot, version-one export, and optional preview.' }, { name: 'signal', description: 'Cancellation between durable entries. Retrying the same export preserves completed entries.' }],
         returns: 'Counts for the selected source Bot and names of missing routine skill definitions.',
+      },
+      {
+        signature: '@Remote(\'importGrokConnectedApps\') async importGrokConnectedApps( request: BotGrokConnectedAppImportRequest, signal?: AbortSignal, ): Promise<BotGrokConnectedAppImportValue>',
+        description: 'Preview or apply exact owner-reviewed connected-app mappings from a Grok export.',
+        parameters: [{ name: 'request', description: 'Destination Bot, export labels, reviewed mappings, and optional revision.' }, { name: 'signal', description: 'Optional cancellation signal for the serialized apply.' }],
+        returns: 'Per-source classifications, the reviewed Bot revision, and grant changes made by an apply.',
       },
       {
         signature: '@Remote(\'listMemory\') async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue>',
@@ -1748,6 +1760,31 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Publish the source text, optionally patched, at the destination, then remove the source. Both targets stay locked in canonical order. Identical targets report `FS_SAME_TARGET`; the source guard follows `patchText` and the destination guard follows `writeText`. The two effects are separate: a published destination with a retained source is a final outcome reported through `sourceDeleted: false`.',
         parameters: [{ name: 'source', description: 'the resolved regular source; its line-ending style and mode carry over.' }, { name: 'destination', description: 'the resolved destination within the same provider.' }, { name: 'options', description: 'optional hunks and the source/destination guards; an omitted guard is unconditional.' }, { name: 'signal', description: 'checked before destination staging; the commit then completes both effects.' }, { name: 'sandboxPolicy', description: 'the per-call mode and workspace root both paths run under; a sandboxing backend fences them, the bare backend ignores it. Omit to leave the backend its own default.' }],
         returns: 'the bounded LF source basis, the destination outcome, and the source-removal status.',
+      },
+    ],
+  },
+  {
+    key: 'githubAppAuth',
+    summary: 'Host-only GitHub App device authorization provider.',
+    description: 'Host-only GitHub App device authorization provider.',
+    methods: [
+      {
+        signature: 'async status(): Promise<\'connected\' | \'needs-auth\'>',
+        description: 'Report whether a usable GitHub grant is stored without refreshing it.',
+        parameters: [],
+        returns: '`connected` when access or refresh credentials remain usable.',
+      },
+      {
+        signature: 'async tokenFor(endpoint: URL): Promise<string | undefined>',
+        description: 'Resolve a token only for the official GitHub MCP endpoint, refreshing an expired access token when possible.',
+        parameters: [{ name: 'endpoint', description: 'endpoint that will receive the bearer token.' }],
+        returns: 'the access token for the exact GitHub MCP URL, or `undefined` when signed out or unavailable.',
+      },
+      {
+        signature: 'async disconnect(): Promise<void>',
+        description: 'Cancel active authorization and refresh work, then remove the stored GitHub grant.',
+        parameters: [],
+        returns: 'after local removal and its connection event, if a grant existed.',
       },
     ],
   },
@@ -3239,7 +3276,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'settingsController',
     summary: 'Host service backing the generated `ctx.remote.settings` namespace.',
-    description: 'Host service backing the generated `ctx.remote.settings` namespace. Every remote read uses `redactSecrets: true`, so a `role(\'secret\')` field cannot ride a response. Writes expose the settings service\'s merge, replacement, and path-addressed operations, and classify every provider refusal as `settings/conflict` or `settings/rejected` with the service\'s message.',
+    description: 'Host service backing the generated `ctx.remote.settings` namespace. Configuration reads redact secret fields. Connector reads return discovery metadata. Form writes classify stale revisions and provider refusals separately.',
     methods: [
       {
         signature: '@Remote describe(): SettingsDescribeValue',
@@ -3247,6 +3284,24 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [],
         returns: 'provider writability, local-document presence, and one view per namespace.',
         throws: ['RemoteError when no settings provider is mounted.'],
+      },
+      {
+        signature: '@Remote listMcpActions(): McpActionServerView[]',
+        description: 'List discovered actions for the workspace\'s configured MCP connectors.',
+        parameters: [],
+        returns: 'Redacted connector and action metadata for the owner UI.',
+      },
+      {
+        signature: '@Remote setMcpActionEnabled(serverName: string, actionName: string, enabled: boolean, signal: AbortSignal): Promise<McpActionServerView[]>',
+        description: 'Set whether a discovered connector action is available in this workspace.',
+        parameters: [{ name: 'serverName', description: 'Configured connector name.' }, { name: 'actionName', description: 'Exact raw name from the connector\'s action list.' }, { name: 'enabled', description: 'Desired action availability.' }, { name: 'signal', description: 'Caller cancellation for the profile edit.' }],
+        returns: 'Connector action metadata after configuration reconciliation.',
+      },
+      {
+        signature: '@Remote reconnectMcpConnector(serverName: string, signal: AbortSignal): Promise<McpActionServerView[]>',
+        description: 'Request a fresh connection generation for one configured connector.',
+        parameters: [{ name: 'serverName', description: 'Configured connector name.' }, { name: 'signal', description: 'Caller cancellation for the reconnect request.' }],
+        returns: 'Redacted connector metadata after the retry attempt or its bounded wait.',
       },
       {
         signature: '@Remote update( ns: string, patch: Record<string, JsonValue>, expectedRevision: number | undefined, ): Promise<SettingsNamespaceView>',
@@ -5141,6 +5196,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'target', description: 'the resolved target about to be written.' }, { name: 'actor', description: 'the opaque tool-execution context the decider keys off.' }],
   },
   {
+    name: 'github-app-auth/connection-changed',
+    mode: 'emit',
+    signature: '\'github-app-auth/connection-changed\'(): void',
+    summary: 'GitHub App sign-in, disconnect, or definitive grant invalidation completed.',
+    description: 'GitHub App sign-in, disconnect, or definitive grant invalidation completed. @mode emit',
+    parameters: [],
+  },
+  {
     name: 'goal/activation-changed',
     mode: 'emit',
     signature: '\'goal/activation-changed\'(payload: GoalActivationChanged): void',
@@ -5187,6 +5250,22 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'Waterfall around every streaming model call (retry, replay, routing).',
     description: 'Waterfall around every streaming model call (retry, replay, routing). Bound to the LlmRuntime; call `next()` to reach the resolved adapter\'s stream, or yield your own chunks to short-circuit.',
     parameters: [{ name: 'options', description: 'the full request. A LOOP-built request carries the process-local {@link markAgentLoopRequest} identity and arrives deep-frozen (mutation throws): its content is a pure function of the session log (the reconstructability Agent Note), so listeners read it, never rewrite it. Hand-built calls do not carry that marker; callers own their request inputs and must keep them unchanged until the stream settles.' }],
+  },
+  {
+    name: 'mcp/actions/catalog',
+    mode: 'emit',
+    signature: '\'mcp/actions/catalog\'(accept: (catalog: McpActionCatalog) => void): void',
+    summary: 'Synchronously read action catalogs from eligible loader-owned MCP plugins.',
+    description: 'Synchronously read action catalogs from eligible loader-owned MCP plugins.',
+    parameters: [{ name: 'accept', description: 'callback receiving one server\'s current action catalog.' }],
+  },
+  {
+    name: 'mcp/actions/reconnect',
+    mode: 'emit',
+    signature: '\'mcp/actions/reconnect\'(request: McpActionReconnectRequest): void',
+    summary: 'Ask one loader-owned connector to retire its current generation and reconnect using its current Host-owned authentication.',
+    description: 'Ask one loader-owned connector to retire its current generation and reconnect using its current Host-owned authentication.',
+    parameters: [{ name: 'request', description: 'Exact server and loader entry identity selected by the Host.' }],
   },
   {
     name: 'permission-presets/catalog-changed',
@@ -5913,6 +5992,26 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotEventTrigger {\n    readonly type: \'message\';\n    readonly source: BotEventSource;\n}',
   },
   {
+    name: 'BotGrokConnectedAppImportRequest',
+    declaration: 'export interface BotGrokConnectedAppImportRequest {\n    readonly botId: BotId;\n    readonly document: string;\n    readonly sourceName?: string;\n    readonly mappings: readonly BotGrokConnectedAppMapping[];\n    readonly expectedUpdatedAt?: number;\n    readonly preview?: boolean;\n}',
+  },
+  {
+    name: 'BotGrokConnectedAppImportValue',
+    declaration: 'export interface BotGrokConnectedAppImportValue {\n    readonly updatedAt: number;\n    readonly mappings: readonly BotGrokConnectedAppMappingView[];\n    readonly changedAppIds: readonly string[];\n    readonly catalogAvailable: boolean;\n}',
+  },
+  {
+    name: 'BotGrokConnectedAppMapping',
+    declaration: 'export interface BotGrokConnectedAppMapping {\n    readonly sourceIndex: number;\n    readonly sourceLabel: string;\n    readonly targetServerName: string;\n}',
+  },
+  {
+    name: 'BotGrokConnectedAppMappingView',
+    declaration: 'export interface BotGrokConnectedAppMappingView {\n    readonly sourceIndex: number;\n    readonly sourceLabel: string;\n    readonly resolution: BotGrokConnectedAppResolution;\n    readonly targetServerName?: string;\n    readonly entryId?: string;\n    readonly allowed?: boolean;\n}',
+  },
+  {
+    name: 'BotGrokConnectedAppResolution',
+    declaration: 'export type BotGrokConnectedAppResolution = \'connected\' | \'unconnected\' | \'missing\' | \'ambiguous\' | \'unavailable\' | \'unmapped\';',
+  },
+  {
     name: 'BotGrokHistoryArchive',
     declaration: 'export interface BotGrokHistoryArchive {\n    readonly source: \'grok-bot\';\n    readonly version: 1 | 2;\n    readonly firstCachedSequence: number;\n    readonly messages: readonly BotGrokHistoryMessage[];\n    readonly complete?: false;\n    readonly sources?: readonly BotGrokHistorySource[];\n}',
   },
@@ -6123,6 +6222,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotMessageId',
     declaration: 'export type BotMessageId = MessageId;',
+  },
+  {
+    name: 'BotMessageSearchItem',
+    declaration: 'export interface BotMessageSearchItem {\n    readonly botId: BotId;\n    readonly sessionId: SessionId;\n    readonly seq: SessionSeq;\n    readonly snippet: string;\n}',
+  },
+  {
+    name: 'BotMessageSearchRequest',
+    declaration: 'export interface BotMessageSearchRequest {\n    readonly query: string;\n}',
+  },
+  {
+    name: 'BotMessageSearchValue',
+    declaration: 'export interface BotMessageSearchValue {\n    readonly items: readonly BotMessageSearchItem[];\n    readonly hasMore: boolean;\n}',
   },
   {
     name: 'BotOrganizationUpdateRequest',
@@ -7699,6 +7810,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'MatcherValue',
     declaration: 'export type MatcherValue = string | number | boolean | null | RegExp | readonly (string | number | boolean | null)[];',
+  },
+  {
+    name: 'McpActionCatalog',
+    declaration: 'export interface McpActionCatalog {\n    readonly serverName: string;\n    readonly entryId: string;\n    readonly authKind?: \'github-app\';\n    readonly connected: boolean;\n    readonly actions: readonly {\n        readonly name: string;\n        readonly description?: string;\n        readonly enabled: boolean;\n    }[];\n}',
+  },
+  {
+    name: 'McpActionReconnectRequest',
+    declaration: 'export interface McpActionReconnectRequest {\n    readonly serverName: string;\n    readonly entryId: string;\n    readonly onSettled: (settled: Promise<void>) => void;\n}',
   },
   {
     name: 'McpResourceProvider',

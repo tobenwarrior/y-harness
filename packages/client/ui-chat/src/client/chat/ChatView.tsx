@@ -1,7 +1,7 @@
 // An enclosing `[data-conversation-scroll]` owns scrolling when present;
 // otherwise this view owns it. Each row subscribes to one stable node key.
 
-import { memo, useCallback, useMemo, useRef, useState, type ComponentProps } from 'react'
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import type {
   NodeKey, RenderEntry, RenderMessageImages,
 } from '@yharness/client-ui-conversation/client'
@@ -21,6 +21,7 @@ import { TurnNavigator } from './TurnNavigator.tsx'
 import { BotReplyPending, RunningStatus } from './RunningStatus.tsx'
 import { mergeTurnRailItems } from './turn-rail-items.ts'
 import { useChatScroll } from './use-chat-scroll.ts'
+import { FindInChat } from './FindInChat.tsx'
 import { fileMediaUrl, resolveWorkspacePath } from '@yharness/util-workspace-path'
 import css from './ChatView.module.css'
 
@@ -100,7 +101,7 @@ const ChatNodeList = memo(function ChatNodeList({ entries, useChatGroup, pending
  */
 export function ChatView({
   useSession, useChat, useChatNode, useChatNodeProcess, useChatGroup, useConversation, useSessions, useStore, actions, renderSlot,
-  sessionId, openFile, openSkill, botIcon, openExternalLink, loadOlder, loadThrough,
+  sessionId, openFile, openSkill, botIcon, openExternalLink, loadOlder, loadThrough, registerChatNavigation,
   loadImage, inspectCall, chatScroll, forkAt, fileMentions,
   bot, usePresentation, useProjection, t,
 }: ChatViewSlotProps) {
@@ -226,9 +227,29 @@ export function ChatView({
     submissionId: visibleSubmissions.at(-1)?.requestId ?? null,
     loadedTurns: turnNavigationItems,
   })
+  useLayoutEffect(() => {
+    if (openState !== 'open') return
+    return registerChatNavigation(scroll.navigateToSeq)
+  }, [openState, registerChatNavigation, scroll.navigateToSeq])
+  const contentRevision = bot === undefined ? '' : [
+    hasMore ? 'more' : 'complete',
+    ...turnNavigationItems.map(item => `${item.turn}:${item.anchorKey}:${item.prompt}:${item.response}`),
+  ].join('\u0001')
 
   return (
     <div className={css.frame}>
+      {bot !== undefined && (
+        <FindInChat
+          key={String(sessionId)}
+          sessionId={String(sessionId)}
+          contentRevision={contentRevision}
+          scopeRef={scroll.columnRef}
+          hasMore={hasMore}
+          loadingOlder={loadingOlder}
+          loadOlder={scroll.loadEarlier}
+          t={t}
+        />
+      )}
       {bot === undefined && scroll.initialized && (
         <TurnNavigator
           items={railItems}

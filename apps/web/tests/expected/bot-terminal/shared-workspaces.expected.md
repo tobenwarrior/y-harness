@@ -1,3 +1,13 @@
 - menu:
+  - menuitem "Edit bot profile"
+  - menuitem "Share bot"
+  - menuitem "Manage memories"
+  - menuitem "Manage skills"
+  - menuitem "Manage routines"
+  - menuitem "Find in this chat"
+  - menuitem "Imported Grok chat"
+  - menuitem "Terminal":
+    - img
+    - text: Terminal VPS terminal · Internet disabled
   - menuitem "Private workspace"
   - menuitem "Shared workspace"

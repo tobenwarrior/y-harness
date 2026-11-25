@@ -31,7 +31,7 @@ The native Nous Portal card connects with the public `hermes-cli` device-login c
 
 When available, DeepSeek Account appears first and DeepSeek second in the provider list; third-party providers retain their directory order. On Desktop, a signed-out user can sign in to DeepSeek from the optional account entry in Models.
 
-Open the Models page from the Settings navigation to see every configured provider as a row. A whole-section provider whose key is not configured anywhere renders as its open setup card instead, but only in the first-run posture and only until the user closes that card. Each card kind owns its own open state, so closing one never discards a draft in another.
+Open **Settings → Models** to see subscription and API providers. Provider rows identify the account and show confirmed API key status where applicable. **Edit** opens the provider’s settings. During first-run setup, a whole-section provider without a key opens its setup card until the user closes it. Each card owns its open state, so closing one preserves drafts elsewhere. Compact provider forms give the model ID its own row so both model fields remain readable.
 
 A provider with a stored catalog error remains visible with its diagnostic and edit/delete actions. Provider setup requires a registered settings namespace. If the current profile exposes none, Add model provider stays disabled with an explanation; a pending load has separate feedback, and failed discovery keeps its diagnostic and Retry action. A rejected save leaves the editor open and displays the Host diagnostic.
 

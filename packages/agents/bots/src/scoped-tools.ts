@@ -40,6 +40,7 @@ import type {
 } from '@yharness/tools'
 import type { BotNativeToolHost } from './native-tools.ts'
 import type { BotConnectedAppAccess } from './types.ts'
+import { createAppConnectionTool } from './app-connection-tool.ts'
 
 const BOT_ENTRY_SCHEMA = {
   type: 'object',
@@ -512,9 +513,11 @@ export function installBotCollaborationTools(
           }))
         },
       })))
+      const requestAppConnection = createAppConnectionTool(scope)
+      if (requestAppConnection !== undefined) register(scope.tools.register(requestAppConnection))
     }
 
-    for (const action of manage === undefined ? [] : ['create', 'edit'] as const) {
+    if (manage !== undefined) for (const action of ['create', 'edit'] as const) {
       register(scope.tools.register(defineTool({
         name: action === 'create' ? 'create_bot' : 'edit_bot_profile',
         description: action === 'create' ? 'Create a persistent Bot when the user requests it.'
@@ -529,7 +532,6 @@ export function installBotCollaborationTools(
           state: { type: 'string' }, pictureError: { type: 'string' },
         } } as const),
         async execute(args, exec) {
-          if (manage === undefined) throw new Error('Bot management is unavailable.')
           if (exec.agent === undefined) throw new Error('Bot management requires a live Bot.')
           const client = await bind()
           const result = await manage(action, args, {

@@ -55,6 +55,26 @@ function event(inventory: PersistenceSchemaInventory, name = 'test/record'): str
   return root.digest
 }
 
+// Run the repository traversal before fixture cases build their TypeScript Programs.
+// This traversal checks the whole repository and needs a longer budget on shared CI runners.
+describe('repository-wide persistence source type extraction', () => {
+  it('includes every real repository event and fingerprints every reachable node', { timeout: 180_000 }, () => {
+    const root = resolve(import.meta.dirname, '..')
+    const model = extractPersistenceSchema(root)
+    expect(model.roots.filter(root => root.kind === 'event').map(root => root.event).sort())
+      .toEqual(collectLogEvents(root).map(event => event.name).sort())
+    expect(model.roots.some(root => root.kind === 'header')).toBe(true)
+    expect(model.roots.some(root => root.kind === 'envelope')).toBe(true)
+    const digests = new Set(model.types.map(type => type.digest))
+    for (const root of model.roots) {
+      expect(schemaDigest(root.schema)).toBe(root.digest)
+      for (let node = 0; node < root.schema.nodes.length; node++) {
+        expect(digests.has(schemaDigest(canonicalizeSchema(root.schema.nodes, node)))).toBe(true)
+      }
+    }
+  })
+})
+
 describe('persistent source type extraction', () => {
   it('keeps authored names and anonymous declaration locations without synthesized traversal names', () => {
     const root = fixture('interface Section { text: string }\nexport interface Payload { inserted: { source: { kind: "hooks-codex"; sections: Section[] } }[] }')
@@ -316,22 +336,6 @@ interface SessionEventMap {
     expect(() => extractPersistenceSchema(fixture(source))).toThrow(error)
   })
 
-  // Repository-wide TypeScript extraction and reachable-node hashing use the Windows coverage test budget.
-  it('includes every real repository event and fingerprints every reachable node', { timeout: 90_000 }, () => {
-    const root = resolve(import.meta.dirname, '..')
-    const model = extractPersistenceSchema(root)
-    expect(model.roots.filter(root => root.kind === 'event').map(root => root.event).sort())
-      .toEqual(collectLogEvents(root).map(event => event.name).sort())
-    expect(model.roots.some(root => root.kind === 'header')).toBe(true)
-    expect(model.roots.some(root => root.kind === 'envelope')).toBe(true)
-    const digests = new Set(model.types.map(type => type.digest))
-    for (const root of model.roots) {
-      expect(schemaDigest(root.schema)).toBe(root.digest)
-      for (let node = 0; node < root.schema.nodes.length; node++) {
-        expect(digests.has(schemaDigest(canonicalizeSchema(root.schema.nodes, node)))).toBe(true)
-      }
-    }
-  })
 })
 
 describe('explicitly reserved JSON properties', () => {

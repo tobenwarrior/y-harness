@@ -9,6 +9,9 @@
   ],
   "references": [
     {
+      "path": "../../api/account-controller"
+    },
+    {
       "path": "../../util/brand"
     },
     {
@@ -45,7 +48,13 @@
       "path": "../ui-layout"
     },
     {
+      "path": "../ui-chat/tsconfig.client.json"
+    },
+    {
       "path": "../ui-conversation/tsconfig.client.json"
+    },
+    {
+      "path": "../ui-chat/tsconfig.client.json"
     },
     {
       "path": "../ui-input-trigger"

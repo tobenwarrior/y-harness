@@ -14,5 +14,6 @@ export type {
   BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotIdentity, BotOrganizationPatch,
   BotProfileUpdate, BotStatus, BotSummary,
   BotMemoryManagerActions, BotMemorySummary, BotRoutineHistory, BotRoutineManagerActions, BotTemplateActions,
-  BotTemplateState, BotTemplateSummary, BotWorkspaceProps,
+  BotTemplateState, BotTemplateSummary, BotWorkspaceProps, GitHubAppSignInActions, GitHubAppSignInAttempt,
+  GitHubAppSignInAttemptId, GitHubAppSignInView,
 } from './types.ts'

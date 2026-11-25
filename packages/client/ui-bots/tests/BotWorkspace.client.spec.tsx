@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AttachmentId } from '@yharness/attachment'
+import { brandString } from '@yharness/brand'
 import { BotId, type BotView } from '@yharness/bots'
 import { ScheduleId } from '@yharness/schedule'
 import { SessionId } from '@yharness/session'
@@ -22,6 +23,7 @@ import { createSharedBotsClient, type SharedBotsClient } from '../src/client/sha
 import type {
   BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotMemorySummary, BotRoutineHistory, BotSummary,
   BotSkillManagerActions, BotSkillPolicy, BotSkillSummary, BotTemplateActions, BotTemplateState, BotWorkspaceProps,
+  GitHubAppSignInActions, GitHubAppSignInAttemptId, GitHubAppSignInView, McpActionServerView,
 } from '../src/client/types.ts'
 import { BotSkillPolicyConflictError } from '../src/client/types.ts'
 
@@ -31,6 +33,11 @@ afterEach(() => {
 })
 
 const t = makeTranslate(en)
+
+function chooseBotOption(name: string, menu: string = en.botMenu): void {
+  fireEvent.click(screen.getByRole('button', { name: menu }))
+  fireEvent.click(screen.getByRole('menuitem', { name }))
+}
 
 function memoryController(memories: readonly BotMemorySummary[]): BotWorkspaceController {
   const remote: BotWorkspaceRemote = {
@@ -276,7 +283,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span>Persistent session surface</span></BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.change(screen.getByRole('textbox', { name: 'What it does' }), { target: { value: 'Source scout updated' } })
     fireEvent.change(screen.getByRole('textbox', { name: 'Instructions' }), { target: { value: 'Lead with evidence.' } })
     fireEvent.change(screen.getByRole('textbox', { name: 'Specialties' }), { target: { value: 'chat, research, release-review' } })
@@ -302,7 +309,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.change(screen.getByRole('textbox', { name: 'Instructions' }), { target: { value: 'Keep the draft.' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
 
@@ -324,7 +331,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.change(screen.getByRole('textbox', { name: 'Instructions' }), { target: { value: 'Keep my newer draft.' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
 
@@ -344,7 +351,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
     await waitFor(() => { expect(updateProfile).toHaveBeenCalledOnce() })
 
@@ -356,7 +363,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Edit bot profile' })).toBeNull() })
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     expect(screen.getByRole('button', { name: /Save profile|Saving/ })).not.toHaveProperty('disabled', true)
 
     save.resolve(undefined)
@@ -375,7 +382,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
     await waitFor(() => { expect(updateProfile).toHaveBeenCalledOnce() })
 
@@ -387,7 +394,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Edit bot profile' })).toBeNull() })
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     save.reject(new Error('offline'))
 
     await waitFor(() => { expect(screen.getByRole('dialog', { name: 'Edit bot profile' })).toBeTruthy() })
@@ -474,7 +481,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage routines' }))
+    chooseBotOption('Manage routines')
     const routineList = await screen.findByRole('list', { name: 'Bot routines' })
     const row = within(routineList).getAllByRole('button')[0]!
     row.focus()
@@ -543,7 +550,7 @@ describe('Bot roster and detail', () => {
       history: vi.fn(async () => ({ kind: 'event' as const, id: 'event-review', deliveries: [], results: [] })),
     }
     render(<BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} routineManager={actions}><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Manage routines' }))
+    chooseBotOption('Manage routines')
     expect(await screen.findByRole('dialog', { name: 'Bot routines' })).toBeTruthy()
   })
 
@@ -1524,7 +1531,7 @@ describe('Bot roster and detail', () => {
   it('renames the selected bot from its conversation header', async () => {
     const rename = vi.fn(async () => {})
     render(<BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} onRename={rename}><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Rename bot' }))
+    chooseBotOption('Rename bot')
     fireEvent.change(screen.getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Market scout' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }))
     await waitFor(() => { expect(rename).toHaveBeenCalledWith('research', 'Market scout') })
@@ -1533,7 +1540,7 @@ describe('Bot roster and detail', () => {
   it('keeps the rename dialog open when saving fails', async () => {
     const rename = vi.fn(async () => { throw new Error('offline') })
     render(<BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} onRename={rename}><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Rename bot' }))
+    chooseBotOption('Rename bot')
     fireEvent.change(screen.getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Market scout' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }))
     expect((await screen.findByRole('alert')).textContent).toContain('The name could not be saved')
@@ -1588,7 +1595,7 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    chooseBotOption('Bot templates', en.rosterMenu)
     expect(screen.getByRole('dialog', { name: 'Bot templates' })).toBeTruthy()
     expect(screen.getByText('Release partner')).toBeTruthy()
     fireEvent.click(screen.getAllByRole('button', { name: 'Share' })[0]!)
@@ -1620,7 +1627,7 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    chooseBotOption('Bot templates', en.rosterMenu)
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Template share code' }), { key: 'Enter' })
 
     expect(actions.previewTemplate).not.toHaveBeenCalled()
@@ -1654,7 +1661,7 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    chooseBotOption('Bot templates', en.rosterMenu)
     expect(screen.getByText('issuer-fingerprint-123')).toBeTruthy()
     expect(screen.getByText('artifact-fingerprint-456')).toBeTruthy()
     expect(screen.getByText('Summarize evidence before recommending action.')).toBeTruthy()
@@ -1689,7 +1696,7 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    chooseBotOption('Bot templates', en.rosterMenu)
     const importButton = screen.getByRole('button', { name: 'Approve and create Bot' })
     expect(importButton).toHaveProperty('disabled', true)
     expect(screen.getByText('Unavailable on this Host')).toBeTruthy()
@@ -1775,7 +1782,7 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Join a shared bot' }))
+    chooseBotOption('Join a shared bot', en.rosterMenu)
 
     expect(expandSidebar).toHaveBeenCalledOnce()
     expect(await screen.findByRole('dialog', { name: 'Shared with you' })).toBeTruthy()
@@ -1796,13 +1803,14 @@ describe('Bot roster and detail', () => {
     />)
 
     await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledOnce() })
-    const ownerButton = screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement
+    fireEvent.click(screen.getByRole('button', { name: en.rosterMenu }))
+    const ownerButton = screen.getByRole('menuitem', { name: 'Create a shared group' }) as HTMLButtonElement
     expect(ownerButton.disabled).toBe(true)
-    expect(ownerButton.getAttribute('title')).toBe('Shared owner setup is unavailable in this connection.')
+    expect(screen.getByText(en.sharedOwnerSetupUnavailable)).toBeTruthy()
 
     window.dispatchEvent(new Event('focus'))
     await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledTimes(2) })
-    expect(screen.getByRole('button', { name: 'Create a shared group' })).toHaveProperty('disabled', false)
+    expect(screen.getByRole('menuitem', { name: 'Create a shared group' })).toHaveProperty('disabled', false)
     window.dispatchEvent(new Event('focus'))
     expect(getOwnerCapability).toHaveBeenCalledTimes(2)
   })
@@ -1852,12 +1860,13 @@ describe('Bot roster and detail', () => {
     />)
 
     await waitFor(() => { expect(capabilityCalls).toBe(1) })
-    expect(screen.getByRole('button', { name: 'Create a shared group' })).toHaveProperty('disabled', true)
+    fireEvent.click(screen.getByRole('button', { name: en.rosterMenu }))
+    expect(screen.getByRole('menuitem', { name: 'Create a shared group' })).toHaveProperty('disabled', true)
     if (onGeneration === undefined) throw new Error('Connection generation listener was not registered')
     await act(async () => { onGeneration?.() })
     await waitFor(() => {
       expect(capabilityCalls).toBe(2)
-      expect(screen.getByRole('button', { name: 'Create a shared group' })).toHaveProperty('disabled', false)
+      expect(screen.getByRole('menuitem', { name: 'Create a shared group' })).toHaveProperty('disabled', false)
     })
     view.unmount()
     client.dispose?.()
@@ -1895,7 +1904,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     expect(await screen.findByRole('dialog', { name: 'Bot memory' })).toBeTruthy()
     expect(actions.list).toHaveBeenCalledWith('research')
     expect(screen.queryByRole('complementary', { name: 'Bot workspace' })).toBeNull()
@@ -1917,7 +1926,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const dialog = await screen.findByRole('dialog', { name: 'Bot memory' })
     fireEvent.click(within(dialog).getAllByRole('button', { name: /^Close$/ }).at(-1)!)
 
@@ -1939,7 +1948,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const row = await screen.findByRole('listitem', { name: 'memory-controller' })
     fireEvent.click(within(row).getByRole('button', { name: 'Edit memory memory-controller' }))
     const editor = within(row).getByRole('textbox', { name: 'Memory text' })
@@ -1978,7 +1987,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const row = await screen.findByRole('listitem', { name: 'memory-controller' })
     fireEvent.click(within(row).getByRole('button', { name: 'Remove memory memory-controller' }))
     expect(screen.getByRole('dialog', { name: 'Remove memory?' })).toBeTruthy()
@@ -2018,7 +2027,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const firstRow = await screen.findByRole('listitem', { name: 'memory-first' })
     fireEvent.click(within(firstRow).getByRole('button', { name: 'Edit memory memory-first' }))
     fireEvent.change(within(firstRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated first memory.' } })
@@ -2029,7 +2038,7 @@ describe('Bot roster and detail', () => {
     fireEvent.click(within(dialog).getAllByRole('button', { name: /^Close$/ }).at(-1)!)
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Bot memory' })).toBeNull() })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     await screen.findByRole('dialog', { name: 'Bot memory' })
     const secondRow = screen.getByRole('listitem', { name: 'memory-second' })
     fireEvent.click(within(secondRow).getByRole('button', { name: 'Edit memory memory-second' }))
@@ -2061,7 +2070,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const researchRow = await screen.findByRole('listitem', { name: 'memory-shared' })
     fireEvent.click(within(researchRow).getByRole('button', { name: 'Edit memory memory-shared' }))
     fireEvent.change(within(researchRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated research note' } })
@@ -2103,7 +2112,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const researchRow = await screen.findByRole('listitem', { name: 'memory-shared' })
     fireEvent.click(within(researchRow).getByRole('button', { name: 'Edit memory memory-shared' }))
     fireEvent.change(within(researchRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated research note' } })
@@ -2146,7 +2155,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const researchRow = await screen.findByRole('listitem', { name: 'memory-shared' })
     fireEvent.click(within(researchRow).getByRole('button', { name: 'Remove memory memory-shared' }))
     fireEvent.click(screen.getByRole('button', { name: 'Remove memory' }))
@@ -2199,7 +2208,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    chooseBotOption('Manage skills')
     const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
     expect(actions.list).toHaveBeenCalledWith('research')
     fireEvent.click(within(dialog).getByRole('radio', { name: 'Only selected skills' }))
@@ -2227,7 +2236,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    chooseBotOption('Manage skills')
     const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
     fireEvent.click(within(dialog).getByRole('radio', { name: 'Only selected skills' }))
     const checkbox = within(dialog).getByRole('checkbox', { name: 'Allow code-review' })
@@ -2276,7 +2285,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    chooseBotOption('Manage skills')
     const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
     const denied = within(dialog).getByRole('checkbox', { name: 'Allow code-review' }) as HTMLInputElement
     expect(denied.checked).toBe(false)
@@ -2316,7 +2325,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    chooseBotOption('Manage skills')
     const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save skills' }))
     await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('changed elsewhere') })
@@ -2347,7 +2356,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    chooseBotOption('Manage skills')
     expect(await screen.findByRole('dialog', { name: 'Bot skills' })).toBeTruthy()
     view.rerender(<BotDetail
       bot={bots[1]}
@@ -2997,10 +3006,570 @@ describe('Bot roster and detail', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
     await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledWith('release') })
     expect(dialog.querySelector('[data-app-id="github"]')).not.toBeNull()
-    expect(within(dialog).getByText('Access not allowed')).toBeTruthy()
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Grant access to GitHub' }))
+    expect(within(dialog).getByText('Tools from GitHub')).toBeTruthy()
+    const grant = within(dialog).getByRole('button', { name: 'Grant access to GitHub' })
+    expect(grant.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(grant)
     await waitFor(() => { expect(onSetConnectedAppAccess).toHaveBeenCalledWith('release', 'github', true) })
-    expect(within(dialog).getByText('Access allowed')).toBeTruthy()
+    expect(within(dialog).getByRole('button', { name: 'Revoke access to GitHub' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('opens workspace-wide connector actions even when the selected Bot has no app grants', async () => {
+    const initial: McpActionServerView = {
+      serverName: 'Workspace Fixture', connected: true, editable: true,
+      actions: [
+        { name: 'inspect_record', description: 'Read one record.', enabled: false },
+        { name: 'publish_record', enabled: true },
+      ],
+    }
+    const updated: McpActionServerView = {
+      ...initial,
+      actions: initial.actions.map(action => action.name === 'inspect_record' ? { ...action, enabled: true } : action),
+    }
+    const loadMcpActions = vi.fn().mockResolvedValue([initial])
+    const setMcpActionEnabled = vi.fn().mockResolvedValue([updated])
+    const onSetConnectedAppAccess = vi.fn().mockResolvedValue(undefined)
+    renderSplitWorkspace({
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess,
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: setMcpActionEnabled,
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Manage actions' })).toBeTruthy() })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    const group = await within(dialog).findByRole('group', { name: 'Workspace Fixture' })
+    const inspect = within(group).getByRole('switch', { name: 'inspect_record' })
+    expect(inspect.getAttribute('aria-checked')).toBe('false')
+    expect(within(dialog).getByText('Choose which connector actions are available in this workspace.')).toBeTruthy()
+
+    fireEvent.click(inspect)
+    await waitFor(() => {
+      expect(setMcpActionEnabled).toHaveBeenCalledWith('Workspace Fixture', 'inspect_record', true)
+      expect(within(group).getByRole('switch', { name: 'inspect_record' }).getAttribute('aria-checked')).toBe('true')
+    })
+    expect(loadMcpActions).toHaveBeenCalledOnce()
+    expect(onSetConnectedAppAccess).not.toHaveBeenCalled()
+  })
+
+  it('ignores a connector action load failure from a closed dialog', async () => {
+    const firstLoad = Promise.withResolvers<readonly McpActionServerView[]>()
+    const currentLoad = Promise.withResolvers<readonly McpActionServerView[]>()
+    const loadMcpActions = vi.fn()
+      .mockReturnValueOnce(firstLoad.promise)
+      .mockReturnValueOnce(currentLoad.promise)
+    renderSplitWorkspace({
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: vi.fn().mockResolvedValue([]),
+    })
+
+    openConnectedAppsMenu()
+    let dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }))
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull() })
+
+    openConnectedAppsMenu()
+    dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    currentLoad.resolve([])
+    await within(dialog).findByText('No connector actions available')
+    firstLoad.reject(new Error('late action load'))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(within(dialog).queryByRole('alert')).toBeNull()
+  })
+
+  it('retains connector actions on save failure and fences a stale action load', async () => {
+    const firstLoad = Promise.withResolvers<readonly McpActionServerView[]>()
+    const staleReload = Promise.withResolvers<readonly McpActionServerView[]>()
+    const currentLoad = Promise.withResolvers<readonly McpActionServerView[]>()
+    const stale: McpActionServerView = {
+      serverName: 'Workspace Fixture', connected: true, editable: true,
+      actions: [{ name: 'stale_action', enabled: false }],
+    }
+    const current: McpActionServerView = {
+      serverName: 'Workspace Fixture', connected: true, editable: true,
+      actions: [{ name: 'current_action', enabled: false }],
+    }
+    const loadMcpActions = vi.fn()
+      .mockReturnValueOnce(firstLoad.promise)
+      .mockReturnValueOnce(staleReload.promise)
+      .mockReturnValueOnce(currentLoad.promise)
+    const setMcpActionEnabled = vi.fn().mockRejectedValue(new Error('action unavailable'))
+    renderSplitWorkspace({
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: setMcpActionEnabled,
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    firstLoad.resolve([stale])
+    const staleGroup = await within(dialog).findByRole('group', { name: 'Workspace Fixture' })
+    fireEvent.click(within(staleGroup).getByRole('switch', { name: 'stale_action' }))
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('action unavailable')
+    expect(within(staleGroup).getByRole('switch', { name: 'stale_action' }).getAttribute('aria-checked')).toBe('false')
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }))
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull() })
+    openConnectedAppsMenu()
+    const pendingDialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(pendingDialog).getByRole('button', { name: 'Manage actions' }))
+    fireEvent.click(within(pendingDialog).getByRole('button', { name: 'Done' }))
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull() })
+
+    openConnectedAppsMenu()
+    const reopened = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(reopened).getByRole('button', { name: 'Manage actions' }))
+    currentLoad.resolve([current])
+    await within(reopened).findByRole('switch', { name: 'current_action' })
+    staleReload.resolve([stale])
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(within(reopened).queryByRole('switch', { name: 'stale_action' })).toBeNull()
+  })
+
+  it('shows connector action loading, empty, retry, and locked states', async () => {
+    const empty: readonly McpActionServerView[] = []
+    const catalog: readonly McpActionServerView[] = [
+      {
+        serverName: ' ', connected: false, editable: true,
+        actions: [{ name: '', description: 'Offline detail', enabled: false }],
+      },
+      {
+        serverName: 'Connected but locked', connected: true, editable: false,
+        actions: [{ name: 'locked_action', enabled: true }],
+      },
+      { serverName: 'Empty connector', connected: true, editable: true, actions: [] },
+      {
+        serverName: 'Editable connector', connected: true, editable: true,
+        actions: [{ name: 'save_me', enabled: false }],
+      },
+    ]
+    const updated = catalog.map(server => server.serverName === 'Editable connector'
+      ? { ...server, actions: server.actions.map(action => ({ ...action, enabled: true })) }
+      : server)
+    const pendingSave = Promise.withResolvers<readonly McpActionServerView[]>()
+    const loadMcpActions = vi.fn()
+      .mockRejectedValueOnce(new Error('connector unavailable'))
+      .mockRejectedValueOnce('offline')
+      .mockResolvedValueOnce(empty)
+      .mockResolvedValueOnce(catalog)
+    const setMcpActionEnabled = vi.fn()
+      .mockReturnValueOnce(pendingSave.promise)
+      .mockRejectedValueOnce('save offline')
+    renderSplitWorkspace({
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: setMcpActionEnabled,
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('connector unavailable')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Try again' }))
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('Connector actions could not be loaded')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Try again' }))
+    expect(await within(dialog).findByText('No connector actions available')).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Back to connected apps' }))
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    const offline = await within(dialog).findByRole('group', { name: 'Unnamed connector' })
+    const offlineAction = within(offline).getByRole('switch', { name: 'Unnamed action' })
+    expect(offlineAction.getAttribute('disabled')).toBe('')
+    expect(offlineAction.getAttribute('title')).toBe('Unavailable while the connector is offline')
+    expect(within(offline).getByText('Offline detail')).toBeTruthy()
+    fireEvent.click(offlineAction)
+    expect(within(dialog).getByRole('group', { name: 'Connected but locked' })).toBeTruthy()
+    const locked = within(dialog).getByRole('switch', { name: 'locked_action' })
+    expect(locked.getAttribute('disabled')).toBe('')
+    expect(locked.getAttribute('title')).toBe('Managed by the Host')
+    fireEvent.click(locked)
+    expect(within(dialog).getByText('No actions discovered yet.')).toBeTruthy()
+    const editable = within(dialog).getByRole('switch', { name: 'save_me' })
+
+    fireEvent.click(editable)
+    expect(editable.getAttribute('disabled')).toBe('')
+    pendingSave.resolve(updated)
+    await waitFor(() => { expect(within(dialog).getByRole('switch', { name: 'save_me' }).getAttribute('aria-checked')).toBe('true') })
+
+    fireEvent.click(within(dialog).getByRole('switch', { name: 'save_me' }))
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('That action change could not be saved')
+    expect(within(dialog).queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it('opens connector actions when no per-Bot app grant callbacks are present', async () => {
+    const loadMcpActions = vi.fn().mockResolvedValue([])
+    const setMcpActionEnabled = vi.fn().mockResolvedValue([])
+    renderSplitWorkspace({ onLoadMcpActions: loadMcpActions, onSetMcpActionEnabled: setMcpActionEnabled })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    expect(await within(dialog).findByText('No connector actions available')).toBeTruthy()
+    expect(loadMcpActions).toHaveBeenCalledOnce()
+  })
+
+  it('offers an exact reconnect action for an offline connector', async () => {
+    const offline: McpActionServerView = {
+      serverName: 'Workspace Fixture', connected: false, editable: false,
+      actions: [{ name: 'inspect_record', enabled: true }],
+    }
+    const online: McpActionServerView = {
+      ...offline, connected: true, editable: true,
+    }
+    const loadMcpActions = vi.fn().mockResolvedValue([offline])
+    const reconnectMcpConnector = vi.fn().mockResolvedValue([online])
+    renderSplitWorkspace({
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: vi.fn().mockResolvedValue([online]),
+      onReconnectMcpConnector: reconnectMcpConnector,
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    const group = await within(dialog).findByRole('group', { name: 'Workspace Fixture' })
+    fireEvent.click(within(group).getByRole('button', { name: 'Reconnect' }))
+    await waitFor(() => {
+      expect(reconnectMcpConnector).toHaveBeenCalledWith('Workspace Fixture')
+      expect(within(dialog).getByText('Connected')).toBeTruthy()
+    })
+    expect(within(dialog).getByRole('switch', { name: 'inspect_record' }).getAttribute('disabled')).toBeNull()
+  })
+
+  it('shows a reconnect failure without losing the connector catalog', async () => {
+    const pending = Promise.withResolvers<readonly McpActionServerView[]>()
+    const offline: McpActionServerView = {
+      serverName: 'Workspace Fixture', connected: false, editable: false,
+      actions: [{ name: 'inspect_record', enabled: true }],
+    }
+    const loadMcpActions = vi.fn().mockResolvedValue([offline])
+    const reconnectMcpConnector = vi.fn()
+      .mockReturnValueOnce(pending.promise)
+      .mockRejectedValueOnce('connector unavailable')
+    renderSplitWorkspace({
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: vi.fn().mockResolvedValue([offline]),
+      onReconnectMcpConnector: reconnectMcpConnector,
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    const group = await within(dialog).findByRole('group', { name: 'Workspace Fixture' })
+    fireEvent.click(within(group).getByRole('button', { name: 'Reconnect' }))
+    await waitFor(() => {
+      const reconnectButton = within(group).getByRole('button', { name: 'Reconnecting…' })
+      expect(reconnectButton.getAttribute('disabled')).not.toBeNull()
+    })
+    pending.reject(new Error('connector unavailable'))
+    await waitFor(() => {
+      expect(reconnectMcpConnector).toHaveBeenCalledWith('Workspace Fixture')
+      expect(within(dialog).getByRole('alert').textContent).toContain('connector unavailable')
+    })
+    fireEvent.click(within(group).getByRole('button', { name: 'Reconnect' }))
+    await waitFor(() => {
+      expect(reconnectMcpConnector).toHaveBeenCalledTimes(2)
+      expect(within(dialog).getByRole('alert').textContent).toContain('The connector could not be reconnected. Try again.')
+    })
+  })
+
+  it('fences connector action saves after the dialog closes', async () => {
+    const firstSave = Promise.withResolvers<readonly McpActionServerView[]>()
+    const secondSave = Promise.withResolvers<readonly McpActionServerView[]>()
+    const server: McpActionServerView = {
+      serverName: 'Workspace Fixture', connected: true, editable: true,
+      actions: [{ name: 'inspect_record', enabled: false }],
+    }
+    const loadMcpActions = vi.fn().mockResolvedValue([server])
+    const setMcpActionEnabled = vi.fn()
+      .mockReturnValueOnce(firstSave.promise)
+      .mockReturnValueOnce(secondSave.promise)
+    renderSplitWorkspace({
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: setMcpActionEnabled,
+    })
+
+    openConnectedAppsMenu()
+    let dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    fireEvent.click(await within(dialog).findByRole('switch', { name: 'inspect_record' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull() })
+    firstSave.resolve([server])
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    openConnectedAppsMenu()
+    dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    fireEvent.click(await within(dialog).findByRole('switch', { name: 'inspect_record' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull() })
+    secondSave.reject(new Error('late failure'))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(setMcpActionEnabled).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores an action retry after its callbacks are removed', async () => {
+    const onLoadConnectedApps = vi.fn().mockResolvedValue([])
+    const onSetConnectedAppAccess = vi.fn().mockResolvedValue(undefined)
+    const loadMcpActions = vi.fn().mockRejectedValue(new Error('connector unavailable'))
+    const setMcpActionEnabled = vi.fn().mockResolvedValue([])
+    const view = renderSplitWorkspace({
+      onLoadConnectedApps,
+      onSetConnectedAppAccess,
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: setMcpActionEnabled,
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    await within(dialog).findByRole('alert')
+    view.rerender(<>
+      <BotRoster
+        bots={bots}
+        selectedBotId="research"
+        onSelectBot={vi.fn()}
+        onCreateBot={vi.fn()}
+        onLoadConnectedApps={onLoadConnectedApps}
+        onSetConnectedAppAccess={onSetConnectedAppAccess}
+        t={t}
+      />
+      <BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t}>
+        <p>Persistent session surface</p>
+      </BotDetail>
+    </>)
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Try again' }))
+    expect(loadMcpActions).toHaveBeenCalledOnce()
+  })
+
+  it('ignores an action toggle after its save callback is removed', async () => {
+    const onLoadConnectedApps = vi.fn().mockResolvedValue([])
+    const onSetConnectedAppAccess = vi.fn().mockResolvedValue(undefined)
+    const loadMcpActions = vi.fn().mockResolvedValue([{
+      serverName: 'Workspace Fixture', connected: true, editable: true,
+      actions: [{ name: 'inspect_record', enabled: false }],
+    } satisfies McpActionServerView])
+    const setMcpActionEnabled = vi.fn().mockResolvedValue([])
+    const view = renderSplitWorkspace({
+      onLoadConnectedApps,
+      onSetConnectedAppAccess,
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: setMcpActionEnabled,
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    const action = await within(dialog).findByRole('switch', { name: 'inspect_record' })
+    view.rerender(<>
+      <BotRoster
+        bots={bots}
+        selectedBotId="research"
+        onSelectBot={vi.fn()}
+        onCreateBot={vi.fn()}
+        onLoadConnectedApps={onLoadConnectedApps}
+        onSetConnectedAppAccess={onSetConnectedAppAccess}
+        onLoadMcpActions={loadMcpActions}
+        t={t}
+      />
+      <BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t}>
+        <p>Persistent session surface</p>
+      </BotDetail>
+    </>)
+    fireEvent.click(action)
+    expect(action.getAttribute('aria-checked')).toBe('false')
+    expect(setMcpActionEnabled).not.toHaveBeenCalled()
+  })
+
+  it('keeps the GitHub account flow separate from Bot app grants', async () => {
+    const attemptId = brandString<GitHubAppSignInAttemptId>('github-attempt')
+    const start = vi.fn<GitHubAppSignInActions['startGitHubAppSignIn']>().mockResolvedValue({
+      status: 'needs-auth', attempt: { id: attemptId, phase: 'waiting', url: 'https://github.com/login/device', code: 'ABCD-EFGH' },
+    })
+    const cancel = vi.fn<GitHubAppSignInActions['cancelGitHubAppSignIn']>().mockResolvedValue({ status: 'needs-auth', attempt: null })
+    const actions: GitHubAppSignInActions = {
+      getGitHubAppSignIn: vi.fn().mockResolvedValue({ status: 'needs-auth', attempt: null }),
+      startGitHubAppSignIn: start,
+      cancelGitHubAppSignIn: cancel,
+      disconnectGitHubApp: vi.fn().mockResolvedValue({ status: 'needs-auth', attempt: null }),
+    }
+    renderSplitWorkspace({
+      githubAppSignIn: actions,
+      onLoadConnectedApps: vi.fn().mockResolvedValue([{ id: 'github', name: 'GitHub', allowed: false }]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Connect GitHub' })).toBeTruthy() })
+    expect(within(dialog).getByText('GitHub account')).toBeTruthy()
+    expect(within(dialog).getByRole('button', { name: 'Grant access to GitHub' })).toBeTruthy()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect GitHub' }))
+    await waitFor(() => { expect(start).toHaveBeenCalledOnce() })
+    expect(within(dialog).getByText('ABCD-EFGH')).toBeTruthy()
+    expect(within(dialog).getByRole('link', { name: 'Open GitHub' }).getAttribute('href')).toBe('https://github.com/login/device')
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel sign-in' }))
+    await waitFor(() => { expect(cancel).toHaveBeenCalledWith(attemptId) })
+    await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Connect GitHub' })).toBeTruthy() })
+  })
+
+  it('hides the GitHub account row when the Host has no GitHub capability', async () => {
+    renderSplitWorkspace({
+      githubAppSignIn: {
+        getGitHubAppSignIn: vi.fn().mockResolvedValue({ status: 'unavailable', attempt: null }),
+        startGitHubAppSignIn: vi.fn(),
+        cancelGitHubAppSignIn: vi.fn(),
+        disconnectGitHubApp: vi.fn(),
+      },
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(within(dialog).queryByText('GitHub account')).toBeNull() })
+    expect(within(dialog).getByText('No connected apps yet')).toBeTruthy()
+  })
+
+  it('does not overlap GitHub state polls while a device attempt is active', async () => {
+    const attemptId = brandString<GitHubAppSignInAttemptId>('github-poll-attempt')
+    const waiting = { status: 'needs-auth' as const, attempt: { id: attemptId, phase: 'waiting' as const, url: 'https://github.com/login/device', code: 'POLL-TEST' } }
+    const pending = Promise.withResolvers<typeof waiting>()
+    const get = vi.fn().mockResolvedValue({ status: 'needs-auth' as const, attempt: null })
+    const actions: GitHubAppSignInActions = {
+      getGitHubAppSignIn: get,
+      startGitHubAppSignIn: vi.fn().mockResolvedValue(waiting),
+      cancelGitHubAppSignIn: vi.fn().mockResolvedValue({ status: 'needs-auth' as const, attempt: null }),
+      disconnectGitHubApp: vi.fn().mockResolvedValue({ status: 'needs-auth' as const, attempt: null }),
+    }
+    renderSplitWorkspace({
+      githubAppSignIn: actions,
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    })
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(get).toHaveBeenCalledOnce() })
+
+    vi.useFakeTimers()
+    try {
+      get.mockReturnValueOnce(pending.promise)
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Connect GitHub' }))
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
+      await act(async () => { vi.advanceTimersByTime(2000); await Promise.resolve() })
+      expect(get).toHaveBeenCalledTimes(2)
+      await act(async () => { vi.advanceTimersByTime(2000); await Promise.resolve() })
+      expect(get).toHaveBeenCalledTimes(2)
+      pending.resolve(waiting)
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    } finally {
+      cleanup()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not let an in-flight poll overwrite a newer cancel result', async () => {
+    const attemptId = brandString<GitHubAppSignInAttemptId>('github-race-attempt')
+    const waiting: GitHubAppSignInView = {
+      status: 'needs-auth',
+      attempt: { id: attemptId, phase: 'waiting', url: 'https://github.com/login/device', code: 'RACE-CODE' },
+    }
+    const pendingPoll = Promise.withResolvers<GitHubAppSignInView>()
+    const get = vi.fn<GitHubAppSignInActions['getGitHubAppSignIn']>()
+      .mockResolvedValueOnce(waiting)
+      .mockReturnValueOnce(pendingPoll.promise)
+    const cancel = vi.fn<GitHubAppSignInActions['cancelGitHubAppSignIn']>().mockResolvedValue({ status: 'needs-auth', attempt: null })
+    const actions: GitHubAppSignInActions = {
+      getGitHubAppSignIn: get,
+      startGitHubAppSignIn: vi.fn(),
+      cancelGitHubAppSignIn: cancel,
+      disconnectGitHubApp: vi.fn(),
+    }
+    vi.useFakeTimers()
+    try {
+      renderSplitWorkspace({
+        githubAppSignIn: actions,
+        onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+        onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+      })
+      openConnectedAppsMenu()
+      const dialog = screen.getByRole('dialog', { name: 'Connected apps' })
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
+      expect(get).toHaveBeenCalledOnce()
+      expect(within(dialog).getByText('RACE-CODE')).toBeTruthy()
+
+      await act(async () => { vi.advanceTimersByTime(2000); await Promise.resolve() })
+      expect(get).toHaveBeenCalledTimes(2)
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel sign-in' }))
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
+      expect(cancel).toHaveBeenCalledWith(attemptId)
+      expect(within(dialog).getByRole('button', { name: 'Connect GitHub' })).toBeTruthy()
+
+      pendingPoll.resolve(waiting)
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
+      expect(within(dialog).queryByText('RACE-CODE')).toBeNull()
+      expect(within(dialog).getByRole('button', { name: 'Connect GitHub' })).toBeTruthy()
+    } finally {
+      cleanup()
+      vi.useRealTimers()
+    }
+  })
+
+  it('reloads with replacement GitHub actions while an earlier poll is pending', async () => {
+    const oldPoll = Promise.withResolvers<GitHubAppSignInView>()
+    const oldActions: GitHubAppSignInActions = {
+      getGitHubAppSignIn: vi.fn().mockReturnValue(oldPoll.promise),
+      startGitHubAppSignIn: vi.fn(),
+      cancelGitHubAppSignIn: vi.fn(),
+      disconnectGitHubApp: vi.fn(),
+    }
+    const newView: GitHubAppSignInView = {
+      status: 'needs-auth',
+      attempt: { id: brandString<GitHubAppSignInAttemptId>('replacement-attempt'), phase: 'waiting', url: 'https://github.com/login/device', code: 'NEW-CODE' },
+    }
+    const newGet = vi.fn().mockResolvedValue(newView)
+    const newActions: GitHubAppSignInActions = { ...oldActions, getGitHubAppSignIn: newGet }
+    const view = renderSplitWorkspace({
+      githubAppSignIn: oldActions,
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    })
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(oldActions.getGitHubAppSignIn).toHaveBeenCalledOnce() })
+
+    view.rerender(<>
+      <BotRoster
+        bots={bots} selectedBotId="research" onSelectBot={vi.fn()} onCreateBot={vi.fn()}
+        githubAppSignIn={newActions} onLoadConnectedApps={vi.fn().mockResolvedValue([])}
+        onSetConnectedAppAccess={vi.fn().mockResolvedValue(undefined)} t={t}
+      />
+      <BotDetail bot={bots[0]} loadAvatar={undefined} loading={false} t={t}><p>Persistent session surface</p></BotDetail>
+    </>)
+    await waitFor(() => { expect(newGet).toHaveBeenCalledOnce() })
+    await waitFor(() => { expect(within(dialog).getByText('NEW-CODE')).toBeTruthy() })
+
+    oldPoll.resolve({ status: 'needs-auth', attempt: null })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(within(dialog).getByText('NEW-CODE')).toBeTruthy()
   })
 
   it('centers an explicit empty state when a Bot has no connected apps', async () => {
@@ -3033,7 +3602,6 @@ describe('Bot roster and detail', () => {
 
     expect(within(dialog).getByText('Connected app custom-alpha')).toBeTruthy()
     expect(within(dialog).getByText('Connected app custom-beta')).toBeTruthy()
-    expect(within(dialog).getByText('MCP tools from Connected app custom-alpha')).toBeTruthy()
     expect(within(dialog).getByRole('button', { name: 'Grant access to Connected app custom-alpha' })).toBeTruthy()
     expect(within(dialog).getByRole('button', { name: 'Grant access to Connected app custom-beta' })).toBeTruthy()
     expect(dialog.querySelector('[data-app-id="custom-alpha"]')?.textContent).not.toBe('')
@@ -3114,7 +3682,7 @@ describe('Bot roster and detail', () => {
     const update = vi.fn().mockResolvedValue(undefined)
     renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
@@ -3140,7 +3708,7 @@ describe('Bot roster and detail', () => {
     const update = vi.fn()
     renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
@@ -3163,7 +3731,7 @@ describe('Bot roster and detail', () => {
     const update = vi.fn()
     renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
@@ -3192,7 +3760,7 @@ describe('Bot roster and detail', () => {
     const update = vi.fn().mockRejectedValueOnce(new Error('temporary update failure')).mockResolvedValueOnce(undefined)
     renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
@@ -3222,7 +3790,7 @@ describe('Bot roster and detail', () => {
     const onOpenAvatarSettings = vi.fn()
     renderSplitWorkspace({ avatarEditor: { status, generate, commit: vi.fn(), update }, onOpenAvatarSettings })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('OpenAI') })
@@ -3237,7 +3805,7 @@ describe('Bot roster and detail', () => {
     const generate = vi.fn().mockRejectedValue(new Error('provider unavailable'))
     renderSplitWorkspace({ avatarEditor: { status, generate, commit: vi.fn(), update: vi.fn() } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })

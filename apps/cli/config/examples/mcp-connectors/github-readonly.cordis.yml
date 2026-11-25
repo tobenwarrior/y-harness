@@ -1,0 +1,12 @@
+# Use a scoped GitHub token stored on the Harness host as GITHUB_MCP_TOKEN.
+- insert:
+    - id: mcp-github-readonly
+      name: '@yharness/mcp-client'
+      config:
+        transport: streamable-http
+        serverName: github
+        url: https://api.githubcopilot.com/mcp/readonly
+        bearerTokenRef: GITHUB_MCP_TOKEN
+        headers:
+          X-MCP-Toolsets: repos,issues,pull_requests
+        failOnStartupError: true

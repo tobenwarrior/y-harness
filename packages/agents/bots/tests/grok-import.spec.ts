@@ -1,6 +1,6 @@
 import * as schedule from '@yharness/schedule'
 import { describe, expect, it, vi } from 'vitest'
-import { parseGrokImport } from '../src/grok-import.ts'
+import { parseGrokConnectedAppImport, parseGrokImport } from '../src/grok-import.ts'
 import { BOT_MEMORY_ENTRY_LIMIT } from '../src/memory.ts'
 
 const encodeExport = (...bots: readonly object[]) => JSON.stringify({ format: 'grok-bot-export', version: 1, bots })
@@ -82,6 +82,22 @@ describe('Grok Bot export admission', () => {
     const memories = Array.from({ length: BOT_MEMORY_ENTRY_LIMIT }, (_item, index) => 'Memory ' + String(index))
     expect(() => parseGrokImport(encodeExport({ name: 'Research Bot', memories, user_facts: ['Extra fact'] })))
       .toThrow(/memory limit/i)
+  })
+
+  it('retains connected-app labels without assigning connector identities', () => {
+    const plan = parseGrokConnectedAppImport(encodeExport({
+      name: 'Research Bot',
+      apps: [' GitHub workspace ', { name: 'Offline research source' }],
+    }))
+    expect(plan.apps).toEqual(['GitHub workspace', 'Offline research source'])
+  })
+
+  it('keeps ordinary imports compatible with unparsed connected-app display data', () => {
+    const plan = parseGrokImport(encodeExport({
+      name: 'Research Bot',
+      apps: [{ displayName: 'GitHub workspace' }, 42, null],
+    }))
+    expect(plan).toEqual({ name: 'Research Bot', memories: [], skills: [], routines: [] })
   })
 
   it('rejects credential fields and text even in an unselected Bot', () => {

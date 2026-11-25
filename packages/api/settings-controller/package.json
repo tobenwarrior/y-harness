@@ -50,16 +50,24 @@
   "peerDependencies": {
     "@yharness/cordis": "workspace:~",
     "@yharness/agent-preset-registry": "workspace:*",
+    "@yharness/config-editor": "workspace:*",
     "@yharness/credentials": "workspace:*",
+    "@yharness/mcp-client": "workspace:*",
     "@yharness/native-command": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/settings": "workspace:*",
     "@yharness/typert-protocol": "workspace:*"
   },
+  "peerDependenciesMeta": {
+    "@yharness/config-editor": { "optional": true },
+    "@yharness/mcp-client": { "optional": true }
+  },
   "devDependencies": {
     "@yharness/cordis": "workspace:~",
     "@yharness/agent-preset-registry": "workspace:*",
+    "@yharness/config-editor": "workspace:*",
     "@yharness/credentials": "workspace:*",
+    "@yharness/mcp-client": "workspace:*",
     "@yharness/native-command": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/settings": "workspace:*",

@@ -24,6 +24,7 @@ import type { WorkspaceId } from '@yharness/workspace/types'
 import { createChatStore } from '../src/client/stores.ts'
 import { CHAT_SETTINGS_NAMESPACE, type ChatSettings } from '../src/chat-settings.ts'
 import type { LinkOpeningRowInjected } from '../src/client/settings/LinkOpeningRow.tsx'
+import type { ChatNavigationService } from '../src/client/chat/chat-navigation-service.ts'
 
 usePinnedBrowserLanguages('zh-CN')
 
@@ -448,6 +449,22 @@ describe('Chat inject API', () => {
     expect(loaded).toEqual(expect.any(String))
     expect(b.session.readAttachment).toHaveBeenCalledWith(ATTACHMENT.attachmentId)
     expect(injected.loadImage.peek?.(ATTACHMENT)).toBe(loaded)
+    await b.runtime.dispose()
+  })
+
+  it('binds exact Chat navigation to the injected Session and releases it', async () => {
+    const b = await bench()
+    const { injected } = b.chatViewApi(b.rootReference)
+    const navigate = vi.fn()
+    const dispose = injected.registerChatNavigation(navigate)
+
+    const chatNavigation = b.runtime.ctx.get('chatNavigation') as ChatNavigationService
+    chatNavigation.request({ sessionId: ROOT, seq: SessionSeq(42) })
+    expect(navigate).toHaveBeenCalledWith(SessionSeq(42))
+
+    dispose()
+    chatNavigation.request({ sessionId: ROOT, seq: SessionSeq(43) })
+    expect(navigate).toHaveBeenCalledTimes(1)
     await b.runtime.dispose()
   })
 })

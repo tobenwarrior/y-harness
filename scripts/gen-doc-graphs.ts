@@ -447,6 +447,14 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Flows are registered by the plugin that knows how to obtain one credential and keyed by the record they write; the seam owns the conversation and the one-attempt-per-key lifecycle, never the protocol.',
   },
   {
+    key: 'githubAppAuth',
+    pkg: 'github-app-auth',
+    title: 'GitHub App device authorization',
+    mode: 'service',
+    consumers: ['mcp-client'],
+    note: 'Owns GitHub device sign-in, refreshable Host credentials, and token projection for the exact GitHub MCP endpoint; the MCP client consumes status and per-request tokens without storing them.',
+  },
+  {
     key: 'productAnalytics',
     pkg: 'client-product-analytics',
     title: 'Desktop interaction collection',

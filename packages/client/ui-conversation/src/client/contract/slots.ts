@@ -152,6 +152,15 @@ declare module '@yharness/client-ui-slots' {
       scope: 'session'
       owner: ConversationHeaderLineageOwnerProps
     }
+    /** Agent activity control in an embedded Session header. */
+    'conversation.session.header.agents': {
+      kind: 'single'
+      scope: 'session'
+      owner: {
+        /** Clear a panel occupying the sidebar space before a child chat opens. */
+        beforeOpen?: () => void
+      }
+    }
     /** Title-adjacent Session actions in ascending order. */
     'conversation.session.header.actions': {
       kind: 'list'
@@ -389,6 +398,8 @@ export interface ComposerBarOwnerProps {
   /** Open the Workspace picker from the inert composer surface. */
   onRequestWorkspace?: () => void
   placeholder?: string
+  /** Idle input copy when no workspace, plan, or queue hint takes precedence. */
+  defaultPlaceholder?: string
   /** Optional content rendered above the composer surface. */
   accessory?: ReactNode
 }

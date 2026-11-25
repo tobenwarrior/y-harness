@@ -27,6 +27,7 @@ class DedicatedCloudTest(unittest.TestCase):
         self.assertNotIn('user@721.service', unit)
         self.assertIn('Environment="XDG_RUNTIME_DIR=/run/user/721"', unit)
         self.assertIn('Environment="YH_HOME=/var/lib/yharness-cloud/.yharness-vps/state"', unit)
+        self.assertIn('Environment="YH_VPS_SKIP_MISSED_SCHEDULES=1"', unit)
         self.assertIn('Environment="YH_VPS_BOT_ROOT=/var/lib/yharness-cloud/.yharness-vps/bots"', unit)
         self.assertNotIn('YH_VPS_BOT_BROWSER_ROSTER', unit)
         self.assertIn(' --profile web --no-open --host 127.0.0.1 --port 3180\n', unit)

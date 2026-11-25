@@ -19,6 +19,8 @@ declare module '@yharness/typert-protocol' {
      * than an invalid request: the caller must re-read and re-apply.
      */
     'settings/conflict': { readonly ns: string; readonly expected: number; readonly actual: number }
+    /** A connector action change could not be applied. */
+    'settings/mcp-action-rejected': Record<string, never>
     /**
      * The provider refused a valid credential write, for example because a
      * read-only source shadows the reference. The details name only the
@@ -31,4 +33,20 @@ declare module '@yharness/typert-protocol' {
 /** Confirmation that the settings document was handed to the native editor. */
 export interface SettingsDocumentOpenValue {
   readonly opened: true
+}
+
+/** Workspace connector actions, including actions currently disabled. */
+export interface McpActionServerView {
+  /** The configured, user-visible connector name. */
+  readonly serverName: string
+  /** Whether the connector currently has a live connection. */
+  readonly connected: boolean
+  /** Whether this profile can change action access. */
+  readonly editable: boolean
+  /** Last discovered raw action names, with their configured access. */
+  readonly actions: readonly {
+    readonly name: string
+    readonly description?: string
+    readonly enabled: boolean
+  }[]
 }

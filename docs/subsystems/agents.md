@@ -149,6 +149,19 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('list') async list(request: BotListRequest): Promise<BotListValue>
 
 /**
+ * Search visible messages across the owner's direct Bot Sessions.
+ *
+ * The Bot roster is the authorization source: the Session query provider
+ * never receives an unrestricted corpus request. The returned sequence is
+ * the provider's exact matching event sequence so the Client can open the
+ * matching Bot transcript without guessing from snippets.
+ *
+ * @param request - Literal message query.
+ * @returns A bounded owner-scoped page of visible Bot message matches.
+ */
+@Remote('searchMessages') async searchMessages(request: BotMessageSearchRequest): Promise<BotMessageSearchValue>
+
+/**
  * List published Bot configuration snapshots, including revoked rows.
  * @param _request - Empty list request reserved for future cursor paging.
  * @returns Published template rows in stable creation order.
@@ -333,6 +346,14 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
  * @returns Counts for the selected source Bot and names of missing routine skill definitions.
  */
 @Remote('importGrokBot') async importGrokBot(request: BotGrokImportRequest, signal?: AbortSignal): Promise<BotGrokImportValue>
+
+/**
+ * Preview or apply exact owner-reviewed connected-app mappings from a Grok export.
+ * @param request - Destination Bot, export labels, reviewed mappings, and optional revision.
+ * @param signal - Optional cancellation signal for the serialized apply.
+ * @returns Per-source classifications, the reviewed Bot revision, and grant changes made by an apply.
+ */
+@Remote('importGrokConnectedApps') async importGrokConnectedApps( request: BotGrokConnectedAppImportRequest, signal?: AbortSignal, ): Promise<BotGrokConnectedAppImportValue>
 
 /**
  * List active memories for a Bot without accepting a model-supplied Session id.

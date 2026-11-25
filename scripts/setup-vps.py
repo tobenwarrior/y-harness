@@ -327,6 +327,7 @@ Description=Y Harness VPS
 Type=exec
 WorkingDirectory=%h/.yharness-vps/workspace
 Environment="YH_HOME=%h/.yharness-vps/state"
+Environment="YH_VPS_SKIP_MISSED_SCHEDULES=1"
 Environment="PATH={node.parent}:/usr/local/bin:/usr/bin:/bin"
 UMask=0077
 ExecStart="{node}" "%h/.yharness-vps/source/{CLI}" --profile web --no-open --host 127.0.0.1 --port {PORT}

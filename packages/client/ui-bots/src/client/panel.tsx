@@ -1,22 +1,22 @@
 /** Global Bot panel and its explicitly Session-bound Conversation child. */
 
-import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { BotView } from '@yharness/bots/client'
 import type { HostObservable, PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime, InjectFace } from '@yharness/client-ui-slots'
-import type { ConversationBot } from '@yharness/client-ui-conversation/client'
+import type { ConversationBot, ConversationViewsProps } from '@yharness/client-ui-conversation/client'
 import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 import type { BotWorkspaceFace, BotWorkspaceState } from './controller.ts'
 import { BotDetail, BotGroupDetail, BotRoster } from './BotWorkspace.tsx'
-import type { BotStatus, BotSummary } from './types.ts'
+import type { BotStatus, BotSummary, GitHubAppSignInActions, McpActionServerView } from './types.ts'
 import { ComputerAction } from './ComputerAction.tsx'
 import { BotAvatar } from './BotAvatar.tsx'
-import { GrokHistoryAction } from './GrokHistoryAction.tsx'
+import { BotMessageSearchDialog, type BotMessageSearchActions } from './BotMessageSearchDialog.tsx'
 import { ComputerPanel } from './ComputerPanel.tsx'
 import { MacComputerPanel } from './MacComputerPanel.tsx'
 import type { AvailabilityState } from './computer-availability.ts'
 import type { ComputerClient, ComputerIdentity } from './computer-client.ts'
-import { Button, IconFolderOpenOutlineRegular, Menu, PluginArtworkTerminal, Tooltip } from '@yharness/client-ui-primitives'
+import { IconFolderOpenOutlineRegular, PluginArtworkTerminal } from '@yharness/client-ui-primitives'
+import { GrokHistoryInline } from './GrokHistoryInline.tsx'
 import css from './BotWorkspace.module.css'
 
 /** Selected sign-in request and its Computer panel. */
@@ -30,6 +30,12 @@ export interface ComputerSignInTarget {
 
 type WorkspaceTabKind = 'terminal' | 'computer-files' | 'computer-shared-files'
 
+interface BotsConversationBot extends ConversationBot {
+  readonly id?: string
+  readonly readGrokHistory?: BotWorkspaceFace['readGrokHistory']
+  readonly t?: PropsLocale<'bots'>['t']
+}
+
 /** Main panel child slot that owns the selected Bot's Session binding. */
 declare module '@yharness/client-ui-slots' {
   interface SlotMap {
@@ -37,7 +43,7 @@ declare module '@yharness/client-ui-slots' {
     'bots.conversation': {
       kind: 'single'
       scope: 'session-maybe'
-      owner: { bot: ConversationBot }
+      owner: { bot: BotsConversationBot }
     }
   }
 }
@@ -45,7 +51,7 @@ declare module '@yharness/client-ui-slots' {
 /** Complete props for the root Bot panel. */
 export type BotsPanelProps =
   PropsRuntime<'main'>
-  & PropsRenderSlots<'bots.conversation'>
+  & PropsRenderSlots<'bots.conversation' | 'conversation.session.header.agents'>
   & PropsLocale<'bots'>
   & InjectFace<BotWorkspaceFace & {
     readonly computer: ComputerClient
@@ -66,11 +72,35 @@ export type BotsPanelProps =
 /** Props for the Session-bound embedded Conversation occurrence. */
 export type BotsConversationProps = PropsRuntime<'bots.conversation'> & PropsRenderFactories
 
+function BotsConversationViews({ ownerBot, ...props }: ConversationViewsProps & { readonly ownerBot: BotsConversationBot }): ReactNode {
+  const live = props.renderSlot('conversation.session', props.bot === undefined ? {} : { bot: props.bot })
+  if (ownerBot.id === undefined || ownerBot.readGrokHistory === undefined || ownerBot.t === undefined) return live
+  return (
+    <>
+      <GrokHistoryInline key={ownerBot.id} botId={ownerBot.id} botName={ownerBot.name} read={ownerBot.readGrokHistory} t={ownerBot.t} />
+      {live}
+    </>
+  )
+}
+
 /** Props for the Bot roster occupying the shared application sidebar. */
+type BotMcpActionFace = {
+  /** Read workspace-wide connector actions, including disabled actions. */
+  readonly loadMcpActions?: () => Promise<readonly McpActionServerView[]>
+  /** Change one workspace-wide connector action and return the reconciled catalog. */
+  readonly setMcpActionEnabled?: (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
+  /** Retry one disconnected workspace connector with its existing Host-owned authentication. */
+  readonly reconnectMcpConnector?: (serverName: string) => Promise<readonly McpActionServerView[]>
+}
+
 export type BotsRosterProps =
   PropsRuntime<'sidebar.bots'>
   & PropsLocale<'bots'>
-  & InjectFace<BotWorkspaceFace>
+  & InjectFace<BotWorkspaceFace & BotMcpActionFace & {
+    readonly messageSearch?: BotMessageSearchActions
+    readonly hooks: { readonly messageSearchOpen: HostObservable<boolean> }
+    readonly githubAppSignIn?: GitHubAppSignInActions
+  }>
 
 function statusOf(bot: BotView, statuses: SessionStatusSnapshot): BotStatus | undefined {
   if (bot.state === 'provisioning') return 'preparing'
@@ -99,53 +129,11 @@ function summaryOf(bot: BotView, statuses: SessionStatusSnapshot): BotSummary {
   }
 }
 
-interface BotFilesActionProps {
-  readonly sharedFilesAvailable: boolean
-  readonly openWorkspaceTab: (kind: Extract<WorkspaceTabKind, 'computer-files' | 'computer-shared-files'>) => void
-  readonly t: BotsPanelProps['t']
-}
-
-function BotFilesAction({ sharedFilesAvailable, openWorkspaceTab, t }: BotFilesActionProps): ReactNode {
-  const [open, setOpen] = useState(false)
-  const anchor = (
-    <Tooltip label={t('filesOpen')} side="bottom" delayMs={500}>
-      <Button variant="toolbar" size="sm" icon={<IconFolderOpenOutlineRegular size={16} />}
-        aria-label={t('filesOpen')}
-        {...(sharedFilesAvailable ? { 'aria-haspopup': 'menu', 'aria-expanded': open } : {})}
-        onClick={() => {
-          if (sharedFilesAvailable) setOpen(value => !value)
-          else openWorkspaceTab('computer-files')
-        }}>
-        <span className={css.workspaceToolLabel}>{t('filesLabel')}</span>
-      </Button>
-    </Tooltip>
-  )
-  if (!sharedFilesAvailable) return anchor
-  return (
-    <Menu
-      open={open}
-      onClose={() => { setOpen(false) }}
-      autoFocus
-      dense
-      portal
-      align="end"
-      items={[
-        { id: 'private', label: t('filesPrivateWorkspace') },
-        { id: 'shared', label: t('filesSharedWorkspace') },
-      ]}
-      onSelect={(id) => {
-        setOpen(false)
-        if (id === 'private') openWorkspaceTab('computer-files')
-        else if (id === 'shared') openWorkspaceTab('computer-shared-files')
-      }}
-      anchor={anchor}
-    />
-  )
-}
-
 /** Render the selected Bot's real Conversation under its retained Session. */
 export function BotsConversation({ renderFactorySlot, bot }: BotsConversationProps): ReactNode {
-  return renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false, bot })
+  return renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false, bot }, {
+    slots: { views: props => <BotsConversationViews {...props} ownerBot={bot} /> },
+  })
 }
 
 /** Injected roster and image loader for each Bot reply avatar. */
@@ -165,40 +153,52 @@ export function BotReplyAvatar({
 export function BotsRoster({
   wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, selectGroup,
   create, createGroup, groupsAvailable, organize, templateActions, retry, loadAvatar, avatarEditor, share, sharedClient, t,
-  loadConnectedApps,
-  setConnectedAppAccess,
+  loadConnectedApps, loadMcpActions, githubAppSignIn,
+  setConnectedAppAccess, setMcpActionEnabled, reconnectMcpConnector,
+  messageSearch, useMessageSearchOpen,
 }: BotsRosterProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
+  const searchOpen = useMessageSearchOpen(value => value)
   const bots = state.bots.map(bot => summaryOf(bot, statuses))
   return (
-    <BotRoster
-      bots={bots}
-      groups={state.groups}
-      selectedBotId={state.selectedBotId}
-      selectedGroupId={state.selectedGroupId}
-      onSelectBot={select}
-      onSelectGroup={groupsAvailable ? selectGroup : undefined}
-      onCreateBot={create}
+    <>
+      <BotRoster
+        bots={bots}
+        groups={state.groups}
+        selectedBotId={state.selectedBotId}
+        selectedGroupId={state.selectedGroupId}
+        onSelectBot={select}
+        onSelectGroup={groupsAvailable ? selectGroup : undefined}
+        onCreateBot={create}
 
-      onOrganizeBot={organize}
-      onCreateGroup={groupsAvailable ? createGroup : undefined}
-      templates={state.templates}
-      templateActions={templateActions}
-      groupError={state.groupError}
-      onLoadConnectedApps={loadConnectedApps}
-      onSetConnectedAppAccess={setConnectedAppAccess}
-      onRetry={retry}
-      loadAvatar={loadAvatar}
-      avatarEditor={avatarEditor}
-      {...(share === undefined ? {} : { share })}
-      {...(sharedClient === undefined ? {} : { sharedClient })}
-      error={state.error}
-      loading={state.phase === 'loading' && bots.length === 0}
-      wide={wide}
-      expandSidebar={expandSidebar}
-      t={t}
-    />
+        onOrganizeBot={organize}
+        onCreateGroup={groupsAvailable ? createGroup : undefined}
+        templates={state.templates}
+        templateActions={templateActions}
+        groupError={state.groupError}
+        onLoadConnectedApps={loadConnectedApps}
+        onSetConnectedAppAccess={setConnectedAppAccess}
+        onLoadMcpActions={loadMcpActions}
+        onSetMcpActionEnabled={setMcpActionEnabled}
+        onReconnectMcpConnector={reconnectMcpConnector}
+        githubAppSignIn={githubAppSignIn}
+        onRetry={retry}
+        loadAvatar={loadAvatar}
+        avatarEditor={avatarEditor}
+        {...(share === undefined ? {} : { share })}
+        {...(sharedClient === undefined ? {} : { sharedClient })}
+        error={state.error}
+        loading={state.phase === 'loading' && bots.length === 0}
+        wide={wide}
+        expandSidebar={expandSidebar}
+        {...(messageSearch === undefined ? {} : { openMessageSearch: () => { messageSearch.setOpen(true) } })}
+        t={t}
+      />
+      {messageSearch !== undefined && searchOpen && (
+        <BotMessageSearchDialog bots={state.bots} actions={messageSearch} loadAvatar={loadAvatar} t={t} />
+      )}
+    </>
   )
 }
 
@@ -231,7 +231,11 @@ export function BotsPanel({
     ? undefined
     : (
       <SessionProvider session={selectedReference}>
-        {renderSlot('bots.conversation', { bot: { name: selectedBot.name } })}
+        {renderSlot('bots.conversation', {
+          bot: readGrokHistory === undefined
+            ? { name: selectedBot.name }
+            : { name: selectedBot.name, id: selectedBot.id, readGrokHistory, t },
+        })}
       </SessionProvider>
     )
   if (groupsAvailable && state.selectedGroupId !== null) {
@@ -255,27 +259,42 @@ export function BotsPanel({
     <div className={css.computerLayout}>
       <BotDetail
         bot={selectedBot}
+        {...(selectedReference === undefined ? {} : { sessionId: selectedReference.sessionId })}
         children={conversation}
+        readGrokHistory={readGrokHistory}
+        workspaceActions={[
+          ...(showTerminalAction ? [{
+            id: 'terminal',
+            label: t('terminalLabel'),
+            icon: <PluginArtworkTerminal size={16} />,
+            ...(terminalInternet === undefined ? {} : {
+              description: t(terminalInternet ? 'terminalInternetEnabled' : 'terminalInternetDisabled'),
+            }),
+            run: () => { openWorkspaceTab('terminal') },
+          }] : []),
+          ...(showFilesAction ? [{
+            id: 'bot-files',
+            label: t(showSharedFilesAction ? 'filesPrivateWorkspace' : 'filesLabel'),
+            icon: <IconFolderOpenOutlineRegular size={16} />,
+            run: () => { openWorkspaceTab('computer-files') },
+          }] : []),
+          ...(showFilesAction && showSharedFilesAction ? [{
+            id: 'shared-files',
+            label: t('filesSharedWorkspace'),
+            icon: <IconFolderOpenOutlineRegular size={16} />,
+            run: () => { openWorkspaceTab('computer-shared-files') },
+          }] : []),
+        ]}
         headerActions={<>
           {canShowComputer && (
             <ComputerAction expanded={showComputer}
               {...(computerIdentity === undefined ? {} : { identity: computerIdentity })}
               toggle={() => { setComputerTarget(showComputer ? null : selectedReference.sessionId) }} t={t} />
           )}
-          {showTerminalAction && (
-            <Tooltip label={t(terminalInternet === undefined ? 'terminalOpen'
-              : terminalInternet ? 'terminalInternetEnabled' : 'terminalInternetDisabled')} side="bottom" delayMs={500}>
-              <Button variant="toolbar" size="sm" icon={<PluginArtworkTerminal size={16} />}
-                aria-label={t('terminalOpen')} onClick={() => { openWorkspaceTab('terminal') }}>
-                <span className={css.workspaceToolLabel}>{t('terminalLabel')}</span>
-              </Button>
-            </Tooltip>
-          )}
-          {showFilesAction && (
-            <BotFilesAction sharedFilesAvailable={showSharedFilesAction} openWorkspaceTab={openWorkspaceTab} t={t} />
-          )}
-          {readGrokHistory !== undefined && selectedBot !== undefined && (
-            <GrokHistoryAction key={selectedBot.id} botId={selectedBot.id} botName={selectedBot.name} read={readGrokHistory} t={t} />
+          {selectedReference !== undefined && selectedBot !== undefined && (
+            <SessionProvider session={selectedReference}>
+              {renderSlot('conversation.session.header.agents', { beforeOpen: closeComputer })}
+            </SessionProvider>
           )}
         </>}
         t={t}

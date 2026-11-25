@@ -22,6 +22,10 @@ import type {
   AvatarGenerationStatus,
   AvatarGenerationValue,
 } from '@yharness/avatar-generation/types'
+import type {
+  GitHubAppSignInAttempt, GitHubAppSignInAttemptId, GitHubAppSignInView,
+} from '@yharness/api-account-controller/types'
+import type { McpActionServerView as ApiMcpActionServerView } from '@yharness/api-remotes/client'
 
 /** Visual accent families persisted by the Bot service. */
 export type BotAccent = SharedBotAccent
@@ -31,6 +35,19 @@ export type BotIdentity = SharedBotIdentity
 
 /** Connected app and the selected Bot's durable access decision. */
 export type BotConnectedAppAccess = SharedBotConnectedAppAccess
+
+/** One workspace connector and its owner-controlled action access. */
+export type McpActionServerView = ApiMcpActionServerView
+
+/** Workspace-wide MCP action management mounted by the Host. */
+export interface BotMcpActionActions {
+  /** Read connector actions, including disabled actions. */
+  readonly list: () => Promise<readonly McpActionServerView[]>
+  /** Change one connector action and return the reconciled catalog. */
+  readonly set: (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
+  /** Retry one disconnected connector with its existing Host-owned authentication. */
+  readonly reconnect?: (serverName: string) => Promise<readonly McpActionServerView[]>
+}
 
 /** Host-local skill metadata and the selected Bot's current grant. */
 export type BotSkillSummary = SharedBotSkillAccess
@@ -385,6 +402,20 @@ export interface BotAvatarEditorActions {
   }) => Promise<void>
 }
 
+export type { GitHubAppSignInAttempt, GitHubAppSignInAttemptId, GitHubAppSignInView }
+
+/** Account operations mounted by the Host for the GitHub device-flow row. */
+export interface GitHubAppSignInActions {
+  /** Read the current redacted GitHub App state. */
+  readonly getGitHubAppSignIn: () => Promise<GitHubAppSignInView>
+  /** Start one GitHub App device authorization attempt. */
+  readonly startGitHubAppSignIn: () => Promise<GitHubAppSignInView>
+  /** Cancel one active GitHub App device authorization attempt. */
+  readonly cancelGitHubAppSignIn: (attemptId: GitHubAppSignInAttemptId) => Promise<GitHubAppSignInView>
+  /** Disconnect the current GitHub App grant. */
+  readonly disconnectGitHubApp: () => Promise<GitHubAppSignInView>
+}
+
 /** Props for the presentational Bot workspace. */
 export interface BotWorkspaceProps {
   /** Available bots in the owner's stable order. */
@@ -421,6 +452,16 @@ export interface BotWorkspaceProps {
   readonly onLoadConnectedApps?: ((botId: string) => Promise<readonly BotConnectedAppAccess[]>) | undefined
   /** Persists one Bot's grant or revoke for a connected app. */
   readonly onSetConnectedAppAccess?: ((botId: string, appId: string, allowed: boolean) => Promise<void>) | undefined
+  /** Loads workspace-wide connector actions, including actions currently disabled. */
+  readonly onLoadMcpActions?: (() => Promise<readonly McpActionServerView[]>) | undefined
+  /** Persists one workspace-wide connector action decision. */
+  readonly onSetMcpActionEnabled?: (
+    (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
+  ) | undefined
+  /** Requests a fresh generation for one disconnected workspace connector. */
+  readonly onReconnectMcpConnector?: ((serverName: string) => Promise<readonly McpActionServerView[]>) | undefined
+  /** Optional owner GitHub account flow; kept separate from per-Bot app grants. */
+  readonly githubAppSignIn?: GitHubAppSignInActions | undefined
   /** Optional settings deep-link for configuring the avatar provider. */
   readonly onOpenAvatarSettings?: (() => void) | undefined
   /** Optional retry for an owner-provided loading failure. */

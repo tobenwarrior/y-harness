@@ -56,8 +56,11 @@ Add one entry per server; nothing else is required. After the harness starts, th
 | `serverName` | required | Namespace for the server's tool names; `[A-Za-z0-9_-]{1,32}`, unique inside one registration scope |
 | `command` / `args` / `env` / `cwd` | — | stdio: executable, arguments, extra env merged over scrubbed ambient env, working directory |
 | `url` / `headers` | — | streamable-http: endpoint URL and extra request headers |
+| `bearerTokenRef` | — | streamable-http: host credential reference for an HTTPS bearer token |
+| `githubAppAuthorization` | — | streamable-http: opt-in Host-owned GitHub App authorization; requires the exact official endpoint `https://api.githubcopilot.com/mcp/` and cannot be combined with `bearerTokenRef` or `Authorization` |
 | `toolCallTimeoutMs` | `60,000` | Timeout per `tools/call` or resource request |
 | `maxInstructionBytes` | `32,768` | Maximum UTF-8 bytes of server instructions including attribution; an oversized value rejects the connection |
+| `disabledTools` | `[]` | Optional exact raw MCP tool names to withhold from every discovery generation; names are matched before public-name normalization |
 | `failOnStartupError` | `false` | Reject plugin activation when the initial connection or tool synchronization fails |
 | `reconnect.enabled` | `true` | Reconnect automatically after a lost connection |
 | `reconnect.initialDelayMs` | `500` | First reconnect delay; doubles per consecutive failed attempt |
@@ -68,6 +71,16 @@ The generated [configuration catalog](../../../docs/config-catalog.md#yharnessmc
 
 After startup, the server's tools appear as `mcp__<serverName>__<tool>` — try a prompt that uses one. If the initial connection fails, the harness still starts but no tools from that server appear, and an error is logged. Setting `failOnStartupError: true` rejects plugin activation; [app-boot's startup policy](../../boot/app-boot/README.md) still permits an optional MCP entry to fail without aborting the harness.
 
+### Connect GitHub
+
+The GitHub read-only overlay enables repository, issue, and pull request tools. Store a GitHub token with access to the intended repositories in the Harness host credential provider as `GITHUB_MCP_TOKEN`. The overlay stores only the reference. Open **App access** from a Bot’s roster menu to check the connection’s permissions. [GitHub read-only overlay](../../../apps/cli/config/examples/mcp-connectors/github-readonly.cordis.yml) · [GitHub MCP setup](https://docs.github.com/en/copilot/how-tos/copilot-in-your-ide/customize-copilot/extend-copilot-with-tools-and-context/set-up-the-github-mcp-server)
+
+With `bearerTokenRef`, the SDK resolves the current token for each request. The endpoint must use HTTPS without URL credentials. This option rejects an additional `Authorization` header and refuses redirects. A missing credential fails the connection before sending a request. Saving a new value retires the previous connection and its tools, then reconnects after the old transport closes. Removing the value keeps the server disconnected until a new value is saved. A credential change resets an exhausted reconnect budget.
+
+With `githubAppAuthorization: true`, the optional `@yharness/github-app-auth` service supplies the current grant without exposing it in configuration or project status. The transport accepts only the exact official GitHub MCP URL, refuses redirects, and asks the provider for a token per request. A missing GitHub login is an idle `needs-auth` state: it does not spend reconnect attempts or emit repeated warnings. The provider's owner-change or invalidation event retires the old tools and retries after the grant reports `connected`; ordinary token refreshes do not reconnect the MCP session.
+
+Configure the final MCP endpoint URL when a server redirects to a different origin. The HTTP transport keeps connection requests on the configured origin.
+
 ### Tool naming and coexistence
 
 The model sees each tool under a stable server-qualified name: `mcp__<serverName>__<rawName>`, for example `mcp__github__create_issue` — the same naming shape Claude Code and Codex use. Names stay stable while the server keeps the same tool name, so session history and permission rules survive restarts and reloads. The name is an identifier for model calls, not an ownership encoding: server and raw names may contain `__`, and Host policy uses the retained source metadata. Two servers can both offer a tool named `search` and coexist as `mcp__github__search` and `mcp__web__search`.
@@ -77,6 +90,13 @@ The model sees each tool under a stable server-qualified name: `mcp__<serverName
 - A server that lists the same tool twice gets its tool list rejected as invalid, and the previous tool set stays active.
 - The SDK owns discovery pagination and its page limit. A discovery failure preserves the previous tools; malformed cursor chains follow the SDK's behavior.
 - An update that conflicts with an already-registered tool name is rejected entirely — you never get a partial tool set from that server.
+- `disabledTools` applies to both stdio and Streamable HTTP. The filter runs before registration on startup, list-change rediscovery, and reconnect, so a disabled action is never published or dispatched. Omit it to preserve the complete remote tool set. Names are exact raw MCP names, including punctuation or separators.
+
+### Host action catalog
+
+The Host can synchronously read the event `mcp/actions/catalog` to show the last successful action discovery for each loader-owned, unscoped connector. Each catalog includes the configured server name, the full loader entry id, connection state, exact raw MCP action names, bounded descriptions, and whether local `disabledTools` currently allows each action. A connector using the Host-owned GitHub App grant also carries `authKind: "github-app"`; other connector authentication details remain absent from this catalog.
+
+Scoped or manually mounted MCP clients do not publish a Host catalog. A disconnect marks the last catalog stale while retaining its names. A failed or rejected discovery never replaces the last successful catalog. The event only reports discovery and does not change connector configuration or dispatch permissions. The Host may emit `mcp/actions/reconnect` with the exact `serverName` and `entryId` from this catalog to retry that connector; the request carries no credential or endpoint data, mismatched identities are ignored, and the selected listener reports when its retry attempt settles so the caller can refresh the catalog.
 
 ### Calling tools and reading results
 
@@ -88,7 +108,7 @@ Images are supported when the current model accepts image input and the harness 
 
 The server's tools appear before the harness starts its first turn. When the server changes its tool list, the model's tool set updates automatically; if the update fails, the previous tool set keeps working.
 
-When a server connection drops — for example a local server process crashes — the plugin reconnects automatically with delays that double from 500 ms up to 30 s and then refreshes the tool set; reconnect progress is visible in the logs. During an outage the last known tools stay listed but calls to them fail until the server recovers. After ten consecutive failed attempts the server's tools are removed and reconnection stops until you reload the configuration or restart the harness; a server that stays connected for a while resets that counter. Set `reconnect.enabled: false` to disable automatic reconnection — tools then stay listed but fail until you reload. Editing the configuration entry reloads the server connection in place, and unchanged names stay unchanged.
+When a server connection drops, the plugin reconnects automatically with delays that double from 500 ms up to 30 s and then refreshes the tool set. Reconnect progress appears in the logs. During an outage the last known tools stay listed and calls to them fail until the server recovers. After ten consecutive failed attempts, the server's tools are removed and automatic retries stop. A stable connection resets the counter. Reloading the configuration, restarting the harness, or saving a changed bearer credential starts a fresh attempt. Set `reconnect.enabled: false` to disable retries after a dropped connection. Editing the configuration entry reloads the server connection in place.
 
 -----
 
@@ -114,6 +134,7 @@ This section explains the design decisions behind the bridge and points at the c
 |---|---|
 | [`src/index.ts`](src/index.ts) | Plugin entry: `Config` schema, `serverName` reservation, activation await |
 | [`src/connection.ts`](src/connection.ts) | Connection supervisor: client generations, reconnect policy, attempt budget, disposal |
+| [`src/action-catalog.ts`](src/action-catalog.ts) | Host-only raw action discovery catalog and connection state |
 | [`src/server-context.ts`](src/server-context.ts) | Resource-provider registration and literal server instructions |
 | [`src/tools.ts`](src/tools.ts) | Tool bridge: discovery, naming, registration swap, execution, image projection |
 | [`src/transport.ts`](src/transport.ts) | Transport factory: stdio spawn with scrubbed env, Streamable HTTP |
@@ -122,7 +143,7 @@ The exported `createMcpToolDefinition(ctx, options)` adapts an upstream tool sch
 
 ### Lifecycle and sync
 
-`apply` resolves the reconnect policy, reserves the `serverName` inside the current registration scope, starts the supervisor, and awaits the initial connection plus discovery. Independent Agent scopes may reuse the same namespace because their tools and transports are isolated; a duplicate inside one scope fails at load. The supervisor serializes every sync — initial, notification, and reconnect — through one queue so two syncs can never interleave their dispose-previous/register-next swap. Disposal cancels pending reconnects, closes the negotiating transport or attached client, waits for the in-flight attempt and queued syncs to quiesce, and unregisters the current generation.
+`apply` resolves the reconnect policy, reserves the `serverName` inside the current registration scope, starts the supervisor, and awaits the initial connection plus discovery. Independent Agent scopes may reuse the same namespace because their tools and transports are isolated. A duplicate inside one scope fails at load. The supervisor serializes initial discovery and later tool updates so each replacement owns its registrations. An MCP tool checks that its connection is still current before starting a request. Disposal cancels retries, closes the current transport, awaits pending connection and credential transitions, and unregisters the tools.
 
 The SDK receives tool-list changes through legacy notifications or a modern subscription. The supervisor queues each re-sync; a fetch failure keeps the previous generation registered, while a registration conflict rolls back the attempted generation. Each outage shares one attempt budget: after `maxAttempts` consecutive failures the tools are unregistered and reconnection stops, and a connection that stays up past `maxDelayMs` resets the budget.
 
@@ -205,6 +226,7 @@ These limits describe what you cannot do with this plugin and when it needs oper
 - **Resources are read on demand** — shipped profiles provide the [shared resource service](../mcp-resources/README.md); resource subscriptions and MCP prompt templates are unsupported.
 - **Startup and discovery timeouts are inherited from the MCP SDK** — the plugin exposes no separate connection or discovery timeout. Negotiation and discovery use the SDK's 60-second request default; discovery also uses its page limit. Plugin unload closes the transport to interrupt pending startup requests before awaiting teardown.
 - **Reconnect handles failed negotiation and transport close** — a failed initial probe or crashed stdio child uses the configured reconnect budget. Once HTTP is connected, request failures use the SDK transport's recovery rather than respawning the connection.
+- **Interactive authorization uses a separate provider** — `bearerTokenRef` consumes credentials saved by the Host. Account sign-in and OAuth token exchange are provider responsibilities.
 - **Image is the only durable rich-result bridge** — PNG, JPEG, WebP, and GIF enter Native context after exact capability proof. Audio and embedded-resource payloads remain execution-local with explicit diagnostics, while resource links preserve only their name and URI as text.
 - **Invalid protocol results or output schemas fail through the SDK** — the bridge does not accept legacy `toolResult` substitutes or bypass advertised schema validation.
 - **Task-required MCP tools are rejected at call time** — a tool that requires the task-based execution extension throws instead of bridging; the extension is not implemented.

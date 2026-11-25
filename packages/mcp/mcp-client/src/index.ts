@@ -17,15 +17,18 @@ import type { Context } from '@yharness/cordis'
 import z from '@yharness/schemastery'
 import { scopeOf } from '@yharness/scope'
 import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
-import { DEFAULT_MAX_INSTRUCTION_BYTES, RECONNECT_DEFAULTS, resolveReconnectPolicy, startConnection } from './connection.ts'
+import { GITHUB_MCP_URL } from '@yharness/github-app-auth'
+import { DEFAULT_MAX_INSTRUCTION_BYTES, RECONNECT_DEFAULTS, resolveDisabledTools, resolveReconnectPolicy, startConnection } from './connection.ts'
 import type { ReconnectConfig } from './connection.ts'
 import { registerServerContext } from './server-context.ts'
+import { loaderEntryId, registerMcpActionCatalogReader } from './action-catalog.ts'
 // Side-effect type import: declaration-merges `ctx.tools` onto Context.
 import type {} from '@yharness/tools'
 
 export { createMcpToolDefinition } from './tools.ts'
 export type { McpResult, McpToolDefinitionOptions } from './tools.ts'
 export type { ReconnectConfig, ResolvedReconnectPolicy } from './connection.ts'
+export type { McpActionCatalog, McpActionReconnectRequest } from './action-catalog.ts'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'mcp-client'
@@ -72,6 +75,8 @@ export interface StdioConfig {
   failOnStartupError: boolean
   /** Maximum UTF-8 bytes of attributed server instructions (default 32768). */
   maxInstructionBytes?: number
+  /** Exact raw MCP tool names to omit from every published tool generation. */
+  disabledTools?: string[]
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
 }
@@ -90,12 +95,21 @@ export interface StreamableHttpConfig {
   url: string
   /** Additional headers attached to MCP requests. */
   headers: Record<string, string>
+  /** Host credential reference sent as a bearer token to this HTTPS endpoint. */
+  bearerTokenRef?: string
+  /**
+   * Use the optional Host-owned GitHub App grant for the official GitHub MCP
+   * endpoint. This cannot be combined with bearerTokenRef or Authorization.
+   */
+  githubAppAuthorization?: boolean
   /** Timeout per tool call or resource request in milliseconds. */
   toolCallTimeoutMs: number
   /** Fail plugin activation when the initial connection or tool synchronization fails. */
   failOnStartupError: boolean
   /** Maximum UTF-8 bytes of attributed server instructions (default 32768). */
   maxInstructionBytes?: number
+  /** Exact raw MCP tool names to omit from every published tool generation. */
+  disabledTools?: string[]
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
 }
@@ -116,30 +130,65 @@ const Reconnect: z<ReconnectConfig> = z.object({
   maxAttempts: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(RECONNECT_DEFAULTS.maxAttempts),
 })
 
-export const Config = z.union([
-  z.object({
-    transport: z.const('stdio'),
-    serverName: z.string().required().pattern(SERVER_NAME_PATTERN),
-    command: z.string().required(),
-    args: z.array(String).default([]),
-    env: z.dict(String).default({}),
-    cwd: z.string().default(''),
-    toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
-    failOnStartupError: z.boolean().default(false),
-    maxInstructionBytes: z.number().step(1).min(1).default(DEFAULT_MAX_INSTRUCTION_BYTES),
-    reconnect: Reconnect,
-  }),
-  z.object({
-    transport: z.const('streamable-http'),
-    serverName: z.string().required().pattern(SERVER_NAME_PATTERN),
-    url: z.string().required(),
-    headers: z.dict(String).default({}),
-    toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
-    failOnStartupError: z.boolean().default(false),
-    maxInstructionBytes: z.number().step(1).min(1).default(DEFAULT_MAX_INSTRUCTION_BYTES),
-    reconnect: Reconnect,
-  }),
-]) as z<ConfigInput, Config>
+const CommonConfig = z.object({
+  toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
+  failOnStartupError: z.boolean().default(false),
+  maxInstructionBytes: z.number().step(1).min(1).default(DEFAULT_MAX_INSTRUCTION_BYTES),
+  disabledTools: z.array(String).default([]),
+  reconnect: Reconnect,
+})
+
+/** Validate the mutually exclusive, endpoint-pinned GitHub App option. */
+const StreamableHttp = z.transform(
+  z.intersect([
+    z.object({
+      transport: z.const('streamable-http'),
+      serverName: z.string().required().pattern(SERVER_NAME_PATTERN),
+      url: z.string().required(),
+      headers: z.dict(String).default({}),
+      bearerTokenRef: z.string(),
+      githubAppAuthorization: z.boolean(),
+    }),
+    CommonConfig,
+  ]),
+  (value) => {
+    if (value.githubAppAuthorization === true
+      && (value.bearerTokenRef !== undefined
+        || new Headers(value.headers ?? {}).has('Authorization')
+        || value.url !== GITHUB_MCP_URL)) {
+      throw new Error(
+        `githubAppAuthorization requires the exact endpoint ${GITHUB_MCP_URL} and cannot be combined with bearerTokenRef or an Authorization header`,
+      )
+    }
+    return value
+  },
+  true,
+)
+
+const ConfigSchema = z.union([
+  z.intersect([
+    z.object({
+      transport: z.const('stdio'),
+      serverName: z.string().required().pattern(SERVER_NAME_PATTERN),
+      command: z.string().required(),
+      args: z.array(String).default([]),
+      env: z.dict(String).default({}),
+      cwd: z.string().default(''),
+    }),
+    CommonConfig,
+  ]),
+  StreamableHttp,
+])
+
+/** Validate list entries after transport-specific defaults have been applied. */
+export const Config = z.transform(
+  ConfigSchema,
+  (value) => {
+    value.disabledTools = resolveDisabledTools(value.disabledTools, `mcp-client(${value.serverName}).disabledTools`)
+    return value
+  },
+  true,
+) as z<ConfigInput, Config>
 
 // ---- Plugin apply ----
 
@@ -180,6 +229,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // quiesces in-flight work, and unregisters the current generation.
   const connection = startConnection(ctx, config, reconnect)
   registerServerContext(ctx, config.serverName, connection)
+  if (loaderEntryId(ctx) !== undefined) {
+    registerMcpActionCatalogReader(ctx, () => connection.actionCatalog())
+  }
   let stopping: Promise<void> | undefined
   const dispose = (): Promise<void> => stopping ??= connection.dispose()
   // Cordis announces unload before awaiting an unfinished apply(). Closing

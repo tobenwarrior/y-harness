@@ -48,6 +48,7 @@ import type {
 } from '@yharness/schedule'
 import type {} from '@yharness/agent-preset-registry'
 import type {} from '@yharness/mcp-resources'
+import type { McpActionCatalog } from '@yharness/mcp-client'
 // Type-only: shared Sessions force the optional approval seam to ask so their
 // collaborator-owned connected-app approvals reach the shared mailbox.
 import { setApprovalPolicy } from '@yharness/user-approval'
@@ -58,6 +59,7 @@ import { SessionId } from '@yharness/session'
 import type { SessionEvent } from '@yharness/session'
 import type { TurnEndReason } from '@yharness/session'
 import { ApiSessionNotFound, type SessionCreateRequest } from '@yharness/api-session-controller'
+import type { SessionSearchHit } from '@yharness/session-query'
 import { defineDomain, domainTable, type Domain, type KvTable } from '@yharness/storage-domain'
 import { credentialKey, type CredentialProvider, type CredentialRecord } from '@yharness/credentials'
 import { scopeOf, scopeParentOf } from '@yharness/scope'
@@ -127,7 +129,7 @@ import { installBotCollaborationTools } from './scoped-tools.ts'
 import { installBotRoutineTools } from './routine-tools.ts'
 import type { BotEventRoutineToolHost } from './routine-tools.ts'
 import { botInboxMessageState } from './inbox.ts'
-import { parseGrokImport } from './grok-import.ts'
+import { parseGrokConnectedAppImport, parseGrokImport } from './grok-import.ts'
 import { GrokHistoryAttachmentVault } from './grok-history-attachments.ts'
 import {
   botGrokHistoryDomain,
@@ -177,6 +179,8 @@ import type {
   BotIdentity,
   BotListRequest,
   BotListValue,
+  BotMessageSearchRequest,
+  BotMessageSearchValue,
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
   BotProfileUpdateRequest,
@@ -191,6 +195,11 @@ import type {
   BotGrokHistoryImportRequest,
   BotGrokHistoryRequest,
   BotGrokHistoryView,
+  BotGrokConnectedAppImportRequest,
+  BotGrokConnectedAppImportValue,
+  BotGrokConnectedAppMapping,
+  BotGrokConnectedAppMappingView,
+  BotGrokConnectedAppResolution,
   BotGrokImportRequest,
   BotGrokImportValue,
   BotMemoryView,
@@ -1480,9 +1489,24 @@ function isSyntheticGroupContext(message: UserMessage): boolean {
 }
 const BOT_TEMPLATE_ID_PATTERN = /^bot-template-[A-Za-z0-9][A-Za-z0-9-]*$/
 const BOT_TEMPLATE_IMPORT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const BOT_MESSAGE_SEARCH_RESULT_LIMIT = 20
+const BOT_MESSAGE_SEARCH_QUERY_MAX_CHARS = 500
+const BOT_MESSAGE_SEARCH_TYPES = new Set(['user/message', 'assistant/message'])
 
 function badRequest(message: string): never {
   throw new RemoteError('gateway/bad-request', message, {})
+}
+
+function normalizeBotMessageSearchQuery(request: BotMessageSearchRequest): string {
+  if (!isRequestObject(request)) return badRequest('Bot message search request must be an object')
+  if (typeof request.query !== 'string') return badRequest('Bot message search query must be a string')
+  const query = request.query.trim()
+  if (query.length === 0) return badRequest('Bot message search query must not be empty')
+  if (query.length > BOT_MESSAGE_SEARCH_QUERY_MAX_CHARS) {
+    return badRequest(`Bot message search query must contain at most ${String(BOT_MESSAGE_SEARCH_QUERY_MAX_CHARS)} UTF-16 code units`)
+  }
+  if (query.includes('\0')) return badRequest('Bot message search query must not contain NUL')
+  return query
 }
 
 function textLength(value: string): number {
@@ -1519,6 +1543,34 @@ function normalizeOptionalBoolean(label: string, value: boolean | undefined): bo
 function normalizeConnectedAppId(value: unknown): string {
   if (typeof value !== 'string') return badRequest('Connected-app id must be a string')
   return value
+}
+
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeGrokConnectedAppMappings(value: unknown): readonly BotGrokConnectedAppMapping[] {
+  if (!Array.isArray(value)) return badRequest('Grok connected-app mappings must be an array')
+  return value.map((candidate, index) => {
+    if (!isUnknownRecord(candidate)) return badRequest(`Grok connected-app mapping ${String(index)} is invalid`)
+    if (Object.keys(candidate).some(key => !['sourceIndex', 'sourceLabel', 'targetServerName'].includes(key))) {
+      return badRequest(`Grok connected-app mapping ${String(index)} has invalid fields`)
+    }
+    const sourceIndex = candidate.sourceIndex
+    const sourceLabel = candidate.sourceLabel
+    const targetServerName = candidate.targetServerName
+    if (typeof sourceIndex !== 'number' || !Number.isSafeInteger(sourceIndex) || sourceIndex < 0) {
+      return badRequest(`Grok connected-app mapping ${String(index)} has an invalid source index`)
+    }
+    if (typeof sourceLabel !== 'string' || sourceLabel.length === 0 || sourceLabel.trim() !== sourceLabel || textLength(sourceLabel) > 160) {
+      return badRequest(`Grok connected-app mapping ${String(index)} has an invalid source label`)
+    }
+    if (typeof targetServerName !== 'string' || targetServerName.length === 0
+      || targetServerName.trim() !== targetServerName || textLength(targetServerName) > 128) {
+      return badRequest(`Grok connected-app mapping ${String(index)} has an invalid target server name`)
+    }
+    return { sourceIndex, sourceLabel, targetServerName }
+  })
 }
 
 function connectedAppName(id: string): string {
@@ -4479,6 +4531,71 @@ export class BotService extends TypertRemoteService {
     }))
   }
 
+  /** Read exact action catalogs from eligible loader-owned MCP connectors. */
+  private mcpActionCatalogs(): readonly McpActionCatalog[] {
+    const catalogs: McpActionCatalog[] = []
+    this.ctx.emit('mcp/actions/catalog', (catalog) => { catalogs.push(catalog) })
+    return catalogs
+  }
+
+  /** Classify an owner-reviewed Grok app map without inferring connector identities. */
+  private classifyGrokConnectedApps(
+    sourceApps: readonly string[],
+    mappings: readonly BotGrokConnectedAppMapping[],
+    record: BotRecord,
+    catalogs: readonly McpActionCatalog[],
+  ): {
+    readonly rows: readonly BotGrokConnectedAppMappingView[]
+    readonly eligibleIds: readonly string[]
+    readonly catalogAvailable: boolean
+    readonly unresolved: boolean
+  } {
+    const mappingByIndex = new Map<number, BotGrokConnectedAppMapping>()
+    const duplicateIndexes = new Set<number>()
+    for (const mapping of mappings) {
+      if (mappingByIndex.has(mapping.sourceIndex)) duplicateIndexes.add(mapping.sourceIndex)
+      else mappingByIndex.set(mapping.sourceIndex, mapping)
+    }
+    const catalogsByServer = new Map<string, McpActionCatalog>()
+    const duplicateServers = new Set<string>()
+    for (const catalog of catalogs) {
+      if (catalogsByServer.has(catalog.serverName)) duplicateServers.add(catalog.serverName)
+      else catalogsByServer.set(catalog.serverName, catalog)
+    }
+    const eligibleIds = new Set<string>()
+    let unresolved = false
+    const rows = sourceApps.map((sourceLabel, sourceIndex): BotGrokConnectedAppMappingView => {
+      const mapping = mappingByIndex.get(sourceIndex)
+      if (mapping === undefined) return { sourceIndex, sourceLabel, resolution: 'unmapped' }
+      if (duplicateIndexes.has(sourceIndex) || mapping.sourceLabel !== sourceLabel) {
+        unresolved = true
+        return { sourceIndex, sourceLabel, resolution: 'ambiguous', targetServerName: mapping.targetServerName }
+      }
+      if (duplicateServers.has(mapping.targetServerName)) {
+        unresolved = true
+        return { sourceIndex, sourceLabel, resolution: 'ambiguous', targetServerName: mapping.targetServerName }
+      }
+      const match = catalogsByServer.get(mapping.targetServerName)
+      if (match === undefined) {
+        unresolved = true
+        return { sourceIndex, sourceLabel, resolution: catalogs.length === 0 ? 'unavailable' : 'missing', targetServerName: mapping.targetServerName }
+      }
+      const resolution: BotGrokConnectedAppResolution = match.connected ? 'connected' : 'unconnected'
+      eligibleIds.add(mapping.targetServerName)
+      return {
+        sourceIndex,
+        sourceLabel,
+        resolution,
+        targetServerName: mapping.targetServerName,
+        entryId: match.entryId,
+        allowed: record.connectedAppIds === undefined
+          ? !(record.connectedAppDenyIds ?? []).includes(mapping.targetServerName)
+          : record.connectedAppIds.includes(mapping.targetServerName),
+      }
+    })
+    return { rows, eligibleIds: [...eligibleIds], catalogAvailable: catalogs.length > 0, unresolved }
+  }
+
   /** Build a structured denial for one Bot's external MCP tool call. */
   private connectedAppDenial(
     agent: Pick<Agent, 'id'>,
@@ -6543,6 +6660,59 @@ export class BotService extends TypertRemoteService {
     return this.listFromDomain(request, await this.getDomain())
   }
 
+  /**
+   * Search visible messages across the owner's direct Bot Sessions.
+   *
+   * The Bot roster is the authorization source: the Session query provider
+   * never receives an unrestricted corpus request. The returned sequence is
+   * the provider's exact matching event sequence so the Client can open the
+   * matching Bot transcript without guessing from snippets.
+   *
+   * @param request - Literal message query.
+   * @returns A bounded owner-scoped page of visible Bot message matches.
+   */
+  @Remote('searchMessages')
+  async searchMessages(request: BotMessageSearchRequest): Promise<BotMessageSearchValue> {
+    const query = normalizeBotMessageSearchQuery(request)
+    const bots = (await this.list({ includeHidden: true })).bots
+    const botBySession = new Map(bots.map(bot => [String(bot.sessionId), bot.id]))
+    if (botBySession.size === 0) return { items: [], hasMore: false }
+    const sessionQuery = this.ctx.get('sessionQuery')
+    if (sessionQuery === undefined) {
+      throw new RemoteError(
+        'gateway/internal',
+        'Bot message search is unavailable: this deployment does not mount @yharness/session-query',
+        {},
+      )
+    }
+    const page = await sessionQuery.searchSessions({
+      query,
+      sessionFilters: [{
+        kind: 'id',
+        values: bots.map(bot => bot.sessionId),
+      }],
+      eventFilters: [
+        { kind: 'type', values: ['user/message', 'assistant/message'] },
+        { kind: 'surface', values: ['current'] },
+      ],
+      limit: BOT_MESSAGE_SEARCH_RESULT_LIMIT,
+    })
+    const items = page.items.flatMap((hit: SessionSearchHit) => {
+      const botId = botBySession.get(String(hit.header.id))
+      if (botId === undefined
+        || hit.bestMatch.sessionId !== hit.header.id
+        || !BOT_MESSAGE_SEARCH_TYPES.has(hit.bestMatch.type)
+        || hit.bestMatch.surface !== 'current') return []
+      return [{
+        botId,
+        sessionId: hit.header.id,
+        seq: hit.bestMatch.seq,
+        snippet: hit.bestMatch.snippet,
+      }]
+    }).slice(0, BOT_MESSAGE_SEARCH_RESULT_LIMIT)
+    return { items, hasMore: page.nextCursor !== undefined }
+  }
+
   private async listFromDomain(
     request: BotListRequest,
     domain: Domain<typeof botDomain>,
@@ -7373,6 +7543,97 @@ export class BotService extends TypertRemoteService {
         sourceName: plan.name, memories: plan.memories.length, skills: plan.skills.length,
         skillNames: [...new Set(skillNames.values())],
         routines: plan.routines.length, missingRoutineSkills,
+      }
+    }, signal)
+  }
+
+  /**
+   * Preview or apply exact owner-reviewed connected-app mappings from a Grok export.
+   * @param request - Destination Bot, export labels, reviewed mappings, and optional revision.
+   * @param signal - Optional cancellation signal for the serialized apply.
+   * @returns Per-source classifications, the reviewed Bot revision, and grant changes made by an apply.
+   */
+  @Remote('importGrokConnectedApps')
+  async importGrokConnectedApps(
+    request: BotGrokConnectedAppImportRequest,
+    signal?: AbortSignal,
+  ): Promise<BotGrokConnectedAppImportValue> {
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    if (request.preview !== undefined && typeof request.preview !== 'boolean') {
+      return badRequest('Grok connected-app preview must be a boolean')
+    }
+    const expectedUpdatedAt = request.expectedUpdatedAt
+    if (expectedUpdatedAt !== undefined && (!Number.isSafeInteger(expectedUpdatedAt) || expectedUpdatedAt < 0)) {
+      return badRequest('Bot expectedUpdatedAt must be a non-negative integer')
+    }
+    if (request.preview !== true && expectedUpdatedAt === undefined) {
+      return badRequest('Bot expectedUpdatedAt is required when applying connected-app mappings')
+    }
+    const mappings = normalizeGrokConnectedAppMappings(request.mappings)
+    const plan = parseGrokConnectedAppImport(request.document, request.sourceName)
+    for (const mapping of mappings) {
+      if (mapping.sourceIndex >= plan.apps.length) {
+        return badRequest('A Grok connected-app mapping refers to a source app that is not present')
+      }
+    }
+    return this.serialize(async () => {
+      const bot = await this.readOwnedBot(botId)
+      if (bot.state !== 'active') return badRequest('Wait for the destination Bot to finish setup.')
+      const catalogs = this.mcpActionCatalogs()
+      const review = this.classifyGrokConnectedApps(plan.apps, mappings, bot, catalogs)
+      if (request.preview === true) {
+        return {
+          updatedAt: bot.updatedAt,
+          mappings: review.rows,
+          changedAppIds: [],
+          catalogAvailable: review.catalogAvailable,
+        }
+      }
+      if (review.unresolved) {
+        return badRequest('Review every connected-app mapping that is not connected or unconnected before applying')
+      }
+      if (expectedUpdatedAt !== bot.updatedAt) {
+        throw new RemoteError('gateway/conflict', 'Bot profile changed during connected-app import', { botId })
+      }
+      const targetIds = review.eligibleIds
+      const currentAllowed = bot.connectedAppIds
+      const currentDenied = bot.connectedAppDenyIds ?? []
+      const changedAppIds = targetIds.filter(appId => currentAllowed === undefined
+        ? currentDenied.includes(appId)
+        : !currentAllowed.includes(appId))
+      if (changedAppIds.length === 0) {
+        return {
+          updatedAt: bot.updatedAt,
+          mappings: review.rows,
+          changedAppIds,
+          catalogAvailable: review.catalogAvailable,
+        }
+      }
+      const next = await this.commitBotMutation(botId, current => current.connectedAppIds === undefined
+        ? {
+          ...current,
+          connectedAppDenyIds: currentDenied.filter(appId => !targetIds.includes(appId)),
+          updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+        }
+        : {
+          ...current,
+          connectedAppIds: [...new Set([...current.connectedAppIds, ...targetIds])],
+          updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+        }, expectedUpdatedAt, signal)
+      this.recordsBySession.set(String(next.sessionId), next)
+      this.refreshSharedRecords(next)
+      this.emitChanged()
+      const mappingsAfterApply = review.rows.map((row) => {
+        const targetServerName = row.targetServerName
+        if (targetServerName === undefined || !targetIds.includes(targetServerName)) return row
+        return { ...row, allowed: true }
+      })
+      return {
+        updatedAt: next.updatedAt,
+        mappings: mappingsAfterApply,
+        changedAppIds,
+        catalogAvailable: review.catalogAvailable,
       }
     }, signal)
   }

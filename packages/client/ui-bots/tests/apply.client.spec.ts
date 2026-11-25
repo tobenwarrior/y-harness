@@ -6,20 +6,48 @@ import { Context } from '@yharness/cordis'
 import type { ConnectionGeneration } from '@yharness/client-connection/client'
 import { LocaleRuntime } from '@yharness/client-locale/client'
 import type { ISessions, SessionBinding, SessionListState, SessionReference } from '@yharness/api-session-controller/client'
-import type { BotGroupId, BotGroupInspectValue, BotGroupMessageId, BotGroupView, BotView } from '@yharness/bots/client'
+import type { RemoteResult } from '@yharness/api-remotes/client'
+import type { BotGroupId, BotGroupInspectValue, BotGroupMessageId, BotGroupView, BotMessageSearchRequest, BotMessageSearchValue, BotView } from '@yharness/bots/client'
 import { BotId } from '@yharness/bots/client'
 import { AttachmentId } from '@yharness/attachment'
 import { brandString } from '@yharness/brand'
-import { TestRemote } from '@yharness/client-test-runtime'
+import { RemoteError, TestRemote } from '@yharness/client-test-runtime'
 import type { InputTriggerPick, InputTriggerSource } from '@yharness/client-ui-input-trigger/client'
-import { SessionId } from '@yharness/session/types'
+import { SessionId, SessionSeq } from '@yharness/session/types'
+import type { PanelInfo } from '@yharness/client-ui-layout/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { apply as nodeApply } from '../src/index.ts'
-import { apply, inject } from '../src/client/apply.ts'
+import { apply, inject, PANEL_ID } from '../src/client/apply.ts'
 import type { BotWorkspaceRemote } from '../src/client/controller.ts'
 import type { ComputerStatus } from '../src/client/computer-client.ts'
 import { en } from '../src/client/locales.ts'
+import type { BotMessageSearchActions } from '../src/client/BotMessageSearchDialog.tsx'
+import type {
+  GitHubAppSignInActions, GitHubAppSignInAttemptId, GitHubAppSignInView, McpActionServerView,
+} from '../src/client/types.ts'
+
+type GitHubAppRemoteValue =
+  | GitHubAppSignInView
+  | { readonly ok: true; readonly value: GitHubAppSignInView }
+  | { readonly ok: false; readonly error: { readonly message: string } }
+
+type GitHubAppRemoteFixture = {
+  readonly getGitHubAppSignIn?: () => Promise<GitHubAppRemoteValue>
+  readonly startGitHubAppSignIn?: () => Promise<GitHubAppRemoteValue>
+  readonly cancelGitHubAppSignIn?: (attemptId: GitHubAppSignInAttemptId) => Promise<GitHubAppRemoteValue>
+  readonly disconnectGitHubApp?: () => Promise<GitHubAppRemoteValue>
+}
+
+type McpActionRemoteValue =
+  | { readonly ok: true; readonly value: readonly McpActionServerView[] }
+  | { readonly ok: false; readonly error: { readonly message: string } }
+
+type McpActionRemoteFixture = {
+  readonly listMcpActions?: () => Promise<McpActionRemoteValue>
+  readonly setMcpActionEnabled?: (serverName: string, actionName: string, enabled: boolean) => Promise<McpActionRemoteValue>
+  readonly reconnectMcpConnector?: (serverName: string) => Promise<McpActionRemoteValue>
+}
 
 type Registered = {
   readonly options: Record<string, unknown>
@@ -90,7 +118,11 @@ function connectionFixture() {
   }
 }
 
-async function boot() {
+async function boot({ withSearch = false, account, settings }: {
+  withSearch?: boolean
+  account?: GitHubAppRemoteFixture
+  settings?: McpActionRemoteFixture
+} = {}) {
   const ctx = new Context()
   const registered: Registered[] = []
   const slots = {
@@ -106,11 +138,16 @@ async function boot() {
   }
   const locale = new LocaleRuntime(ctx)
   const currentBot = bot()
+  const hit = { botId: currentBot.id, sessionId: currentBot.sessionId, seq: SessionSeq(42), snippet: 'Example message' }
+  const searchMessages = vi.fn<(request: BotMessageSearchRequest) => Promise<RemoteResult<BotMessageSearchValue>>>(async () => ({
+    ok: true as const, value: { items: [hit], hasMore: false },
+  }))
   const list = vi.fn<BotWorkspaceRemote['list']>(async () => ({ ok: true, value: { bots: [currentBot] } }))
-  const remoteBots: BotWorkspaceRemote = {
+  const remoteBots: BotWorkspaceRemote & { searchMessages?: typeof searchMessages } = {
     list,
     create: vi.fn(async () => ({ ok: true as const, value: { bot: currentBot } })),
     rename: vi.fn(async () => ({ ok: true as const, value: { bot: currentBot } })),
+    ...(withSearch ? { searchMessages } : {}),
   }
   const remote = new TestRemote(ctx, { bots: remoteBots })
   const session = sessionReference(currentBot.sessionId)
@@ -164,19 +201,30 @@ async function boot() {
       }
     }),
   }
+  const uiConversation = { events: { register: vi.fn(() => () => {}) } }
   ctx.provide('slots', slots as never)
   ctx.provide('locale', locale)
   ctx.provide('sessions', sessions)
   ctx.provide('connection', connection.connection as never)
+  ctx.provide('uiConversation', uiConversation as never)
   ctx.provide('sidebarRight', sidebarRight as never)
   ctx.provide('sidebarRightTabs', sidebarRightTabs as never)
   ctx.provide('inputTriggers', inputTriggers as never)
+  const chatNavigation = { request: vi.fn(), cancel: vi.fn() }
+  const panelInfo = createSnapshotStore<PanelInfo>({ activePanelId: PANEL_ID })
+  if (withSearch) {
+    ctx.provide('layout', { panelInfo })
+    ctx.provide('chatNavigation', chatNavigation)
+  }
+  if (account !== undefined) ctx.provide('remote.account', account as never)
+  if (settings !== undefined) ctx.provide('remote.settings', settings as never)
   const fiber = ctx.plugin({ inject: [...inject], apply })
   await fiber.await()
   await vi.waitFor(() => { expect(list).toHaveBeenCalledWith({ includeHidden: true }) })
   return {
     ctx, fiber, registered, inputSources, remote, remoteBots, sessions, connection, sidebarRight, sidebarRightTabs,
     currentBot, reference, release: session.release,
+    chatNavigation, hit, list, searchMessages, panelInfo,
     setExpanded: (value: boolean) => { expanded = value },
     setCommandTarget: (value: { readonly id: string } | undefined) => { commandTarget = value },
     setTabs: (value: readonly { readonly id: string; readonly kind: string }[]) => { tabs = value },
@@ -205,6 +253,139 @@ describe('ui-bots composition', () => {
 
   it('keeps the node entry a loader-managed no-op', () => {
     expect(nodeApply).not.toThrow()
+  })
+
+  it('routes Bot search to the matched chat and discards a pending match when leaving Bots', async () => {
+    const fixture = await boot({ withSearch: true })
+    try {
+      const sidebar = fixture.registered.find(entry => entry.options.name === 'sidebar.bots')!
+      const face = sidebar.inject?.() as {
+        readonly messageSearch: BotMessageSearchActions
+        readonly hooks: { readonly messageSearchOpen: { getSnapshot: () => boolean } }
+      }
+      expect(fixture.ctx.bail('layout/search-active-panel', 'plugins' as typeof PANEL_ID)).toBeUndefined()
+      expect(fixture.ctx.bail('layout/search-active-panel', PANEL_ID)).toBe(true)
+      expect(face.hooks.messageSearchOpen.getSnapshot()).toBe(true)
+      await expect(face.messageSearch.search('example')).resolves.toEqual({ items: [fixture.hit], hasMore: false })
+      expect(fixture.searchMessages).toHaveBeenCalledWith({ query: 'example' })
+      fixture.searchMessages.mockResolvedValueOnce({
+        ok: false, error: new RemoteError('gateway/internal', 'Synthetic search unavailable', {}),
+      })
+      await expect(face.messageSearch.search('fail')).rejects.toThrow('Synthetic search unavailable')
+      face.messageSearch.openResult({ ...fixture.hit, sessionId: SessionId('unrelated') })
+      expect(fixture.chatNavigation.request).not.toHaveBeenCalled()
+      face.messageSearch.openResult(fixture.hit)
+      expect(face.hooks.messageSearchOpen.getSnapshot()).toBe(false)
+      expect(fixture.chatNavigation.request).toHaveBeenCalledWith({ sessionId: fixture.hit.sessionId, seq: fixture.hit.seq })
+      fixture.panelInfo.set({ activePanelId: null })
+      expect(fixture.chatNavigation.cancel).toHaveBeenCalledWith(fixture.hit.sessionId)
+      fixture.panelInfo.set({ activePanelId: PANEL_ID })
+      face.messageSearch.setOpen(true)
+      expect(face.hooks.messageSearchOpen.getSnapshot()).toBe(true)
+      fixture.ctx.emit('connection/reset')
+      expect(face.hooks.messageSearchOpen.getSnapshot()).toBe(false)
+      fixture.chatNavigation.cancel.mockClear()
+      face.messageSearch.openResult(fixture.hit)
+      fixture.list.mockResolvedValueOnce({ ok: true, value: { bots: [] } })
+      fixture.remote.emit('bots/changed', [])
+      await vi.waitFor(() => {
+        expect(fixture.chatNavigation.cancel).toHaveBeenCalledWith(fixture.hit.sessionId)
+      })
+    } finally {
+      await fixture.fiber.dispose()
+    }
+  })
+
+  it('mounts all GitHub account actions and unwraps direct, successful, and failed replies', async () => {
+    const view: GitHubAppSignInView = { status: 'needs-auth', attempt: null }
+    const attemptId = brandString<GitHubAppSignInAttemptId>('apply-attempt')
+    const account: GitHubAppRemoteFixture = {
+      getGitHubAppSignIn: vi.fn(async () => view),
+      startGitHubAppSignIn: vi.fn(async () => ({ ok: true as const, value: view })),
+      cancelGitHubAppSignIn: vi.fn<(id: GitHubAppSignInAttemptId) => Promise<GitHubAppRemoteValue>>(async id => ({ ok: true as const, value: { ...view, attempt: { id, phase: 'cancelled' as const } } })),
+      disconnectGitHubApp: vi.fn(async () => ({ ok: false as const, error: { message: 'GitHub account is offline' } })),
+    }
+    const fixture = await boot({ account })
+    const sidebar = fixture.registered.find(entry => entry.options.name === 'sidebar.bots')!
+    const actions = (sidebar.inject?.() as { readonly githubAppSignIn?: GitHubAppSignInActions }).githubAppSignIn
+    if (actions === undefined) throw new Error('GitHub account actions were not mounted')
+    const chatCard = fixture.registered.find(entry => entry.options.id === 'bot-app-connection')
+    expect(chatCard?.inject?.()).toMatchObject({ githubAppSignIn: actions })
+    await expect(actions.getGitHubAppSignIn()).resolves.toEqual(view)
+    await expect(actions.startGitHubAppSignIn()).resolves.toEqual(view)
+    await expect(actions.cancelGitHubAppSignIn(attemptId)).resolves.toEqual({
+      ...view, attempt: { id: attemptId, phase: 'cancelled' },
+    })
+    await expect(actions.disconnectGitHubApp()).rejects.toThrow('GitHub account is offline')
+    expect(account.getGitHubAppSignIn).toHaveBeenCalledTimes(1)
+    expect(account.startGitHubAppSignIn).toHaveBeenCalledTimes(1)
+    expect(account.cancelGitHubAppSignIn).toHaveBeenCalledWith(attemptId)
+    expect(account.disconnectGitHubApp).toHaveBeenCalledTimes(1)
+    await fixture.fiber.dispose()
+  })
+
+  it('does not mount incomplete GitHub account bindings', async () => {
+    const fixture = await boot({
+      account: { getGitHubAppSignIn: vi.fn<() => Promise<GitHubAppSignInView>>().mockResolvedValue({ status: 'needs-auth', attempt: null }) },
+    })
+    const sidebar = fixture.registered.find(entry => entry.options.name === 'sidebar.bots')!
+    expect((sidebar.inject?.() as { readonly githubAppSignIn?: GitHubAppSignInActions }).githubAppSignIn).toBeUndefined()
+    const chatCard = fixture.registered.find(entry => entry.options.id === 'bot-app-connection')
+    expect(chatCard?.inject?.()).toHaveProperty('hooks.workspace')
+    expect(chatCard?.inject?.()).not.toHaveProperty('githubAppSignIn')
+    await fixture.fiber.dispose()
+  })
+
+  it('mounts complete workspace connector action bindings and unwraps replies', async () => {
+    const actions: McpActionServerView[] = [{
+      serverName: 'Workspace Fixture', connected: true, editable: true,
+      actions: [{ name: 'inspect_record', enabled: false }],
+    }]
+    const listMcpActions = vi.fn().mockResolvedValue({ ok: true as const, value: actions })
+    const setMcpActionEnabled = vi.fn().mockResolvedValue({ ok: true as const, value: actions })
+    const reconnectMcpConnector = vi.fn().mockResolvedValue({ ok: true as const, value: actions })
+    const settings = { listMcpActions, setMcpActionEnabled, reconnectMcpConnector } satisfies McpActionRemoteFixture
+    const fixture = await boot({ settings })
+    const sidebar = fixture.registered.find(entry => entry.options.name === 'sidebar.bots')!
+    const face = sidebar.inject?.() as {
+      readonly loadMcpActions?: () => Promise<readonly McpActionServerView[]>
+      readonly setMcpActionEnabled?: (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
+      readonly reconnectMcpConnector?: (serverName: string) => Promise<readonly McpActionServerView[]>
+    }
+    if (face.loadMcpActions === undefined || face.setMcpActionEnabled === undefined || face.reconnectMcpConnector === undefined) throw new Error('MCP action bindings were not mounted')
+    await expect(face.loadMcpActions()).resolves.toEqual(actions)
+    await expect(face.setMcpActionEnabled('Workspace Fixture', 'inspect_record', true)).resolves.toEqual(actions)
+    await expect(face.reconnectMcpConnector('Workspace Fixture')).resolves.toEqual(actions)
+    expect(listMcpActions).toHaveBeenCalledOnce()
+    expect(setMcpActionEnabled).toHaveBeenCalledWith('Workspace Fixture', 'inspect_record', true)
+    expect(reconnectMcpConnector).toHaveBeenCalledWith('Workspace Fixture')
+    listMcpActions.mockResolvedValueOnce({ ok: false as const, error: { message: 'action catalog unavailable' } })
+    setMcpActionEnabled.mockResolvedValueOnce({ ok: false as const, error: { message: 'action update unavailable' } })
+    await expect(face.loadMcpActions()).rejects.toThrow('action catalog unavailable')
+    await expect(face.setMcpActionEnabled('Workspace Fixture', 'inspect_record', true)).rejects.toThrow('action update unavailable')
+    await fixture.fiber.dispose()
+  })
+
+  it('keeps the roster compatible with an older Settings remote without reconnect', async () => {
+    const actions: McpActionServerView[] = [{
+      serverName: 'Legacy Workspace Fixture', connected: true, editable: true,
+      actions: [{ name: 'inspect_record', enabled: false }],
+    }]
+    const settings = {
+      listMcpActions: vi.fn().mockResolvedValue({ ok: true as const, value: actions }),
+      setMcpActionEnabled: vi.fn().mockResolvedValue({ ok: true as const, value: actions }),
+    } satisfies McpActionRemoteFixture
+    const fixture = await boot({ settings })
+    const sidebar = fixture.registered.find(entry => entry.options.name === 'sidebar.bots')!
+    const face = sidebar.inject?.() as {
+      readonly loadMcpActions?: () => Promise<readonly McpActionServerView[]>
+      readonly setMcpActionEnabled?: (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
+      readonly reconnectMcpConnector?: (serverName: string) => Promise<readonly McpActionServerView[]>
+    }
+    expect(face.loadMcpActions).toEqual(expect.any(Function))
+    expect(face.setMcpActionEnabled).toEqual(expect.any(Function))
+    expect(face).not.toHaveProperty('reconnectMcpConnector')
+    await fixture.fiber.dispose()
   })
 
   it('registers the roster, Conversation, request cards, mentions, and teardown effects', async () => {

@@ -106,7 +106,7 @@ vi.mock('electron', () => ({
     on: (name: string, callback: (...args: unknown[]) => void) => { state.listeners.set(name, callback) },
   },
   dialog: { showErrorBox: vi.fn(), showMessageBox: vi.fn() },
-  Menu: { buildFromTemplate: state.menu, setApplicationMenu: vi.fn() },
+  Menu: { buildFromTemplate: state.menu, setApplicationMenu: vi.fn(), getApplicationMenu: () => null },
   nativeImage: { createFromPath: (path: string) => ({ path }) },
 }))
 // The Windows tray relabels through Menu as well; keep the menu call counts below platform-neutral.

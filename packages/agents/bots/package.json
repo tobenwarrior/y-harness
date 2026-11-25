@@ -63,12 +63,15 @@
     "@yharness/attachment": "workspace:*",
     "@yharness/agent": "workspace:*",
     "@yharness/api-session-controller": "workspace:*",
+    "@yharness/github-app-auth": "workspace:*",
     "@yharness/llm": "workspace:*",
+    "@yharness/mcp-client": "workspace:*",
     "@yharness/mcp-resources": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/schedule": "workspace:*",
     "@yharness/skill": "workspace:*",
     "@yharness/scope": "workspace:*",
+    "@yharness/session-query": "workspace:*",
     "@yharness/subagent": "workspace:*",
     "@yharness/system-prompt": "workspace:*",
     "@yharness/tool-schedule": "workspace:*",
@@ -81,7 +84,16 @@
     "@yharness/agent-preset-registry": {
       "optional": true
     },
+    "@yharness/github-app-auth": {
+      "optional": true
+    },
+    "@yharness/mcp-client": {
+      "optional": true
+    },
     "@yharness/mcp-resources": {
+      "optional": true
+    },
+    "@yharness/session-query": {
       "optional": true
     }
   },
@@ -95,7 +107,9 @@
     "@yharness/attachment": "workspace:*",
     "@yharness/agent": "workspace:*",
     "@yharness/api-session-controller": "workspace:*",
+    "@yharness/github-app-auth": "workspace:*",
     "@yharness/llm": "workspace:*",
+    "@yharness/mcp-client": "workspace:*",
     "@yharness/mcp-resources": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/schedule": "workspace:*",
@@ -109,6 +123,7 @@
     "@yharness/storage-domain": "workspace:*",
     "@yharness/storage-json": "workspace:*",
     "@yharness/storage-sqlite": "workspace:*",
+    "@yharness/session-query": "workspace:*",
     "@yharness/user-approval": "workspace:*",
     "@yharness/typert-protocol": "workspace:*",
     "@yharness/cordis-plugin-loader": "workspace:~"

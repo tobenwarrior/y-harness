@@ -52,6 +52,8 @@ export type {
 
 export { isRunningTool, isSettledTool } from './contract/chat-nodes.ts'
 export { EMPTY_CHAT_SNAPSHOT } from './contract/snapshot.ts'
+export { ChatNavigationService } from './chat/chat-navigation-service.ts'
+export type { ChatNavigationRequest } from './chat/chat-navigation-service.ts'
 
 /** Public merge surface for Chat renderer payloads contributed by other plugins. */
 export interface ChatNodeDataMap {}

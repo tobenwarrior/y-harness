@@ -228,6 +228,8 @@ describe('daily latest-only decisions and durable targets', () => {
     ])).toBe([
       '[SCHEDULE REMINDER BATCH]',
       'This is a scheduled message from the user',
+      'Handle the reminder prompts below as the current user requests. Use available tools and follow the existing approval policy when the work calls for them.',
+      'Report results from this turn or explain what prevented the work. Earlier occurrences are conversation history.',
       'reminders_json: [{"schedule_id":"daily","occurrence_at":"2026-09-16T15:00:00.000Z","reminder_prompt":"Daily reminder"},{"schedule_id":"every","occurrence_at":"2026-09-16T15:00:00.000Z","reminder_prompt":"line\\n\\"quoted\\""}]',
     ].join('\n'))
   })

@@ -3,7 +3,7 @@ import type { Context as ClientContext } from '@yharness/cordis'
 import type { SubagentAddress } from '@yharness/subagent/client'
 import type { SessionId } from '@yharness/session/types'
 import type { ComposerChainProps } from '@yharness/client-ui-conversation/client'
-import { SubagentCatalogAction, SubagentHeaderLineage, type SubagentCatalogInjected } from './SubagentHeaderLineage.tsx'
+import { SubagentActivity, SubagentCatalogAction, SubagentHeaderLineage, type SubagentCatalogInjected } from './SubagentHeaderLineage.tsx'
 import {
   SubagentReadOnlyComposer, type SubagentReadOnlyMatch,
 } from './SubagentReadOnlyComposer.tsx'
@@ -78,6 +78,14 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       inject: catalogActions,
     }, SubagentHeaderLineage),
+  )
+  ctx.slots.inject(
+    'conversation.session.header.agents',
+    () => ctx.slots.register({
+      name: 'conversation.session.header.agents',
+      locale: NS,
+      inject: catalogActions,
+    }, SubagentActivity),
   )
   ctx.slots.inject(
     'conversation.session.header.actions',

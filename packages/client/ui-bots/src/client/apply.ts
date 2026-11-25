@@ -7,9 +7,11 @@ import type {} from '@yharness/client-ui-renderer/client'
 import type {} from '@yharness/client-ui-sidebar/client'
 import type {} from '@yharness/client-ui-sidebar-right/client'
 import type {} from '@yharness/client-ui-conversation/client'
+import type {} from '@yharness/client-ui-chat/client'
 import type {} from '@yharness/client-locale/client'
 import type { InputTriggerSource } from '@yharness/client-ui-input-trigger/client'
 import type { BotAvatar } from '@yharness/bots/client'
+import type { ChatNavigationRequest, ChatNavigationService } from '@yharness/client-ui-chat/client'
 import { createSnapshotStore } from '@yharness/client-store'
 import type { MainPanelId } from '@yharness/client-ui-layout/client'
 import { BotWorkspaceController } from './controller.ts'
@@ -23,14 +25,82 @@ import { createBotReferenceSource } from './bot-reference-source.ts'
 import { BotVaultRequestCard } from './BotVaultRequestCard.tsx'
 import { BotWebsiteLoginRequestCard } from './BotWebsiteLoginRequestCard.tsx'
 import { ComputerSignInCard } from './ComputerSignInCard.tsx'
+import type { BotMessageSearchActions } from './BotMessageSearchDialog.tsx'
+import { BotAppConnectionCard } from './BotAppConnectionCard.tsx'
+import { botAppConnectionTurnDefinition } from './bot-app-connection.ts'
+import type {
+  BotMcpActionActions, GitHubAppSignInActions, GitHubAppSignInAttemptId, GitHubAppSignInView, McpActionServerView,
+} from './types.ts'
 
 /** Stable main-panel identity shared by the sidebar entry and main occupant. */
 export const PANEL_ID = 'bots' as MainPanelId
 
 /** Services required by the Bot roster and its Session-backed Conversation; image generation is optional. */
 export const inject = [
-  'slots', 'locale', 'remote', 'remote.bots', 'sessions', 'connection',
+  'slots', 'locale', 'remote', 'remote.bots', 'sessions', 'connection', 'uiConversation',
 ]
+
+type GitHubAppRemoteValue =
+  | GitHubAppSignInView
+  | { readonly ok: true; readonly value: GitHubAppSignInView }
+  | { readonly ok: false; readonly error: { readonly message: string } }
+
+interface GitHubAppSignInRemote {
+  readonly getGitHubAppSignIn?: () => Promise<GitHubAppRemoteValue>
+  readonly startGitHubAppSignIn?: () => Promise<GitHubAppRemoteValue>
+  readonly cancelGitHubAppSignIn?: (attemptId: GitHubAppSignInAttemptId) => Promise<GitHubAppRemoteValue>
+  readonly disconnectGitHubApp?: () => Promise<GitHubAppRemoteValue>
+}
+
+type McpActionRemoteValue =
+  | { readonly ok: true; readonly value: readonly McpActionServerView[] }
+  | { readonly ok: false; readonly error: { readonly message: string } }
+
+interface McpActionSettingsRemote {
+  readonly listMcpActions?: () => Promise<McpActionRemoteValue>
+  readonly setMcpActionEnabled?: (serverName: string, actionName: string, enabled: boolean) => Promise<McpActionRemoteValue>
+  readonly reconnectMcpConnector?: (serverName: string) => Promise<McpActionRemoteValue>
+}
+
+function unwrapGitHubAppView(result: GitHubAppRemoteValue): GitHubAppSignInView {
+  if (!('ok' in result)) return result
+  if (!result.ok) throw new Error(result.error.message)
+  return result.value
+}
+
+function githubAppSignInActions(account: GitHubAppSignInRemote | undefined): GitHubAppSignInActions | undefined {
+  if (account === undefined) return undefined
+  const get = account.getGitHubAppSignIn
+  const start = account.startGitHubAppSignIn
+  const cancel = account.cancelGitHubAppSignIn
+  const disconnect = account.disconnectGitHubApp
+  if (typeof get !== 'function' || typeof start !== 'function' || typeof cancel !== 'function' || typeof disconnect !== 'function') return undefined
+  return {
+    getGitHubAppSignIn: async () => unwrapGitHubAppView(await get()),
+    startGitHubAppSignIn: async () => unwrapGitHubAppView(await start()),
+    cancelGitHubAppSignIn: async attemptId => unwrapGitHubAppView(await cancel(attemptId)),
+    disconnectGitHubApp: async () => unwrapGitHubAppView(await disconnect()),
+  }
+}
+
+function unwrapMcpActionCatalog(result: McpActionRemoteValue): readonly McpActionServerView[] {
+  if (result.ok) return result.value
+  throw new Error(result.error.message)
+}
+
+function mcpActionActions(settings: McpActionSettingsRemote | undefined): BotMcpActionActions | undefined {
+  if (settings === undefined || typeof settings.listMcpActions !== 'function' || typeof settings.setMcpActionEnabled !== 'function') return undefined
+  const list = settings.listMcpActions
+  const set = settings.setMcpActionEnabled
+  const reconnect = settings.reconnectMcpConnector
+  return {
+    list: async () => unwrapMcpActionCatalog(await list()),
+    set: async (serverName, actionName, enabled) => unwrapMcpActionCatalog(await set(serverName, actionName, enabled)),
+    ...(typeof reconnect === 'function' ? {
+      reconnect: async serverName => unwrapMcpActionCatalog(await reconnect(serverName)),
+    } : {}),
+  }
+}
 
 /** Register the Bot workspace, loading one durable roster and one Session per selection. */
 export function apply(ctx: Context): void {
@@ -39,6 +109,8 @@ export function apply(ctx: Context): void {
   const sharedClient = createSharedBotsClient(connection.rpc, {
     subscribeConnectionGeneration: listener => connection.generation.subscribe(listener),
   })
+  const settings = ctx.get('remote.settings') as McpActionSettingsRemote | undefined
+  const mcpActions = mcpActionActions(settings)
   const controller = new BotWorkspaceController(
     ctx.remote.bots,
     ctx.sessions,
@@ -49,12 +121,73 @@ export function apply(ctx: Context): void {
     key => ctx.locale.bind('bots')(key),
     sharedClient,
   )
+  const account = ctx.get('remote.account') as typeof ctx.remote.account | undefined
+  const githubAppSignIn = githubAppSignInActions(account)
+  ctx.uiConversation.events.register(botAppConnectionTurnDefinition)
   const computer = createComputerClient(connection.fetch)
   const computerAvailability = createComputerAvailability(computer)
   const computerTarget = createSnapshotStore<string | null>(null)
   const computerSignIn = createSnapshotStore<ComputerSignInTarget | undefined>(undefined)
   let signInAttempt = 0
   const workspace = controller.face().hooks.workspace
+  const messageSearchOpen = createSnapshotStore(false)
+  const chatNavigation = (): ChatNavigationService | undefined =>
+    ctx.get('chatNavigation') as ChatNavigationService | undefined
+  const canSearchMessages = (): boolean =>
+    Reflect.has(ctx.remote.bots, 'searchMessages') && chatNavigation() !== undefined
+  let searchTarget: ChatNavigationRequest | undefined
+  const cancelSearchTarget = (): void => {
+    if (searchTarget === undefined) return
+    chatNavigation()?.cancel(searchTarget.sessionId)
+    searchTarget = undefined
+  }
+  const messageSearch: BotMessageSearchActions = {
+    setOpen: (open) => { messageSearchOpen.set(open) },
+    search: async (query) => {
+      const result = await ctx.remote.bots.searchMessages({ query })
+      if (!result.ok) throw new Error(result.error.message)
+      return result.value
+    },
+    openResult: (result) => {
+      const current = workspace.getSnapshot().bots
+        .find(bot => bot.id === result.botId && bot.sessionId === result.sessionId)
+      const navigation = chatNavigation()
+      if (current === undefined || navigation === undefined) return
+      messageSearchOpen.set(false)
+      cancelSearchTarget()
+      controller.face().select(current.id)
+      searchTarget = { sessionId: result.sessionId, seq: result.seq }
+      navigation.request(searchTarget)
+    },
+  }
+  ctx.on('layout/search-active-panel', (panelId) => {
+    if (panelId !== PANEL_ID || !canSearchMessages()) return undefined
+    messageSearchOpen.set(true)
+    return true
+  })
+  ctx.on('connection/reset', () => {
+    messageSearchOpen.set(false)
+    cancelSearchTarget()
+  })
+  ctx.effect(() => {
+    const stop = workspace.subscribe(() => {
+      const target = searchTarget
+      if (target === undefined) return
+      const { selectedBotId, bots } = workspace.getSnapshot()
+      if (!bots.some(bot => bot.id === selectedBotId && bot.sessionId === target.sessionId)) cancelSearchTarget()
+    })
+    return () => {
+      stop()
+      cancelSearchTarget()
+    }
+  }, 'ui-bots: search target lifetime')
+  ctx.inject(['layout'], (scope) => {
+    scope.effect(() => scope.layout.panelInfo.subscribe(() => {
+      if (scope.layout.panelInfo.getSnapshot().activePanelId === PANEL_ID) return
+      messageSearchOpen.set(false)
+      cancelSearchTarget()
+    }), 'ui-bots: dismiss search when leaving Bots')
+  })
   const selectedSessionId = (): string | undefined => {
     const snapshot = workspace.getSnapshot()
     const selected = snapshot.bots.find(bot => bot.id === snapshot.selectedBotId)
@@ -101,7 +234,8 @@ export function apply(ctx: Context): void {
         const files = selected?.files === true && scope.sidebarRightTabs.get('computer-files') !== undefined
         const sharedFiles = files && selected.sharedFiles === true
           && scope.sidebarRightTabs.get('computer-shared-files') !== undefined
-        scope.sidebarRight.selectPanelSession(PANEL_ID, terminal || files || sharedFiles ? sessionId : undefined)
+        const agents = scope.sidebarRightTabs.get('subagentchat') !== undefined
+        scope.sidebarRight.selectPanelSession(PANEL_ID, terminal || files || agents ? sessionId : undefined)
         terminalAvailable.set(terminal)
         filesAvailable.set(files)
         sharedFilesAvailable.set(sharedFiles)
@@ -184,7 +318,10 @@ export function apply(ctx: Context): void {
       name: 'main',
       key: PANEL_ID,
       locale: 'bots',
-      children: { 'bots.conversation': { kind: 'single', scope: 'session-maybe' } },
+      children: {
+        'bots.conversation': { kind: 'single', scope: 'session-maybe' },
+        'conversation.session.header.agents': { kind: 'single', scope: 'session' },
+      },
       inject: () => {
         const face = controller.face()
         return {
@@ -226,6 +363,13 @@ export function apply(ctx: Context): void {
         },
       }),
     }, ComputerSignInCard))
+    const disposeAppConnection = ctx.slots.inject('conversation.chat.turnTail', () => ctx.slots.register({
+      name: 'conversation.chat.turnTail', id: 'bot-app-connection', order: 10, locale: 'bots',
+      inject: () => ({
+        ...(githubAppSignIn === undefined ? {} : { githubAppSignIn }),
+        hooks: { workspace: controller.face().hooks.workspace },
+      }),
+    }, BotAppConnectionCard))
     const disposeReplyAvatar = ctx.slots.inject('conversation.bot.reply.avatar', () => ctx.slots.register({
       name: 'conversation.bot.reply.avatar',
       inject: (): BotReplyAvatarFace => {
@@ -236,7 +380,20 @@ export function apply(ctx: Context): void {
     const disposeSidebar = ctx.slots.inject('sidebar.bots', () => ctx.slots.register({
       name: 'sidebar.bots',
       locale: 'bots',
-      inject: () => controller.face(),
+      inject: () => {
+        const face = controller.face()
+        return {
+          ...face,
+          ...(canSearchMessages() ? { messageSearch } : {}),
+          ...(mcpActions === undefined ? {} : {
+            loadMcpActions: mcpActions.list,
+            setMcpActionEnabled: mcpActions.set,
+            ...(mcpActions.reconnect === undefined ? {} : { reconnectMcpConnector: mcpActions.reconnect }),
+          }),
+          ...(githubAppSignIn === undefined ? {} : { githubAppSignIn }),
+          hooks: { ...face.hooks, messageSearchOpen },
+        }
+      },
     }, BotsRoster))
     const disposeChanged = ctx.remote.$on('bots/changed', () => {
       controller.bumpRoutineRevision()
@@ -250,6 +407,7 @@ export function apply(ctx: Context): void {
       disposeVaultRequest()
       disposeWebsiteLoginRequest()
       disposeSignIn()
+      disposeAppConnection()
       disposeSidebar()
       disposeReplyAvatar()
       disposeConversation()

@@ -83,6 +83,7 @@ Type=exec
 WorkingDirectory={DATA}/workspace
 Environment="HOME={HOME}"
 Environment="YH_HOME={DATA}/state"
+Environment="YH_VPS_SKIP_MISSED_SCHEDULES=1"
 Environment="YH_VPS_BOT_ROOT={DATA}/bots"
 Environment="YH_VPS_BOT_IMAGE={BOT_IMAGE}"
 {browser_env}Environment="PATH={Path(node).parent}:/usr/local/bin:/usr/bin:/bin"

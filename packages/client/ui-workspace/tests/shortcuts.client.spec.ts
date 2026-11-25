@@ -147,6 +147,27 @@ describe('workspace shortcut ownership', () => {
     expect(b.registry.dispatch(key('KeyO'), context, consume).status).toBe('blocked')
   })
 
+  it('opens the selected panel search before falling back to workspace sessions', async () => {
+    const b = await bench()
+    const bots = 'bots' as MainPanelId
+    const openBotSearch = vi.fn()
+    const off = b.ctx.on('layout/search-active-panel', (panelId) => {
+      if (panelId !== bots) return undefined
+      openBotSearch()
+      return true
+    })
+    b.panelInfo.set({ activePanelId: 'plugins' as MainPanelId })
+    expect(b.registry.dispatch(key('KeyK'), context, vi.fn()).status).toBe('handled')
+    expect(b.controls.state.getSnapshot().searchRequest).toBe(1)
+    b.panelInfo.set({ activePanelId: bots })
+    expect(b.registry.dispatch(key('KeyK'), context, vi.fn()).status).toBe('handled')
+    expect(openBotSearch).toHaveBeenCalledOnce()
+    expect(b.controls.state.getSnapshot().searchRequest).toBe(1)
+    off()
+    b.registry.dispatch(key('KeyK'), context, vi.fn())
+    expect(b.controls.state.getSnapshot().searchRequest).toBe(2)
+  })
+
   it('captures rename and archive targets while the main Session changes', async () => {
     const b = await bench()
     for (const command of ['session.rename', 'session.archive']) {

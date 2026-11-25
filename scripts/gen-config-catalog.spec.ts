@@ -70,6 +70,25 @@ describe('shared config schema catalog', () => {
     expect(provider?.pastes?.[0]?.text).toBe('export type Config = BrowserConfig')
   })
 
+  it('walks the inner schema of a transform wrapper', () => {
+    const { root } = fixture(`
+import Schema from '@yharness/schemastery'
+export interface BrowserConfig {
+  /** Browser ownership mode. */
+  mode: 'launch'
+  /** Hide the launched browser. */
+  headless: boolean
+}
+export const Shared = Schema.transform(
+  Schema.object({ mode: Schema.const('launch'), headless: Schema.boolean() }),
+  value => value,
+  true,
+)
+`)
+    const provider = collectConfigCatalog(root).find(entry => entry.pkg === '@test/provider')
+    expect(new Set(provider?.schemaKeys)).toEqual(new Set(['mode', 'headless']))
+  })
+
   it('rejects a schema field absent from the shared config type', () => {
     const { root } = fixture(sharedSchema.replace('headless: Schema.boolean()', 'headless: Schema.boolean(), hidden: Schema.string()'))
     expect(() => collectConfigCatalog(root)).toThrow("schema validates key 'hidden' but config type 'Config' declares no such member")
