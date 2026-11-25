@@ -430,6 +430,33 @@ describe('reconnect supervisor', () => {
     expect(mockClose).toHaveBeenCalledTimes(1)
   })
 
+  it('reconnects only the exact loader connector requested by the Host', async () => {
+    markLoaderEntry(ctx, 'profile:connectors/mcp-srv')
+    await apply(ctx, stdioConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 2 }))
+    await vi.waitFor(() => { expect(ctx.tools.get('mcp__srv__remote')).toBeDefined() })
+    expect(instances).toHaveLength(1)
+
+    const settled: PromiseWithResolvers<void> = Promise.withResolvers()
+    ctx.emit('mcp/actions/reconnect', {
+      serverName: 'other',
+      entryId: 'profile:connectors/mcp-srv',
+      onSettled: () => {},
+    })
+    await sleep(10)
+    expect(instances).toHaveLength(1)
+
+    mockListTools.mockResolvedValue(listing('revived'))
+    ctx.emit('mcp/actions/reconnect', {
+      serverName: 'srv',
+      entryId: 'profile:connectors/mcp-srv',
+      onSettled: (next) => { void next.then(settled.resolve) },
+    })
+    await vi.waitFor(() => { expect(instances).toHaveLength(2) })
+    await settled.promise
+    expect(ctx.tools.get('mcp__srv__remote')).toBeUndefined()
+    expect(ctx.tools.get('mcp__srv__revived')).toBeDefined()
+  })
+
   it('keeps an unauthenticated GitHub App connector idle without retry warnings', async () => {
     const { warns, errors } = captureLogs(ctx)
     markLoaderEntry(ctx, 'profile:connectors/github')
@@ -473,6 +500,7 @@ describe('reconnect supervisor', () => {
 
   it('reports a missing GitHub App service as a configuration failure', async () => {
     const { warns } = captureLogs(ctx)
+    markLoaderEntry(ctx, 'profile:connectors/github')
     const handle = startConnection(ctx, githubAppConfig({ enabled: false }), resolveReconnectPolicy({ enabled: false }, 'reconnect'))
     try {
       const outcome = await handle.ready
@@ -481,6 +509,13 @@ describe('reconnect supervisor', () => {
       expect(mockConnect).not.toHaveBeenCalled()
       ctx.emit('github-app-auth/connection-changed')
       await sleep(5)
+      const settled: PromiseWithResolvers<void> = Promise.withResolvers()
+      ctx.emit('mcp/actions/reconnect', {
+        serverName: 'github-app', entryId: 'profile:connectors/github',
+        onSettled: (attempt) => { settled.resolve(attempt) },
+      })
+      await settled.promise
+      expect(mockConnect).not.toHaveBeenCalled()
     } finally {
       await handle.dispose()
     }

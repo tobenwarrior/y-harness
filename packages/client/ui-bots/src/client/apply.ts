@@ -57,6 +57,7 @@ type McpActionRemoteValue =
 interface McpActionSettingsRemote {
   readonly listMcpActions?: () => Promise<McpActionRemoteValue>
   readonly setMcpActionEnabled?: (serverName: string, actionName: string, enabled: boolean) => Promise<McpActionRemoteValue>
+  readonly reconnectMcpConnector?: (serverName: string) => Promise<McpActionRemoteValue>
 }
 
 function unwrapGitHubAppView(result: GitHubAppRemoteValue): GitHubAppSignInView {
@@ -89,9 +90,13 @@ function mcpActionActions(settings: McpActionSettingsRemote | undefined): BotMcp
   if (settings === undefined || typeof settings.listMcpActions !== 'function' || typeof settings.setMcpActionEnabled !== 'function') return undefined
   const list = settings.listMcpActions
   const set = settings.setMcpActionEnabled
+  const reconnect = settings.reconnectMcpConnector
   return {
     list: async () => unwrapMcpActionCatalog(await list()),
     set: async (serverName, actionName, enabled) => unwrapMcpActionCatalog(await set(serverName, actionName, enabled)),
+    ...(typeof reconnect === 'function' ? {
+      reconnect: async serverName => unwrapMcpActionCatalog(await reconnect(serverName)),
+    } : {}),
   }
 }
 
@@ -320,6 +325,7 @@ export function apply(ctx: Context): void {
         ...(mcpActions === undefined ? {} : {
           loadMcpActions: mcpActions.list,
           setMcpActionEnabled: mcpActions.set,
+          ...(mcpActions.reconnect === undefined ? {} : { reconnectMcpConnector: mcpActions.reconnect }),
         }),
         ...(githubAppSignIn === undefined ? {} : { githubAppSignIn }),
       }),

@@ -19,6 +19,13 @@ declare module '@yharness/cordis' {
      * @mode emit
      */
     'mcp/actions/catalog'(accept: (catalog: McpActionCatalog) => void): void
+    /**
+     * Ask one loader-owned connector to retire its current generation and
+     * reconnect using its current Host-owned authentication.
+     * @param request - Exact server and loader entry identity selected by the Host.
+     * @mode emit
+     */
+    'mcp/actions/reconnect'(request: McpActionReconnectRequest): void
   }
 }
 
@@ -48,6 +55,16 @@ export interface McpActionCatalog {
 
 /** One discovered action before it is retained by the catalog state. */
 export type McpActionCatalogAction = McpActionCatalog['actions'][number]
+
+/** Exact identity used by the Host to request one connector reconnect. */
+export interface McpActionReconnectRequest {
+  /** Configured server namespace. */
+  readonly serverName: string
+  /** Full loader entry identity for this connector instance. */
+  readonly entryId: string
+  /** Receives the promise that settles after this connector's retry attempt. */
+  readonly onSettled: (settled: Promise<void>) => void
+}
 
 /** Mutable connection-owned catalog state kept private to the MCP supervisor. */
 export interface McpActionCatalogState {

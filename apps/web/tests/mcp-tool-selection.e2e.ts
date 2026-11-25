@@ -15,12 +15,19 @@ const bundle = fileURLToPath(new URL('./fixtures/plugins/fixture-mcp-actions', i
 const expected = fileURLToPath(new URL('./expected/mcp-tool-selection/actions.expected.md', import.meta.url))
 const replayFixture = fileURLToPath(new URL('../../../snapshots/web/bot-workspace/session.v3.jsonl', import.meta.url))
 const endpoint = 'https://tool-selection.example.test/mcp'
+const retryEndpoint = 'https://retry-connector.example.test/mcp'
 
 it.skipIf(webSnapshotMode() === 'record')('manages individual MCP actions without changing a Bot’s app grant', async () => {
   const mcp = await startHttpMcpFixture(['ping', 'inspect_record'])
   const fetchLocal = globalThis.fetch
+  const allowReconnect: PromiseWithResolvers<void> = Promise.withResolvers()
+  let retryAvailable = false
   const fetchFixture = vi.spyOn(globalThis, 'fetch').mockImplementation((target, init) => {
     const url = typeof target === 'string' ? target : target instanceof URL ? target.href : target.url
+    if (url === retryEndpoint) {
+      if (!retryAvailable) return Promise.resolve(new Response('Service unavailable', { status: 503 }))
+      return allowReconnect.promise.then(() => fetchLocal(mcp.url, init))
+    }
     return fetchLocal(url === endpoint ? mcp.url : target, init)
   })
   let web: WebScaffold | undefined
@@ -93,6 +100,11 @@ it.skipIf(webSnapshotMode() === 'record')('manages individual MCP actions withou
     expect(mcp.calls).toEqual(['ping', 'inspect_record', 'inspect_record', 'ping'])
     await compareOrRefreshGolden(expected, (await workspace.ariaSnapshot()).trimEnd(), webSnapshotMode())
 
+    const retry = actions.getByRole('group', { name: /^(Retry Fixture|retry-fixture)$/u })
+    const reconnect = retry.getByRole('button', { name: 'Reconnect', exact: true })
+    await reconnect.waitFor()
+    expect(host.tools.get('mcp__retry-fixture__ping')).toBeUndefined()
+    expect(host.tools.get(independent)).toBeDefined()
     const output = process.env.YHARNESS_MCP_TOOL_SELECTION_SCREENSHOTS
     if (output !== undefined) {
       await mkdir(output, { recursive: true })
@@ -102,11 +114,21 @@ it.skipIf(webSnapshotMode() === 'record')('manages individual MCP actions withou
       await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(false)
       await page.screenshot({ path: join(output, 'bots-app-actions-narrow-light.png'), animations: 'disabled' })
     }
+
+    retryAvailable = true
+    await reconnect.click()
+    await retry.getByRole('button', { name: 'Reconnecting…', exact: true }).waitFor()
+    allowReconnect.resolve()
+    await retry.getByRole('switch', { name: 'ping', exact: true }).waitFor()
+    await expect.poll(() => reconnect.count()).toBe(0)
+    expect(host.tools.get('mcp__retry-fixture__ping')).toBeDefined()
+    expect(host.tools.get(independent)).toBeDefined()
     expect(tripwire.pageErrors).toEqual([])
   } catch (error) {
     if (failurePage !== undefined) await saveFailureShot(failurePage, 'mcp-tool-selection').catch(() => undefined)
     throw error
   } finally {
+    allowReconnect.resolve()
     try {
       await browser?.close()
     } finally {

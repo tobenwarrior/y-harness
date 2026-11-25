@@ -43,6 +43,7 @@ type McpActionRemoteValue =
 type McpActionRemoteFixture = {
   readonly listMcpActions?: () => Promise<McpActionRemoteValue>
   readonly setMcpActionEnabled?: (serverName: string, actionName: string, enabled: boolean) => Promise<McpActionRemoteValue>
+  readonly reconnectMcpConnector?: (serverName: string) => Promise<McpActionRemoteValue>
 }
 
 type Registered = {
@@ -282,18 +283,22 @@ describe('ui-bots composition', () => {
     }]
     const listMcpActions = vi.fn().mockResolvedValue({ ok: true as const, value: actions })
     const setMcpActionEnabled = vi.fn().mockResolvedValue({ ok: true as const, value: actions })
-    const settings = { listMcpActions, setMcpActionEnabled } satisfies McpActionRemoteFixture
+    const reconnectMcpConnector = vi.fn().mockResolvedValue({ ok: true as const, value: actions })
+    const settings = { listMcpActions, setMcpActionEnabled, reconnectMcpConnector } satisfies McpActionRemoteFixture
     const fixture = await boot(undefined, settings)
     const sidebar = fixture.registered.find(entry => entry.options.name === 'sidebar.bots')!
     const face = sidebar.inject?.() as {
       readonly loadMcpActions?: () => Promise<readonly McpActionServerView[]>
       readonly setMcpActionEnabled?: (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
+      readonly reconnectMcpConnector?: (serverName: string) => Promise<readonly McpActionServerView[]>
     }
-    if (face.loadMcpActions === undefined || face.setMcpActionEnabled === undefined) throw new Error('MCP action bindings were not mounted')
+    if (face.loadMcpActions === undefined || face.setMcpActionEnabled === undefined || face.reconnectMcpConnector === undefined) throw new Error('MCP action bindings were not mounted')
     await expect(face.loadMcpActions()).resolves.toEqual(actions)
     await expect(face.setMcpActionEnabled('Workspace Fixture', 'inspect_record', true)).resolves.toEqual(actions)
+    await expect(face.reconnectMcpConnector('Workspace Fixture')).resolves.toEqual(actions)
     expect(listMcpActions).toHaveBeenCalledOnce()
     expect(setMcpActionEnabled).toHaveBeenCalledWith('Workspace Fixture', 'inspect_record', true)
+    expect(reconnectMcpConnector).toHaveBeenCalledWith('Workspace Fixture')
     listMcpActions.mockResolvedValueOnce({ ok: false as const, error: { message: 'action catalog unavailable' } })
     setMcpActionEnabled.mockResolvedValueOnce({ ok: false as const, error: { message: 'action update unavailable' } })
     await expect(face.loadMcpActions()).rejects.toThrow('action catalog unavailable')

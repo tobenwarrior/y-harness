@@ -13,3 +13,11 @@
         transport: streamable-http
         serverName: review-fixture
         url: https://tool-selection.example.test/mcp
+    - id: mcp-retry-tool-selection
+      name: '@yharness/mcp-client'
+      config:
+        transport: streamable-http
+        serverName: retry-fixture
+        url: https://retry-connector.example.test/mcp
+        reconnect:
+          enabled: false

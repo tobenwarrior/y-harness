@@ -348,6 +348,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   InboxPlacement: 'core.md',
   InspectorJsonValue: 'extensions.md',
   McpActionCatalog: 'mcp.md',
+  McpActionReconnectRequest: 'mcp.md',
   McpActionServerView: 'mcp.md',
   MessageId: 'llm-streaming.md',
   ResumeAgentOptions: 'core.md',

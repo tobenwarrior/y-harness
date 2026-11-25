@@ -1721,7 +1721,7 @@ export function GitHubAppSignInSection({ actions, t, initialView, compact = fals
 }
 
 function ConnectedAppsDialog({
-  bot, open, onClose, onLoad, onSet, onLoadMcpActions, onSetMcpActionEnabled, githubAppSignIn, t,
+  bot, open, onClose, onLoad, onSet, onLoadMcpActions, onSetMcpActionEnabled, onReconnectMcpConnector, githubAppSignIn, t,
 }: {
   bot: BotSummary | undefined
   open: boolean
@@ -1732,6 +1732,7 @@ function ConnectedAppsDialog({
   onSetMcpActionEnabled?: (
     (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
   ) | undefined
+  onReconnectMcpConnector?: ((serverName: string) => Promise<readonly McpActionServerView[]>) | undefined
   githubAppSignIn?: GitHubAppSignInActions | undefined
   t: BotWorkspaceViewProps['t']
 }) {
@@ -1751,6 +1752,10 @@ function ConnectedAppsDialog({
     readonly serverName: string
     readonly actionName: string
   }
+  type McpActionReconnect = {
+    readonly requestId: number
+    readonly serverName: string
+  }
   const [catalog, setCatalog] = useState<ConnectedAppCatalog | undefined>()
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState<ConnectedAppSave | null>(null)
@@ -1759,6 +1764,7 @@ function ConnectedAppsDialog({
   const [actionLoading, setActionLoading] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionSaving, setActionSaving] = useState<McpActionSave | null>(null)
+  const [actionReconnecting, setActionReconnecting] = useState<McpActionReconnect | null>(null)
   const requestSequence = useRef(0)
   const actionRequestSequence = useRef(0)
   const botId = bot?.id
@@ -1773,6 +1779,7 @@ function ConnectedAppsDialog({
       setActionLoading(false)
       setActionError(null)
       setActionSaving(null)
+      setActionReconnecting(null)
       return
     }
     const requestId = requestSequence.current + 1
@@ -1807,6 +1814,7 @@ function ConnectedAppsDialog({
   const savingAppId = saving?.botId === bot.id ? saving.appId : null
   const loadActions = onLoadMcpActions
   const setActionEnabled = onSetMcpActionEnabled
+  const reconnectMcpConnector = onReconnectMcpConnector
   const actionManagementAvailable = loadActions !== undefined && setActionEnabled !== undefined
   const openActions = (): void => {
     if (loadActions === undefined || setActionEnabled === undefined) return
@@ -1817,6 +1825,7 @@ function ConnectedAppsDialog({
     setActionError(null)
     setActionLoading(true)
     setActionSaving(null)
+    setActionReconnecting(null)
     void loadActions().then((next) => {
       if (actionRequestSequence.current === requestId) setActionCatalog(next)
     }).catch((cause: unknown) => {
@@ -1834,6 +1843,7 @@ function ConnectedAppsDialog({
     setActionLoading(false)
     setActionError(null)
     setActionSaving(null)
+    setActionReconnecting(null)
   }
   const toggleAction = (server: McpActionServerView, action: McpActionServerView['actions'][number]): void => {
     if (actionSaving !== null || !server.connected || !server.editable || setActionEnabled === undefined) return
@@ -1849,6 +1859,26 @@ function ConnectedAppsDialog({
       }
     }).finally(() => {
       if (actionRequestSequence.current === requestId) setActionSaving(null)
+    })
+  }
+  const reconnect = (server: McpActionServerView): void => {
+    /* v8 ignore next -- the native button is disabled while a reconnect is pending and only disconnected rows render this action. */
+    if (actionReconnecting !== null || reconnectMcpConnector === undefined || server.connected) return
+    const requestId = actionRequestSequence.current
+    const request = { requestId, serverName: server.serverName }
+    setActionReconnecting(request)
+    setActionError(null)
+    void reconnectMcpConnector(request.serverName).then((next) => {
+      /* v8 ignore next -- a response from a superseded action dialog is discarded by the request fence. */
+      if (actionRequestSequence.current === requestId && actionMode) setActionCatalog(next)
+    }).catch((cause: unknown) => {
+      /* v8 ignore next -- a failure from a superseded action dialog is discarded by the request fence. */
+      if (actionRequestSequence.current === requestId && actionMode) {
+        setActionError(cause instanceof Error ? cause.message : t('mcpActionsReconnectFailed'))
+      }
+    }).finally(() => {
+      /* v8 ignore next -- the reconnect state belongs only to the current action dialog request. */
+      if (actionRequestSequence.current === requestId) setActionReconnecting(null)
     })
   }
   const toggle = async (app: BotConnectedAppAccess): Promise<void> => {
@@ -1892,8 +1922,8 @@ function ConnectedAppsDialog({
       contentClassName={css.connectedAppsDialogContent as string}
       footer={(
         <div className={css.connectedAppsFooter}>
-          {actionMode && <Button variant="ghost" onClick={closeActions} disabled={actionSaving !== null}>{t('mcpActionsBack')}</Button>}
-          <Button variant="ghost" onClick={onClose} disabled={savingAppId !== null || actionSaving !== null}>{t('done')}</Button>
+          {actionMode && <Button variant="ghost" onClick={closeActions} disabled={actionSaving !== null || actionReconnecting !== null}>{t('mcpActionsBack')}</Button>}
+          <Button variant="ghost" onClick={onClose} disabled={savingAppId !== null || actionSaving !== null || actionReconnecting !== null}>{t('done')}</Button>
         </div>
       )}
     >
@@ -1926,7 +1956,21 @@ function ConnectedAppsDialog({
                   <section className={css.mcpActionGroup} key={`${server.serverName}-${serverIndex}`} role="group" aria-label={serverLabel}>
                     <div className={css.mcpActionGroupHeader}>
                       <strong>{serverLabel}</strong>
-                      <span>{server.connected ? t('mcpActionsConnected') : t('mcpActionsDisconnected')}</span>
+                      <div className={css.mcpActionGroupMeta}>
+                        <span>{server.connected ? t('mcpActionsConnected') : t('mcpActionsDisconnected')}</span>
+                        {!server.connected && reconnectMcpConnector !== undefined && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={actionReconnecting !== null}
+                            onClick={() => { reconnect(server) }}
+                          >
+                            {actionReconnecting?.serverName === server.serverName
+                              ? t('mcpActionsReconnecting')
+                              : t('mcpActionsReconnect')}
+                          </Button>
+                        )}
+                      </div>
                     </div>
                     {server.actions.length === 0
                       ? <div className={css.mcpActionUnavailable}>{t('mcpActionsNoActions')}</div>
@@ -2027,7 +2071,7 @@ function ConnectedAppsDialog({
 export function BotRoster({
   bots, selectedBotId, onSelectBot, onCreateBot, onConnectApps, onOpenAvatarSettings,
   groups: localGroups = [], selectedGroupId = null, onSelectGroup, onCreateGroup, groupError = null,
-  onLoadConnectedApps, onSetConnectedAppAccess, onLoadMcpActions, onSetMcpActionEnabled, githubAppSignIn,
+  onLoadConnectedApps, onSetConnectedAppAccess, onLoadMcpActions, onSetMcpActionEnabled, onReconnectMcpConnector, githubAppSignIn,
   onOrganizeBot, templates, templateActions, onRetry, loadAvatar, avatarEditor, sharedClient,
   error = null, loading = false, wide = true, expandSidebar, t,
 }: BotWorkspaceViewProps & BotRosterLayoutProps): ReactNode {
@@ -2389,6 +2433,7 @@ export function BotRoster({
           onSet={onSetConnectedAppAccess}
           onLoadMcpActions={onLoadMcpActions}
           onSetMcpActionEnabled={onSetMcpActionEnabled}
+          onReconnectMcpConnector={onReconnectMcpConnector}
           githubAppSignIn={githubAppSignIn}
           t={t}
         />

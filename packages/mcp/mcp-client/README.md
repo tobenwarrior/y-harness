@@ -96,7 +96,7 @@ The model sees each tool under a stable server-qualified name: `mcp__<serverName
 
 The Host can synchronously read the event `mcp/actions/catalog` to show the last successful action discovery for each loader-owned, unscoped connector. Each catalog includes the configured server name, the full loader entry id, connection state, exact raw MCP action names, bounded descriptions, and whether local `disabledTools` currently allows each action. A connector using the Host-owned GitHub App grant also carries `authKind: "github-app"`; other connector authentication details remain absent from this catalog.
 
-Scoped or manually mounted MCP clients do not publish a Host catalog. A disconnect marks the last catalog stale while retaining its names. A failed or rejected discovery never replaces the last successful catalog. The event only reports discovery and does not change connector configuration or dispatch permissions.
+Scoped or manually mounted MCP clients do not publish a Host catalog. A disconnect marks the last catalog stale while retaining its names. A failed or rejected discovery never replaces the last successful catalog. The event only reports discovery and does not change connector configuration or dispatch permissions. The Host may emit `mcp/actions/reconnect` with the exact `serverName` and `entryId` from this catalog to retry that connector; the request carries no credential or endpoint data, mismatched identities are ignored, and the selected listener reports when its retry attempt settles so the caller can refresh the catalog.
 
 ### Calling tools and reading results
 

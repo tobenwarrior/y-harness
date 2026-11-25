@@ -45,6 +45,8 @@ export interface BotMcpActionActions {
   readonly list: () => Promise<readonly McpActionServerView[]>
   /** Change one connector action and return the reconciled catalog. */
   readonly set: (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
+  /** Retry one disconnected connector with its existing Host-owned authentication. */
+  readonly reconnect?: (serverName: string) => Promise<readonly McpActionServerView[]>
 }
 
 /** Host-local skill metadata and the selected Bot's current grant. */
@@ -456,6 +458,8 @@ export interface BotWorkspaceProps {
   readonly onSetMcpActionEnabled?: (
     (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
   ) | undefined
+  /** Requests a fresh generation for one disconnected workspace connector. */
+  readonly onReconnectMcpConnector?: ((serverName: string) => Promise<readonly McpActionServerView[]>) | undefined
   /** Optional owner GitHub account flow; kept separate from per-Bot app grants. */
   readonly githubAppSignIn?: GitHubAppSignInActions | undefined
   /** Optional settings deep-link for configuring the avatar provider. */
