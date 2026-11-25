@@ -306,6 +306,28 @@ describe('ui-bots composition', () => {
     await fixture.fiber.dispose()
   })
 
+  it('keeps the roster compatible with an older Settings remote without reconnect', async () => {
+    const actions: McpActionServerView[] = [{
+      serverName: 'Legacy Workspace Fixture', connected: true, editable: true,
+      actions: [{ name: 'inspect_record', enabled: false }],
+    }]
+    const settings = {
+      listMcpActions: vi.fn().mockResolvedValue({ ok: true as const, value: actions }),
+      setMcpActionEnabled: vi.fn().mockResolvedValue({ ok: true as const, value: actions }),
+    } satisfies McpActionRemoteFixture
+    const fixture = await boot(undefined, settings)
+    const sidebar = fixture.registered.find(entry => entry.options.name === 'sidebar.bots')!
+    const face = sidebar.inject?.() as {
+      readonly loadMcpActions?: () => Promise<readonly McpActionServerView[]>
+      readonly setMcpActionEnabled?: (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
+      readonly reconnectMcpConnector?: (serverName: string) => Promise<readonly McpActionServerView[]>
+    }
+    expect(face.loadMcpActions).toEqual(expect.any(Function))
+    expect(face.setMcpActionEnabled).toEqual(expect.any(Function))
+    expect(face).not.toHaveProperty('reconnectMcpConnector')
+    await fixture.fiber.dispose()
+  })
+
   it('registers the roster, Conversation, request cards, mentions, and teardown effects', async () => {
     const fixture = await boot()
     const registeredNames = fixture.registered.map(entry => entry.options.name)
