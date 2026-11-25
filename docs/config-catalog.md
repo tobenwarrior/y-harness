@@ -2646,7 +2646,7 @@ export interface Config {
 ## `@yharness/schedule`
 
 - `inject`: `agents` · `sessions` · `storageDomain` · `sessionController` · `sessionPersistence`
-- `source`: [`packages/schedule/schedule/src/index.ts:77`](../packages/schedule/schedule/src/index.ts)
+- `source`: [`packages/schedule/schedule/src/index.ts:78`](../packages/schedule/schedule/src/index.ts)
 
 ```ts config-catalog
 /** Configuration for the Host Schedule domain. */
@@ -2661,6 +2661,8 @@ export interface Config {
    * cap and the window wins, and the newest records survive.
    */
   deliveryHistoryRecords?: number
+  /** Advance active recurring reminders past occurrences missed before the Schedule service starts. Defaults to false. */
+  skipMissedRecurringOnStartup?: boolean
 }
 ```
 <!-- END GENERATED config-catalog:@yharness/schedule -->

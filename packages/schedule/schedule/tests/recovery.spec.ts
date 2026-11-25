@@ -6,12 +6,14 @@ import type { Context } from '@yharness/cordis'
 import type { DomainFacility } from '@yharness/storage-domain'
 import { JsonStorageBackend } from '@yharness/storage-json'
 import { SessionId } from '@yharness/session'
+import { MessageId } from '@yharness/llm/brand'
 import { afterEach, beforeEach, expect, it, vi, type MockInstance } from 'vitest'
 import ScheduleService from '../src/index.ts'
 import { scheduleDomain } from '../src/storage.ts'
-import { ScheduleId } from '../src/domain.ts'
+import { createEveryScheduleRecord, ScheduleId } from '../src/domain.ts'
 import { ScheduleRuntime } from '../src/runtime.ts'
-import { agentFor, harness } from './harness.ts'
+import { agentFor, gatedScheduleBackend, harness } from './harness.ts'
+import { MemoryMediaPool } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 
 const roots: string[] = []
 const contexts: Context[] = []
@@ -58,6 +60,112 @@ const repairedTask = {
   },
 }
 
+it('skips occurrences missed before startup and delivers the next regular occurrence once', async () => {
+  const sessionId = SessionId('original')
+  const id = ScheduleId('recurring')
+  const pausedId = ScheduleId('paused')
+  const next = '2026-09-16T00:00:30.000Z'
+  const oldReceipt = {
+    messageId: MessageId('previous-delivery'),
+    scheduledAt: '2026-09-15T23:54:30.000Z',
+    deliveredAt: '2026-09-15T23:54:31.000Z',
+  }
+  const record = {
+    id, kind: 'every', title: 'Paper simulation', prompt: 'Run the paper simulation', everySeconds: 60,
+    scheduledAt: '2026-09-15T23:55:30.000Z',
+  }
+  const recurring = { sessionId, record, status: 'active', lastDelivery: oldReceipt }
+  const paused = { ...recurring, record: { ...record, id: pausedId }, status: 'paused' }
+  const { root } = await rootWith({ recurring, paused })
+  let agent: ReturnType<typeof agentFor> | undefined
+  const test = await harness({
+    config: { skipMissedRecurringOnStartup: true },
+    backend: new JsonStorageBackend(root),
+    onContext: ctx => contexts.push(ctx),
+    beforeService: async (ctx) => {
+      agent = agentFor(ctx)
+      vi.spyOn(ctx.sessionController, 'resolveAgent').mockResolvedValue({ agent })
+    },
+  })
+  expect(await test.service.catalog()).toEqual([
+    { ...paused.record, sessionId, status: 'paused', lastDelivery: oldReceipt },
+    { ...record, scheduledAt: next, sessionId, status: 'active', lastDelivery: oldReceipt },
+  ])
+  expect(test.resolve).not.toHaveBeenCalled()
+  expect(await test.service.history({ sessionId, id, limit: 5 })).toMatchObject({ records: [oldReceipt] })
+
+  await vi.advanceTimersByTimeAsync(29_999)
+  expect(test.resolve).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(1)
+  await test.service.catalog()
+  expect(test.resolve).toHaveBeenCalledExactlyOnceWith(sessionId)
+  expect(agent?.followup).toHaveBeenCalledTimes(1)
+  const history = await test.service.history({ sessionId, id, limit: 5 })
+  if (!('records' in history)) throw new Error('Expected stored delivery receipts')
+  const { records } = history
+  expect(records.map(receipt => receipt.scheduledAt)).toEqual([next, oldReceipt.scheduledAt])
+  await test.ctx.fiber.dispose()
+
+  const reopened = await harness({ backend: new JsonStorageBackend(root), onContext: ctx => contexts.push(ctx) })
+  expect(await reopened.service.catalog()).toContainEqual(expect.objectContaining({
+    id, sessionId, status: 'active', scheduledAt: '2026-09-16T00:01:30.000Z',
+  }))
+  expect(await reopened.service.history({ sessionId, id, limit: 5 })).toMatchObject({ records })
+  expect(reopened.resolve).not.toHaveBeenCalled()
+})
+
+it('still delivers the occurrence due at startup and the overdue one-shot', async () => {
+  const sessionId = SessionId(oldTask.sessionId)
+  const now = '2026-09-16T00:00:00.000Z'
+  const recurring = {
+    sessionId, record: {
+      id: 'recurring', kind: 'every', title: 'Regular check', prompt: 'Run the regular check',
+      scheduledAt: '2026-09-15T23:57:00.000Z', everySeconds: 60,
+    },
+  }
+  const future = {
+    ...recurring, record: { ...recurring.record, id: 'future', scheduledAt: '2026-09-16T00:00:30.000Z' },
+  }
+  const { root } = await rootWith({ 'a-good': oldTask, recurring, future })
+  const test = await harness({
+    config: { skipMissedRecurringOnStartup: true },
+    backend: new JsonStorageBackend(root),
+    onContext: ctx => contexts.push(ctx),
+    beforeService: async (ctx) => {
+      vi.spyOn(ctx.sessionController, 'resolveAgent').mockResolvedValue({ agent: agentFor(ctx) })
+    },
+  })
+  await test.service.catalog()
+  expect(test.resolve).toHaveBeenCalledTimes(2)
+  expect(await test.service.history({ sessionId, id: ScheduleId('recurring'), limit: 5 })).toMatchObject({
+    records: [expect.objectContaining({ scheduledAt: now })],
+  })
+  expect(await test.service.history({ sessionId, id: ScheduleId('a-good'), limit: 5 })).toMatchObject({
+    records: [expect.objectContaining({ scheduledAt: oldTask.record.scheduledAt })],
+  })
+  expect(await test.service.history({ sessionId, id: ScheduleId('future'), limit: 5 })).toMatchObject({ records: [] })
+})
+
+it('ends an exhausted recurrence without creating a delivery receipt', async () => {
+  vi.setSystemTime(new Date('9999-12-31T23:59:30.000Z'))
+  const sessionId = SessionId(oldTask.sessionId)
+  const id = ScheduleId('recurring')
+  const { root } = await rootWith({
+    recurring: { sessionId, record: {
+      id, kind: 'every', title: 'Last check', prompt: 'Run the last check', everySeconds: 60,
+      scheduledAt: '9999-12-31T23:59:00.000Z',
+    } },
+  })
+  const test = await harness({
+    config: { skipMissedRecurringOnStartup: true },
+    backend: new JsonStorageBackend(root),
+    onContext: ctx => contexts.push(ctx),
+  })
+  expect(await test.service.catalog()).toMatchObject([{ id, status: 'inactive', scheduledAt: '9999-12-31T23:59:00.000Z' }])
+  expect(test.resolve).not.toHaveBeenCalled()
+  expect(await test.service.history({ sessionId, id, limit: 5 })).toMatchObject({ records: [] })
+})
+
 it.each([
   ['{broken json', 'malformed-medium'],
   [encoded({ 'a-good': oldTask, 'z-broken': repairedTask }, 2), 'version-mismatch'],
@@ -101,6 +209,47 @@ it.each([
   await ctx.plugin(ScheduleService)
   expect(await ctx.schedule.catalog()).toHaveLength(2)
   expect(await readFile(path, 'utf8')).toBe(repaired)
+})
+
+it('closes the domain and preserves an armed task when startup normalization cannot be written', async () => {
+  const pool = new MemoryMediaPool()
+  let rejectStartupWrite = false
+  const backend = gatedScheduleBackend(pool, {
+    putRecord: async (table) => {
+      if (rejectStartupWrite && table === 'tasks') throw new Error('startup normalization write failed')
+    },
+  })
+  const sessionId = SessionId('startup-write-failure')
+  const id = ScheduleId('startup-write-failure')
+  const record = {
+    ...createEveryScheduleRecord(id, 'Run the recovery check', 60, Date.now() - 120_000, 'Recovery check'),
+    scheduledAt: '2026-09-15T23:59:00.000Z',
+  }
+  const task = { sessionId, record, status: 'active' as const }
+  let observed: { ctx: Context; facility: DomainFacility; resolveCalls: () => number } | undefined
+  const startup = harness({
+    pool, backend, config: { skipMissedRecurringOnStartup: true }, onContext: ctx => contexts.push(ctx),
+    beforeService: async (ctx, facility) => {
+      const domain = await facility.open(scheduleDomain)
+      await domain.table('tasks').put(id, task)
+      await domain.close()
+      rejectStartupWrite = true
+      const resolve = vi.spyOn(ctx.sessionController, 'resolveAgent')
+      observed = { ctx, facility, resolveCalls: () => resolve.mock.calls.length }
+    },
+  })
+  await expect(startup).rejects.toThrow('startup normalization write failed')
+  if (observed === undefined) throw new Error('Schedule dependencies did not initialize')
+  const { ctx, facility } = observed
+  expect(ctx.get('schedule')).toBeUndefined()
+  expect(facility.get('schedule')).toBeUndefined()
+  expect(observed.resolveCalls()).toBe(0)
+  expect(vi.getTimerCount()).toBe(0)
+  expect(pool.media.get('schedule')?.tables.get('tasks')?.get(id)).toEqual(task)
+
+  const reopened = await facility.open(scheduleDomain)
+  expect(reopened.table('tasks').get(id)).toEqual(task)
+  await reopened.close()
 })
 
 it.each([

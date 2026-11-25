@@ -74,6 +74,35 @@ const BASE_PATCH = fileURLToPath(new URL('../../../packages/bundle/base/cordis.p
 const WEB_BUNDLE = fileURLToPath(new URL('../../../packages/bundle/web-app/', import.meta.url))
 const WEB_PATCHES = bundlePatchPaths(WEB_BUNDLE, (JSON.parse(readFileSync(join(WEB_BUNDLE, 'package.json'), 'utf8')) as { dsh: { bundle: { patch: string[] } } }).dsh.bundle)
 
+it('skips past VPS occurrences when the shipped Web profile starts', async () => {
+  const workspaceCwd = await mkdtemp(join(tmpdir(), 'dsh-vps-schedule-startup-'))
+  const previous = process.env.YH_VPS_SKIP_MISSED_SCHEDULES
+  let web: WebScaffold | undefined
+  try {
+    const root = join(workspaceCwd, '.dsh-storages')
+    const id = ScheduleId('vps-recurring')
+    const sessionId = SessionId('vps-recurring-session')
+    const missed = Date.now() - 300_000
+    const record = createEveryScheduleRecord(id, 'Run the regular check', EVERY_INTERVAL_SECONDS,
+      missed - EVERY_INTERVAL_SECONDS * 1_000, 'Regular VPS check')
+    await mkdir(root)
+    await writeFile(join(root, 'schedule.json'), JSON.stringify({
+      unit: { name: 'schedule', version: 1 }, global: null,
+      tables: { tasks: { [id]: { sessionId, record, status: 'active' } } },
+    }))
+    process.env.YH_VPS_SKIP_MISSED_SCHEDULES = '1'
+    web = await launchWebScaffold({ workspaceCwd })
+    expect(await web.ctx.schedule.catalog()).toContainEqual(expect.objectContaining({
+      id, sessionId, status: 'active', scheduledAt: new Date(missed + EVERY_INTERVAL_SECONDS * 1_000).toISOString(),
+    }))
+    expect(await web.ctx.schedule.history({ sessionId, id, limit: 10 })).toMatchObject({ records: [] })
+  } finally {
+    if (previous === undefined) delete process.env.YH_VPS_SKIP_MISSED_SCHEDULES
+    else process.env.YH_VPS_SKIP_MISSED_SCHEDULES = previous
+    try { await web?.close() } finally { await rm(workspaceCwd, { recursive: true, force: true }) }
+  }
+})
+
 /**
  * Write the overlay that makes every step carry a fresh clock reading.
  *

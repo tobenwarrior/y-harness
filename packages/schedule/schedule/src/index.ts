@@ -14,7 +14,8 @@ import { resolveScheduleUpdate } from './update.ts'
 import {
   foldScheduleEvents, ScheduleInputError, ScheduleLogError, ScheduleId, createAfterScheduleRecord, createAtScheduleRecord,
   createEveryScheduleRecord, createDailyScheduleRecord, createWeeklyScheduleRecord, createCronScheduleRecord,
-  parseAtInput, parseDailyInput, parseWeeklyInput, parseCronInput, scheduleTitle, scheduleView,
+  isRecurringScheduleRecord, parseAtInput, parseDailyInput, parseWeeklyInput, parseCronInput, resolveRecurringOccurrence,
+  scheduleTitle, scheduleView,
 } from './domain.ts'
 import type {
   DeliveryRetentionBounds, ScheduleCatalogEntry, ScheduleCreateRequest, ScheduleCreateOptions, ScheduleCreateResolution,
@@ -85,6 +86,8 @@ export interface Config {
    * cap and the window wins, and the newest records survive.
    */
   deliveryHistoryRecords?: number
+  /** Advance active recurring reminders past occurrences missed before the Schedule service starts. Defaults to false. */
+  skipMissedRecurringOnStartup?: boolean
 }
 
 /** Retained delivery-history window applied when the deployment states none. */
@@ -237,6 +240,7 @@ export class ScheduleService extends TypertRemoteService {
   static Config: z<Config> = z.object({
     deliveryHistoryDays: z.number().step(1).min(1).max(3650).default(DEFAULT_DELIVERY_HISTORY_DAYS),
     deliveryHistoryRecords: z.number().step(1).min(1).max(10_000).default(DEFAULT_DELIVERY_HISTORY_RECORDS),
+    skipMissedRecurringOnStartup: z.boolean().default(false),
   })
 
   /** Resolved retention bounds shared with the runtime that appends acknowledgments. */
@@ -249,7 +253,7 @@ export class ScheduleService extends TypertRemoteService {
 
   /**
    * @param ctx - Host services owning storage, dispatch, and Session restoration.
-   * @param config - Validated retention configuration for delivery history.
+   * @param config - Delivery retention and recurring startup policy.
    */
   constructor(ctx: Context, config: Config) {
     super(ctx, 'schedule')
@@ -273,12 +277,27 @@ export class ScheduleService extends TypertRemoteService {
     })
     this.initialized = ctx.effect(async () => {
       const domain = await this.ready
+      const tasks = domain.table('tasks')
       try {
         // Approval cannot survive a Host restart. Retire reservations left by a
         // stopped native call before any retry can reconcile them.
         const operations = domain.table('create_operations')
         for (const [key, operation] of operations.entries()) {
           if (operation.status === 'reserved') await operations.put(key, { ...operation, status: 'resolved_absent' })
+        }
+        if (config.skipMissedRecurringOnStartup) {
+          // An occurrence at the time the service starts can still run.
+          const missedThrough = Date.now() - 1
+          for (const [id, task] of tasks.entries()) {
+            const { record } = task
+            if (task.status !== 'active' || !isRecurringScheduleRecord(record) || Date.parse(record.scheduledAt) > missedThrough) continue
+            const { occurrenceAt, nextScheduledAt } = resolveRecurringOccurrence(record, missedThrough)
+            await tasks.put(id, {
+              ...task,
+              record: { ...record, scheduledAt: nextScheduledAt ?? occurrenceAt },
+              status: nextScheduledAt === undefined ? 'inactive' : 'active',
+            })
+          }
         }
       } catch (error: unknown) {
         this.stopping = true
@@ -298,7 +317,6 @@ export class ScheduleService extends TypertRemoteService {
         await domain.close()
         throw error
       }
-      const tasks = domain.table('tasks')
       this.runtime = new ScheduleRuntime(ctx,
         () => [...tasks.entries()].map(([, task]) => task),
         work => this.serialize(work),
