@@ -106,11 +106,12 @@ export class DeepSeekLlmApiExtensionRegistry extends Service {
    * from this request; the first such failure per field is logged. Only cancellation rejects. Field values are cloned
    * and frozen; providers retain no mutable alias to the outgoing request.
    * @param request - exact serialized request facts before extension fields.
+   * @param omitted - fields excluded before their providers run.
    * @returns detached fields and their idempotent joint acceptance transaction.
    */
-  async prepare(request: DeepSeekLlmApiExtensionRequest): Promise<PreparedDeepSeekLlmApiExtensions> {
+  async prepare(request: DeepSeekLlmApiExtensionRequest, omitted: readonly string[] = []): Promise<PreparedDeepSeekLlmApiExtensions> {
     request.signal.throwIfAborted()
-    const entries = [...this.providers.entries()]
+    const entries = [...this.providers.entries()].filter(([field]) => !omitted.includes(field))
     const prepared = await abortable(Promise.all(entries.map(async ([field, provider]) => {
       try {
         const result = await provider.prepare(request)

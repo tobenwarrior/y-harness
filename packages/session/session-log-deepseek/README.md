@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Incremental canonical session-log upload for official DeepSeek LLM API requests. This function plugin injects `ctx.sessions` and `ctx.deepseekLlmApiExtensions`, then owns the `dsh_session_log` request field and the durable `session-log-deepseek/delivery-accepted` event from which it derives the acceptance watermark. Disable it only when the official API must not receive a Session-log suffix.
+Compatibility plugin for the former incremental Session-log contribution. Shipped profiles disable this plugin, and the [DeepSeek adapter](../../llm/llm-deepseek/README.md) excludes its field even if a saved profile enables it. The handoff event remains readable in stored Sessions.
 
 ## Table of Contents
 

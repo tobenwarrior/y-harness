@@ -4,9 +4,9 @@ import type {} from '@yharness/settings'
 import type {} from '@yharness/cordis-plugin-loader'
 import type {} from '@yharness/fs'
 import { resolveImageAttachmentAccess } from '@yharness/llm'
-import { getOrCreateAnonymousUserId, type AnonymousUserId } from '@yharness/anonymous-user-id'
 import { deepEqualJson } from '@yharness/util-values'
 import { DeepSeekAdapter } from './adapter.ts'
+import { retiredReportingFields } from './request-extensions.ts'
 import type { DeepSeekAdapterOptions, DeepSeekConnectionOptions } from './types.ts'
 
 /**
@@ -19,14 +19,12 @@ export function registerDeepSeekProvider<C extends DeepSeekConnectionOptions>(
   ctx: Context, provider: string, dependencies: Pick<DeepSeekAdapterOptions<C>,
   'options' | 'resolveAuth' | 'providerName' | 'discoverModels' | 'connect' | 'admit'>): void {
   ctx.inject(['settings'], (child) => { child.effect(() => child.settings.configure({ auto: false }, ctx.fiber)) })
-  let userId: AnonymousUserId | undefined
   // These conditions repeat on every request of a route; log each first occurrence only.
   const degradedReplays = new Set<string>()
   const omittedRoutes = new Set<string>()
   const unacceptedRoutes = new Set<string>()
   const adapter = new DeepSeekAdapter({
     ...dependencies,
-    resolveUserId: () => userId ??= getOrCreateAnonymousUserId(),
     onReplayDegrade: ({ provider, model, reason }) => {
       const key = `${provider}/${model}\u0000${reason}`
       if (degradedReplays.has(key)) return
@@ -49,7 +47,7 @@ export function registerDeepSeekProvider<C extends DeepSeekConnectionOptions>(
     resolveImageAccess: (attachments, ref) => resolveImageAttachmentAccess(
       attachments, hostPath => ctx.get('fs')?.processPathFromHostPath(hostPath), ref,
     ),
-    prepareExtensions: request => ctx.get('deepseekLlmApiExtensions')?.prepare(request)
+    prepareExtensions: request => ctx.get('deepseekLlmApiExtensions')?.prepare(request, retiredReportingFields)
       ?? Promise.resolve({ fields: {}, accept: () => Promise.resolve() }),
   })
   const registration = ctx.llm.registerAdapter([provider], adapter)

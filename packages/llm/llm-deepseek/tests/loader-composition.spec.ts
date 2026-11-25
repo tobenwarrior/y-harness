@@ -14,7 +14,6 @@ import SessionStore, { SessionId } from '@yharness/session'
 import { credentialRef } from '@yharness/credentials'
 import LocalCredentialProvider from '@yharness/credentials-local'
 import { profileComposition } from '../../../settings/settings/tests/profile-composition.ts'
-import { getOrCreateAnonymousUserId } from '@yharness/anonymous-user-id'
 import DeepSeekLlmApiExtensionRegistry from '@yharness/deepseek-llm-api-extensions'
 import * as SessionLogDeepSeek from '@yharness/session-log-deepseek'
 import * as DeepSeekPluginPackageInventory from '@yharness/plugin-package-inventory-deepseek'
@@ -146,53 +145,25 @@ describe('llm-deepseek real dynamic composition', () => {
     } finally { resolve.mockRestore() }
   })
 
-  it('keeps package inventory on when the Loader composition disables session upload', async () => {
+  it.each([false, true])('keeps legacy reporting off the wire with session uploads set to %s', async (enableSessionLog) => {
     vi.stubEnv('DEEPSEEK_API_KEY', 'entry-key')
     const server = await mockServer([{ kind: 'sse', events: textEvents }])
-    const { ctx } = await loadComposition({ withDynamic: false, baseURL: server.url, enableSessionLog: false })
+    const { ctx } = await loadComposition({ withDynamic: false, baseURL: server.url, enableSessionLog })
     const session = ctx.sessions.create(SessionId('extension-composition'))
     session.append('turn/start', { turn: 1 })
 
-    await assemble(ctx, { model: 'deepseek-v4-flash', messages: [], sessionId: session.id })
-    const request = server.requests[0] as { dsh_plugin_packages: { version: number; packages: unknown[] } }
-    expect(request).not.toHaveProperty('dsh_session_log')
-    expect(request.dsh_plugin_packages.packages).toEqual(expect.arrayContaining([
-      { name: '@yharness/deepseek-llm-api-extensions', version: '0.1.0-rc.8' },
-      { name: '@yharness/llm-deepseek-api-key', version: '0.1.0-rc.8' },
-      { name: '@yharness/session-log-deepseek', version: '0.1.0-rc.8' },
-    ]))
-    expect(request.dsh_plugin_packages.version).toBe(1)
+    await assemble(ctx, {
+      model: 'deepseek-v4-flash', sessionId: session.id,
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'visible model input' }] }],
+    })
+    expect(server.requests).toHaveLength(1)
+    expect(JSON.stringify(server.requests[0])).toContain('visible model input')
+    expect(server.requests[0]).not.toHaveProperty('dsh_session_log')
+    expect(server.requests[0]).not.toHaveProperty('dsh_plugin_packages')
+    expect(server.headers[0]?.['x-api-key']).toBe('entry-key')
+    expect(server.headers[0]).not.toHaveProperty('x-deepseek-harness-user-id')
+    expect(server.headers[0]).not.toHaveProperty('x-deepseek-harness-session-id')
     expect(SessionLogDeepSeek.acceptedThrough(session)).toBe(-1)
-  })
-
-  it('sends the canonical session suffix by default through Loader composition', async () => {
-    vi.stubEnv('DEEPSEEK_API_KEY', 'entry-key')
-    const server = await mockServer([{ kind: 'sse', events: textEvents }])
-    const { ctx } = await loadComposition({
-      withDynamic: false,
-      baseURL: server.url,
-    })
-    const session = ctx.sessions.create(SessionId('extension-composition-enabled'))
-    session.append('turn/start', { turn: 1 })
-
-    await assemble(ctx, { model: 'deepseek-v4-flash', messages: [], sessionId: session.id })
-    const request = server.requests[0] as {
-      dsh_session_log?: {
-        version: number
-        session: { id: string }
-        afterSeq: number
-        throughSeq: number
-        events: Array<{ type: string; seq: number }>
-      }
-    }
-    expect(request.dsh_session_log).toMatchObject({
-      version: 1,
-      session: { id: 'extension-composition-enabled' },
-      afterSeq: -1,
-      throughSeq: 0,
-      events: [{ type: 'turn/start', seq: 0 }],
-    })
-    expect(SessionLogDeepSeek.acceptedThrough(session)).toBe(0)
   })
 
   it('boots from cordis.yml and routes the next request after external settings and credential edits', async () => {
@@ -204,7 +175,7 @@ describe('llm-deepseek real dynamic composition', () => {
     expect(ctx.settings.describe().map(entry => entry.ns)).toContain(NS)
     await assemble(ctx, { model: 'deepseek-v4-flash', messages: [] })
     expect(serverA.headers[0]?.['x-api-key']).toBe('boot-key')
-    expect(serverA.headers[0]?.['x-deepseek-harness-user-id']).toBe(getOrCreateAnonymousUserId())
+    expect(serverA.headers[0]).not.toHaveProperty('x-deepseek-harness-user-id')
 
     // External edits, exactly as a user or the web UI would leave them on disk.
     await writeFile(settingsPath, JSON.stringify([{ id: NS, config: { baseURL: serverB.url } }]))

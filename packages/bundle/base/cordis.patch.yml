@@ -42,6 +42,7 @@
 
     - id: session-log-deepseek
       name: '@yharness/session-log-deepseek'
+      disabled: true
 
     - id: typert
       name: '@yharness/typert-registry'
@@ -76,6 +77,7 @@
 
     - id: plugin-package-inventory-deepseek
       name: '@yharness/plugin-package-inventory-deepseek'
+      disabled: true
 
     # The transport-independent default for Agents created by entry points.
     # Settings may supply a saved selection; consumers read it at creation time.
@@ -193,38 +195,13 @@
     - id: otel
       name: '@yharness/otel'
 
-    # OTel releases a Session-log prefix only after explicit user feedback,
-    # regardless of model provider. Ordinary activity never triggers capture.
-    # YH_TELEMETRY_OTLP_URL selects the explicit collector endpoint; the
-    # legacy DSH_TELEMETRY_OTLP_URL is accepted only as a fallback. Whitespace
-    # around either value is ignored. No endpoint means no exporter is mounted.
-    # A non-empty
-    # DSH_TELEMETRY_DISABLED — any value, including '0'/'false' — opts the
-    # process out (the launchers patch the row disabled; config cannot disable
-    # a row). Exports carry the harness home's anonymous user id ($DSH_HOME/.anonymous-user-id,
-    # random UUID; delete the file to reset the identity) as the Resource's
-    # user.id. Byte-bounded batching may turn an authorized prefix into
-    # several HTTP requests. Requests run serially; each has its own 1s
-    # transport timeout and 1.5s watchdog. A watchdog does not release the
-    # active request slot. The outer 3s shutdown deadline stops queued sends;
-    # large prefixes or an unsettled transport may leave records unsent.
-    # Every CLI exit path drains by disposing the root on SIGINT/SIGTERM.
+    # Shipped profiles keep feedback in the durable Session log and do not
+    # mount an automatic Session OTLP exporter. A later explicit profile,
+    # home, or invocation patch can replace this row for a separately chosen
+    # backend.
     - id: session-telemetry-otel
       name: '@yharness/session-telemetry-otel'
-      disabled: !!js "process.env.DSH_TELEMETRY_MODE !== 'DISABLED' && !(process.env.YH_TELEMETRY_OTLP_URL?.trim() || process.env.DSH_TELEMETRY_OTLP_URL?.trim())"
-      config:
-        mode: !!js process.env.DSH_TELEMETRY_MODE || 'FEEDBACK_ONLY'
-        shutdownTimeoutMillis: 3000
-        maxRequestBytes: 4000000
-        exporter:
-          url: !!js "process.env.YH_TELEMETRY_OTLP_URL?.trim() || process.env.DSH_TELEMETRY_OTLP_URL?.trim()"
-          compression: gzip
-          timeoutMillis: 1000
-        processor:
-          scheduledDelayMillis: 10000
-          maxQueueSize: 2048
-          maxExportBatchSize: 2048
-          exportTimeoutMillis: 1500
+      disabled: true
 
     - id: subprocess
       name: '@yharness/subprocess-local'

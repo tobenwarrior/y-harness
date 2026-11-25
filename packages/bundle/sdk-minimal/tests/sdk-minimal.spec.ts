@@ -54,6 +54,8 @@ describe('dsh-sdk-minimal bundle', () => {
       ['persistent-pwsh', '@yharness/tool-pwsh-persistent'],
       ['sessions', '@yharness/session-persistence-jsonl'],
     ])
+    expect(rows.find(row => row.id === 'session-log-deepseek')?.disabled).toBe(true)
+    expect(rows.find(row => row.id === 'plugin-package-inventory-deepseek')?.disabled).toBe(true)
     expect(rows.find(row => row.id === 'sdk-app-startup')?.config).toEqual({ profile: 'sdk-minimal' })
     expect(rows.find(row => row.id === 'sdk-jsonrpc-server')).toMatchObject({
       inject: ['sdkAppStartup', 'loader'],

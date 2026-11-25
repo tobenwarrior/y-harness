@@ -106,7 +106,7 @@ Connection options are captured from volatile Config references once per operati
 
 ### Provider-specific request fields
 
-When `ctx.deepseekLlmApiExtensions` is present, the adapter prepares its registered top-level fields from the exact serialized base request before `fetch`. The registry omits a field whose preparation fails, and field collisions fail before HTTP; after a 2xx response, the adapter accepts every captured contribution before consuming SSE. Transport and non-2xx failures do not accept them. When the base request with its extension fields fails to serialize, the adapter sends the base request alone, skips acceptance so contributors resend their state later, and logs a warning naming the omitted fields. Serialization, acceptance, and replay-degradation warnings are logged once per route. Shipped compositions use this for the default-on incremental `dsh_session_log` field and the default-on active `dsh_plugin_packages` inventory; both stay outside model input.
+When `ctx.deepseekLlmApiExtensions` is present, the adapter prepares its registered top-level fields from the exact serialized base request before `fetch`. The registry omits a field whose preparation fails, and field collisions fail before HTTP; after a 2xx response, the adapter accepts every captured contribution before consuming SSE. Transport and non-2xx failures do not accept them. When the base request with its extension fields fails to serialize, the adapter sends the base request alone, skips acceptance so contributors resend their state later, and logs a warning naming the omitted fields. Serialization, acceptance, and replay-degradation warnings are logged once per route. The adapter excludes the retired Session-log and plugin-inventory fields before their providers run. Custom adapter callbacks that include either field send only the base request and skip acceptance.
 
 ### Failures and recovery
 
@@ -138,7 +138,7 @@ The plugin is built on one explicit resolve step and one registration fact. `res
 
 ### Wire flow
 
-One `stream()` call normally makes one model request: resolve deterministic request images, prefer Files ids, prepare any registered top-level request extensions, fetch from the resolved `baseURL`, accept extension transactions after HTTP 2xx, and translate the SSE stream into the harness protocol. File-resolution failure makes the first request inline; a provider stale-file response permits one replacement attempt, also inline if replacement resolution fails. Every model and Files call carries shared attribution. Model requests also carry the stable anonymous user id outside model input, plus a session id when present. Reasoning history is serialized back when required, and cache accounting maps DeepSeek's cache-hit metrics into harness usage.
+One `stream()` call normally makes one model request: resolve deterministic request images, prefer Files ids, prepare any registered top-level request extensions, fetch from the resolved `baseURL`, accept extension transactions after HTTP 2xx, and translate the SSE stream into the harness protocol. File-resolution failure makes the first request inline; a provider stale-file response permits one replacement attempt, also inline if replacement resolution fails. Every model and Files call carries shared attribution. Model requests omit Harness user and Session identifiers. Reasoning history is serialized back when required, and cache accounting maps DeepSeek's cache-hit metrics into harness usage.
 
 </details>
 
@@ -154,8 +154,8 @@ Read these pages when the package-level contract is not enough. They move from t
 - [LLM streaming subsystem](../../../docs/subsystems/llm-streaming.md) — the `StreamChunk` protocol and adapter contract.
 - [llm-retry](../llm-retry/README.md) — the retry executor that applies this adapter's `retryPolicy`.
 - [DeepSeek request extensions](../deepseek-llm-api-extensions/README.md) — lifecycle and acceptance semantics for provider-specific top-level fields.
-- [Session-log upload](../../session/session-log-deepseek/README.md) — the default-on incremental `dsh_session_log` contribution.
-- [Plugin package inventory](../plugin-package-inventory-deepseek/README.md) — the default-on `dsh_plugin_packages` contribution.
+- [Session-log history](../../session/session-log-deepseek/README.md) — the retired incremental `dsh_session_log` contribution.
+- [Plugin package inventory](../plugin-package-inventory-deepseek/README.md) — the retired `dsh_plugin_packages` contribution.
 - [Twin LLM adapters](../../../.agents/notes/implemented/architecture/2026-06-13-twin-llm-adapters.md) — why DeepSeek ships two structurally different adapters.
 - [Mandatory app attribution headers](../../../docs/subsystems/llm-streaming.md) — the identity every provider request carries.
 

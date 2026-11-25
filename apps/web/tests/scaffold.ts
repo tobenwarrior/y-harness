@@ -636,14 +636,12 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     // workspace, keeping the composition untouched.
     { id: 'agent-instructions', disabled: true },
     { id: 'session-title-llm', disabled: true },
-    // Fixture sessions must never leave the process: the shipped row defaults
-    // to the production OTLP endpoint (or whatever DSH_TELEMETRY_OTLP_URL
-    // names in the ambient environment). A scenario with a local collector
-    // preserves the shipped disabled setting instead of overriding it.
+    // Only scenarios with an explicit test collector enable feedback export.
     options.telemetryUrl === undefined
       ? { id: 'session-telemetry-otel', disabled: true }
       : {
         id: 'session-telemetry-otel',
+        disabled: false,
         config: {
           mode: options.telemetryMode ?? 'FEEDBACK_ONLY',
           exporter: { url: options.telemetryUrl },

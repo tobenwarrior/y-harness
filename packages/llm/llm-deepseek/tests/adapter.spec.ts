@@ -1,6 +1,5 @@
 /** HTTP lifecycle, routing and optional Cordis services under real composition. */
 import { installAccountTaskCancellation, type DeepSeekAccount } from '@yharness/deepseek-account'
-import type { AnonymousUserId } from '@yharness/anonymous-user-id'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -135,8 +134,8 @@ describe('direct Messages HTTP', () => {
     })
     expect(http.requests[0]).toMatchObject({ path: '/anthropic/v1/messages', headers: {
       'x-api-key': 'test-key', 'anthropic-version': '2023-06-01',
-      'user-agent': userAgent(), 'x-deepseek-harness-user-id': 'test-user',
-      'x-deepseek-harness-session-id': 'session-test', 'x-deepseek-harness-compact': '1',
+      'user-agent': userAgent(),
+      'x-deepseek-harness-compact': '1',
     }, body: { thinking: { type: 'enabled' }, output_config: { effort: 'high' } } })
     expect(llm.providerInfo('deepseek-official')).toEqual({ id: 'deepseek-official', name: 'DeepSeek', auxiliaryGeneration: 'api' })
     expect(await llm.listModels('deepseek-official')).toEqual([])
@@ -170,6 +169,27 @@ describe('direct Messages HTTP', () => {
     await expect(chunks(adapter({ baseURL: http.url }).stream(options()))).rejects.toMatchObject({ code: 'RATE_LIMIT', failure: { status: 429, providerRetryAfterMs: 3000 } })
   })
 
+  it('drops private reporting fields and their acceptance from a custom adapter extension', async () => {
+    const http = await endpoint()
+    const accept = vi.fn(() => Promise.resolve())
+    const llm = adapter({ baseURL: http.url }, {
+      prepareExtensions: async () => ({
+        fields: {
+          dsh_session_log: {
+            version: 1, sessionFormatVersion: 0, session: { id: 'private-session', version: 0, createdAt: 1 },
+            afterSeq: -1, throughSeq: 0, events: [{ type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } }],
+          },
+          dsh_plugin_packages: { version: 1, packages: [{ name: 'private-package', version: '1.0.0' }] },
+        },
+        accept,
+      }),
+    })
+    await assemble(llm.stream(options({ messages: [user()] })))
+    expect(http.requests[0]?.body).not.toHaveProperty('dsh_session_log')
+    expect(http.requests[0]?.body).not.toHaveProperty('dsh_plugin_packages')
+    expect(accept).not.toHaveBeenCalled()
+  })
+
   it('refuses redirects before credentials reach another origin or request extensions are accepted', async () => {
     const destination = await endpoint()
     const source = await endpoint((response) => {
@@ -181,7 +201,7 @@ describe('direct Messages HTTP', () => {
     const files = new DeepSeekFileStore()
     const llm = new DeepSeekAdapter({
       options: () => Messages.resolveAdapterOptions({ baseURL: source.url }),
-      resolveAuth: () => Promise.resolve({ headers: { 'x-api-key': 'test-key' } }), resolveUserId: () => 'test-user' as AnonymousUserId,
+      resolveAuth: () => Promise.resolve({ headers: { 'x-api-key': 'test-key' } }),
       resolveAttachments: () => undefined, resolveImageAccess: () => undefined, resolveFiles: () => files,
       prepareExtensions: prepare,
     })
@@ -198,7 +218,7 @@ describe('direct Messages HTTP', () => {
     const first = await endpoint(), second = await endpoint()
     let config = Messages.resolveAdapterOptions({ baseURL: first.url, maxTokens: 10, models: [{ id: MODEL, systemPromptUpdate: 'in-history' }] })
     const files = new DeepSeekFileStore()
-    const llm = new DeepSeekAdapter({ options: () => config, resolveAuth: snapshot => Promise.resolve({ headers: { 'x-api-key': snapshot.maxTokens === 10 ? 'first' : 'second' } }), resolveUserId: () => 'user' as AnonymousUserId, resolveAttachments: () => undefined, resolveImageAccess: () => undefined, resolveFiles: () => files, prepareExtensions })
+    const llm = new DeepSeekAdapter({ options: () => config, resolveAuth: snapshot => Promise.resolve({ headers: { 'x-api-key': snapshot.maxTokens === 10 ? 'first' : 'second' } }), resolveAttachments: () => undefined, resolveImageAccess: () => undefined, resolveFiles: () => files, prepareExtensions })
     const prepared = await llm.prepareCall('deepseek-official', MODEL)
     config = Messages.resolveAdapterOptions({ baseURL: second.url, maxTokens: 20 })
     expect(prepared.model.systemPromptUpdate).toBe('in-history')
@@ -262,7 +282,7 @@ describe('direct Messages HTTP', () => {
       resolveAuth: () => Promise.resolve({ headers: { 'x-api-key': 'fixture-key' },
         onRequestError: async () => { throw new Error('credential storage unavailable') },
       }),
-      resolveUserId: () => 'fixture-user' as import('@yharness/anonymous-user-id').AnonymousUserId,
+
       prepareExtensions,
     })
     await expect(chunks(llm.stream(options()))).rejects.toMatchObject({ code: 'AUTH', failure: { status: 401 } })

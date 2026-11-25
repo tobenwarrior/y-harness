@@ -32,12 +32,8 @@ describe('dsh-base bundle', () => {
     )
     expect(rows.length).toBeGreaterThan(50)
     expect(rows.some(row => row.id === 'agent-loop')).toBe(true)
-    expect(rows.find(row => row.id === 'session-telemetry-otel')?.disabled).toEqual({
-      __jsExpr: "process.env.DSH_TELEMETRY_MODE !== 'DISABLED' && !(process.env.YH_TELEMETRY_OTLP_URL?.trim() || process.env.DSH_TELEMETRY_OTLP_URL?.trim())",
-    })
-    expect(rows.find(row => row.id === 'session-telemetry-otel')?.config?.['mode']).toEqual({
-      __jsExpr: "process.env.DSH_TELEMETRY_MODE || 'FEEDBACK_ONLY'",
-    })
+    expect(rows.find(row => row.id === 'session-telemetry-otel')).toMatchObject({ disabled: true })
+    expect(rows.find(row => row.id === 'session-telemetry-otel')?.config).toBeUndefined()
     expect(rows.find(row => row.id === 'hmr')).toMatchObject({
       config: { root: [] },
     })
@@ -51,7 +47,7 @@ describe('dsh-base bundle', () => {
     expect(manifest.dependencies).toHaveProperty('@yharness/web-fetch-http')
   })
 
-  it('keeps telemetry opt-in and gives the canonical URL precedence over the legacy one', () => {
+  it('keeps Session feedback local instead of reading collector environment variables', () => {
     const root = fileURLToPath(new URL('..', import.meta.url))
     const parsed = yaml.load(
       readFileSync(resolve(root, 'cordis.patch.yml'), 'utf8'),
@@ -60,25 +56,9 @@ describe('dsh-base bundle', () => {
     if (!Array.isArray(parsed)) throw new TypeError('base patch must parse to a patch list')
     const row = parsed.flatMap(patch => patch.insert ?? []).find(candidate => candidate.id === 'session-telemetry-otel')
     if (row === undefined) throw new Error('base patch must mount session telemetry')
-    const disabled = row.disabled as { __jsExpr?: string } | undefined
-    const exporter = row.config?.['exporter'] as { url?: { __jsExpr?: string } } | undefined
-    if (disabled?.__jsExpr === undefined || exporter?.url?.__jsExpr === undefined) {
-      throw new Error('base telemetry row must expose endpoint and disabled expressions')
-    }
-    const evaluateTelemetry = (env: Record<string, string | undefined>) => ({
-      disabled: Boolean(evaluate({ process: { env } }, disabled.__jsExpr!)),
-      endpoint: evaluate({ process: { env } }, exporter.url!.__jsExpr!),
-    })
-    expect(evaluateTelemetry({})).toEqual({ disabled: true, endpoint: undefined })
-    expect(evaluateTelemetry({ YH_TELEMETRY_OTLP_URL: '   ' })).toEqual({ disabled: true, endpoint: undefined })
-    expect(evaluateTelemetry({ DSH_TELEMETRY_OTLP_URL: '  https://legacy.example/v1/logs  ' })).toEqual({
-      disabled: false, endpoint: 'https://legacy.example/v1/logs',
-    })
-    expect(evaluateTelemetry({
-      YH_TELEMETRY_OTLP_URL: '  https://canonical.example/v1/logs  ',
-      DSH_TELEMETRY_OTLP_URL: 'https://legacy.example/v1/logs',
-    })).toEqual({ disabled: false, endpoint: 'https://canonical.example/v1/logs' })
-    expect(evaluateTelemetry({ DSH_TELEMETRY_MODE: 'DISABLED' })).toEqual({ disabled: false, endpoint: undefined })
+    expect(row).toMatchObject({ disabled: true })
+    expect(row.config).toBeUndefined()
+    expect(JSON.stringify(row)).not.toMatch(/TELEMETRY_OTLP_URL/)
   })
 
   it('gates each shell stack by platform with a symmetric disabled expression', () => {

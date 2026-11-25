@@ -19,9 +19,11 @@
 
     - id: session-log-deepseek
       name: '@yharness/session-log-deepseek'
+      disabled: true
 
     - id: plugin-package-inventory-deepseek
       name: '@yharness/plugin-package-inventory-deepseek'
+      disabled: true
 
     - id: llm-deepseek
       name: '@yharness/llm-deepseek-api-key'

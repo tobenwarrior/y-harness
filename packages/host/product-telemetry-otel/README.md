@@ -23,7 +23,7 @@ Send selected product usage events to an OTLP/HTTP collector. Events carry a nam
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount the plugin in a Cordis composition with the application identity and an explicit collector endpoint. The Desktop composition mounts it only when [product analytics](../../client/product-analytics/README.md) is enabled and a telemetry endpoint is configured; ordinary Web does not. The standalone example below reads `DSH_APP_VERSION`; Desktop supplies `DSH_CLIENT_VERSION` through its native launcher. Both must name the running release; the schema rejects an absent version.
+Mount the plugin in an explicit Cordis composition with the application identity and collector endpoint. Shipped Desktop and Web profiles keep this row disabled; a later profile, home, or invocation patch can mount it alongside [product analytics](../../client/product-analytics/README.md). Ordinary Web does not mount it by default. The standalone example below reads `DSH_APP_VERSION`; Desktop supplies `DSH_CLIENT_VERSION` through its native launcher. Both must name the running release; the schema rejects an absent version.
 
 ```yaml
 - name: '@yharness/otel'
@@ -48,7 +48,7 @@ Mount the plugin in a Cordis composition with the application identity and an ex
 | `exportTimeoutMillis` | `20000` | Processor batch export deadline |
 | `shutdownTimeoutMillis` | `21000` | Drain deadline; expiry cancels pending exports and reports possible loss |
 
-The plugin has no default endpoint and sends nothing until its composition supplies one. The shipped Desktop row reads `YH_TELEMETRY_OTLP_URL` and falls back to the legacy `DSH_TELEMETRY_OTLP_URL`; surrounding whitespace is ignored. When neither variable contains a non-empty value, the row stays disabled and no reporter is created. Only `x-channel` and SDK protocol headers reach the collector; ambient OTel headers and client certificates are not inherited.
+The plugin has no default endpoint and sends nothing until an explicit composition supplies one. Collector environment variables alone do not enable the shipped rows. Only `x-channel` and SDK protocol headers reach the collector; ambient OTel headers and client certificates are not inherited.
 
 The 30-second interval batches product events; the exporter has a 15-second retry window inside the processor’s 20-second batch deadline. The 21-second drain deadline covers SDK `forceFlush()` work that the processor deadline does not cover. Expiry cancels active HTTP requests and retry waits, then awaits transport cleanup before disposal completes. An unreachable collector can delay disposal for the full 21 seconds. A full 2,048-record queue requires four 512-record batches and may not drain before that deadline. Interactive compositions needing a shorter exit should override these budgets; neither configuration guarantees delivery.
 

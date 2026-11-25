@@ -4,6 +4,9 @@ import { errorChain, LlmError } from '@yharness/llm'
 import type { DeepSeekLlmApiExtensionRequest, PreparedDeepSeekLlmApiExtensions } from '@yharness/deepseek-llm-api-extensions'
 import type { DeepSeekAdapterOptions } from './types.ts'
 
+/** Private reporting fields excluded from provider requests and custom relay requests. */
+export const retiredReportingFields: readonly string[] = ['dsh_session_log', 'dsh_plugin_packages']
+
 /**
  * Merge contributions without replacing Messages fields. A rejected preparation or
  * a base-field collision reports REQUEST_EXTENSION with the cause chain appended to
@@ -30,6 +33,10 @@ export async function prepareRequestExtensions(
     extensions = await prepare({ body, ...options })
   } catch (error) {
     throw new LlmError(`DeepSeek request extension preparation failed: ${errorChain(error)}`, 'REQUEST_EXTENSION', { cause: error })
+  }
+  if (retiredReportingFields.some(field => Object.hasOwn(extensions.fields, field))) {
+    // Custom adapters can supply an indivisible acceptance callback for all fields.
+    return { payload: JSON.stringify(body), accept: () => Promise.resolve() }
   }
   const fields = Object.keys(extensions.fields)
   for (const field of fields) {

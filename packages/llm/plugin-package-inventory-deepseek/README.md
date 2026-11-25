@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Complete active Loader-backed plugin package inventory for official DeepSeek LLM API requests. This function plugin injects the Loader, live Agent registry, and `ctx.deepseekLlmApiExtensions`, then owns the `dsh_plugin_packages` field. Enable it when the official API needs the active package list for request diagnostics.
+Compatibility plugin for the former Loader package inventory contribution. Shipped profiles disable it, and the [DeepSeek adapter](../llm-deepseek/README.md) excludes its field even if a saved profile enables it.
 
 ## Table of Contents
 
@@ -26,7 +26,7 @@ Complete active Loader-backed plugin package inventory for official DeepSeek LLM
 |---|---:|---|
 | `enabled` | `true` | Register the `dsh_plugin_packages` contribution. Set it to `false` to omit package metadata. |
 
-Shipped profiles use the default, so every official DeepSeek request carries the package inventory when preparation succeeds.
+The registry can prepare this legacy field for compatibility testing. The shipped adapter excludes it before preparing a request.
 
 <a id="collection"></a>
 ## Collection

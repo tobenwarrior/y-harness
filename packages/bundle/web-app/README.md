@@ -5,9 +5,9 @@ kind: "package-bundle"
 
 # @yharness/web-app
 
-Desktop analytics follows the [product collection policy](../../client/product-analytics/README.md), including its live application setting. Web usage is excluded.
+Shipped Desktop and Web profiles keep product analytics and its OTLP transport disabled. A later profile, home, or invocation patch may explicitly mount the [product collection policy](../../client/product-analytics/README.md); ordinary Web usage remains excluded.
 
-Desktop analytics schedules partial batches every 30 seconds, with a 15-second exporter timeout and a 20-second processor timeout. Shutdown allows 2 seconds to drain, then cancels pending requests and retry waits so telemetry does not keep the Host alive. Pending events may be lost on exit.
+An explicit Desktop product-analytics overlay owns its batching and shutdown limits. The shipped bundle mounts neither its exporter nor its event producer, so collector environment variables alone do not create network traffic.
 
 ## Summary
 

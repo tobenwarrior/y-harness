@@ -1511,9 +1511,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'disposer that releases the field.',
       },
       {
-        signature: 'async prepare(request: DeepSeekLlmApiExtensionRequest): Promise<PreparedDeepSeekLlmApiExtensions>',
+        signature: 'async prepare(request: DeepSeekLlmApiExtensionRequest, omitted: readonly string[] = []): Promise<PreparedDeepSeekLlmApiExtensions>',
         description: 'Prepare every currently registered field from one immutable base request. A provider whose preparation throws, or whose value cannot be cloned, is omitted from this request; the first such failure per field is logged. Only cancellation rejects. Field values are cloned and frozen; providers retain no mutable alias to the outgoing request.',
-        parameters: [{ name: 'request', description: 'exact serialized request facts before extension fields.' }],
+        parameters: [{ name: 'request', description: 'exact serialized request facts before extension fields.' }, { name: 'omitted', description: 'fields excluded before their providers run.' }],
         returns: 'detached fields and their idempotent joint acceptance transaction.',
       },
     ],

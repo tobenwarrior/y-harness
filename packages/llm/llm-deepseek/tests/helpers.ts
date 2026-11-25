@@ -2,7 +2,6 @@
 import { Context } from '@yharness/cordis'
 import AttachmentStore from '@yharness/attachment'
 import type { ModuleLoaderV2 } from '@yharness/cordis-plugin-loader'
-import type { AnonymousUserId } from '@yharness/anonymous-user-id'
 import { createServer } from 'node:http'
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http'
 import { once } from 'node:events'
@@ -45,7 +44,7 @@ export async function assemble(stream: AsyncIterable<StreamChunk>, model = MODEL
 }
 export function adapter(config: Config = {}, dependencies: Partial<DeepSeekAdapterOptions> = {}) {
   const files = new DeepSeekFileStore()
-  return new DeepSeekAdapter({ options: () => resolveAdapterOptions(config), resolveAuth: () => Promise.resolve({ headers: { 'x-api-key': 'test-key' } }), resolveUserId: () => 'test-user' as AnonymousUserId, resolveAttachments: () => undefined, resolveImageAccess: () => undefined, resolveFiles: () => files, prepareExtensions, ...dependencies })
+  return new DeepSeekAdapter({ options: () => resolveAdapterOptions(config), resolveAuth: () => Promise.resolve({ headers: { 'x-api-key': 'test-key' } }), resolveAttachments: () => undefined, resolveImageAccess: () => undefined, resolveFiles: () => files, prepareExtensions, ...dependencies })
 }
 /**
  * Loopback Messages endpoint recording each model request.

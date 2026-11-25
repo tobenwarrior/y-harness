@@ -25,6 +25,8 @@ The adapter injects `otel`; the [shared OTel plugin](../../telemetry/otel/README
 <a id="use-this-package"></a>
 ## Use this package
 
+Shipped profiles keep this plugin disabled, so feedback remains in the durable Session log unless a later profile, home, or invocation patch explicitly mounts a configured backend.
+
 Mount this plugin when a deployment should export session records through OpenTelemetry logs. Choose a mode, give the exporter an endpoint, and decide whether to mount redaction rules on the seam.
 
 ### Modes

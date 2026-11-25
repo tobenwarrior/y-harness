@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Use **Upload Session Log when using the official model API** above the version number in **Settings → General** to control Session-log upload with DeepSeek API requests. The switch shows the accepted Host setting and saves each change immediately. It appears only while the Host exposes the upload setting; read-only clients cannot change it.
+Compatibility settings companion for the former Session-log contribution. Shipped Web and Desktop profiles hide the upload switch. See the [privacy migration guide](../../../docs/upgrade-guide/v0.2.1-rc.2/private-session-reporting/guide.md).
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@ Use **Upload Session Log when using the official model API** above the version n
 <a id="use-this-package"></a>
 ## Use this package
 
-The Web bundle mounts this companion. Its switch edits the Host plugin's `enabled` field through the shared configuration form. A save failure keeps the accepted value and shows a toast that survives closing Settings. See [Session-log upload](../../session/session-log-deepseek/README.md#configuration) for request timing, resumed uploads, and the separate OpenTelemetry setting.
+The compatibility companion remains available to custom compositions. Its switch edits the Host plugin's `enabled` field through the shared configuration form. A save failure keeps the accepted value and shows a toast that survives closing Settings. See [Session-log upload](../../session/session-log-deepseek/README.md#configuration) for request timing, resumed uploads, and the separate OpenTelemetry setting.
 
 -----
 
