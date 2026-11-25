@@ -404,8 +404,7 @@ export function mergeGrokHistoryArchives(
     ...(mergedSources.length === 0 ? {} : { sources: mergedSources }),
   }
   const maxBytes = mergedArchive.version === 1 ? GROK_HISTORY_V1_MAX_BYTES : GROK_HISTORY_MAX_BYTES
-  const serialized = JSON.stringify(mergedArchive)
-  if (serialized === undefined || Buffer.byteLength(serialized) > maxBytes) {
+  if (Buffer.byteLength(JSON.stringify(mergedArchive)) > maxBytes) {
     throw new Error('Grok history archive exceeds the byte limit')
   }
   return mergedArchive
