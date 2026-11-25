@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { ComponentProps } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionBinding, SessionListState, SessionReference } from '@yharness/api-session-controller/client'
@@ -200,6 +200,42 @@ describe('Bots conversation slot wiring', () => {
       key: 'conversation.content',
       props: { variant: 'embedded', phase: 'active', hero: false, bot: { name: 'Research partner' } },
     }])
+  })
+
+  it('wraps the embedded Conversation with the imported history entry when available', () => {
+    const owner = {
+      name: 'Research partner',
+      id: 'bot-history',
+      readGrokHistory: vi.fn(async () => null),
+      t,
+    }
+    const renderFactorySlot: BotsConversationProps['renderFactorySlot'] = (_key, _props, options) => {
+      const views = (options?.slots as { views?: (props: never) => ReactNode } | undefined)?.views
+      if (views === undefined) throw new Error('Conversation views were not registered')
+      return views({
+        bot: owner,
+        renderSlot: () => <span data-testid="conversation-live">Conversation</span>,
+      } as never)
+    }
+    render(<BotsConversation {...conversationProps(owner, renderFactorySlot)} />)
+
+    expect(screen.getByRole('region', { name: en.grokHistory })).toBeTruthy()
+    expect(screen.getByTestId('conversation-live')).toBeTruthy()
+  })
+
+  it('leaves the embedded Conversation unchanged when imported history is unavailable', () => {
+    const renderFactorySlot: BotsConversationProps['renderFactorySlot'] = (_key, _props, options) => {
+      const views = (options?.slots as { views?: (props: never) => ReactNode } | undefined)?.views
+      if (views === undefined) throw new Error('Conversation views were not registered')
+      return views({
+        bot: undefined,
+        renderSlot: () => <span data-testid="conversation-live">Conversation</span>,
+      } as never)
+    }
+    render(<BotsConversation {...conversationProps({ name: 'Research partner' }, renderFactorySlot)} />)
+
+    expect(screen.queryByRole('region', { name: en.grokHistory })).toBeNull()
+    expect(screen.getByTestId('conversation-live')).toBeTruthy()
   })
 
   it('keeps the selected Bot visible without rendering a Conversation until its Session is retained', () => {

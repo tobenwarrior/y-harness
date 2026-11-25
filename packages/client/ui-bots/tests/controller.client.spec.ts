@@ -2333,6 +2333,9 @@ describe('BotWorkspaceController', () => {
     await controller.load()
     const face = controller.face()
     await expect(face.readGrokHistory?.(original.id)).resolves.toBeNull()
+    const readSignal = new AbortController().signal
+    await expect(face.readGrokHistory?.(original.id, readSignal)).resolves.toBeNull()
+    expect(readGrokHistory).toHaveBeenLastCalledWith({ botId: original.id }, readSignal)
     const editor = face.avatarEditor
     if (editor?.status === undefined || editor.generate === undefined || editor.commit === undefined || editor.update === undefined
       || editor.upload === undefined || editor.updateAppearance === undefined) throw new Error('avatar actions are not mounted')
@@ -3568,6 +3571,41 @@ describe('BotWorkspaceController', () => {
     await expect(queuedLoad).resolves.toBeUndefined()
     await vi.waitFor(() => { expect(queuedController.source.getSnapshot().error).toBe('queued roster transport failed') })
     queuedController.dispose()
+  })
+
+  it('reports retry failures and distinguishes missing history from errors', async () => {
+    const original = bot('bot-inline-history-branches', 'session-inline-history-branches')
+    const remote = remoteFixture([original])
+    const readGrokHistory = vi.fn<NonNullable<BotWorkspaceRemote['readGrokHistory']>>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: new RemoteError('gateway/internal', 'history unavailable', {}),
+      })
+      .mockResolvedValueOnce({ ok: true, value: null })
+    remote.readGrokHistory = readGrokHistory
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+
+    const face = controller.face()
+    if (face.readGrokHistory === undefined) throw new Error('history action is not mounted')
+    await expect(face.readGrokHistory(original.id)).rejects.toThrow('history unavailable')
+    await expect(face.readGrokHistory(original.id, new AbortController().signal)).resolves.toBeNull()
+
+    const load = vi.spyOn(controller, 'load')
+      .mockRejectedValueOnce(new Error('group retry failed'))
+      .mockRejectedValueOnce('group retry transport failed')
+      .mockRejectedValueOnce(new Error('roster retry failed'))
+      .mockRejectedValueOnce('roster retry transport failed')
+    face.retryGroup()
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().groupError).toBe('group retry failed') })
+    face.retryGroup()
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().groupError).toBe('group retry transport failed') })
+    face.retry()
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().error).toBe('roster retry failed') })
+    face.retry()
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().error).toBe('roster retry transport failed') })
+    expect(load).toHaveBeenCalledTimes(4)
+    controller.dispose()
   })
 
   it('does not commit stale roster reads after disposal or roster revisions', async () => {

@@ -1,7 +1,7 @@
 // Keyless assembled-browser coverage for the Bot roster and its one-to-one
 // embedded Conversation Sessions.
 import { fileURLToPath } from 'node:url'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdir, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Browser, Page } from 'playwright'
@@ -25,6 +25,7 @@ const FIXTURE = join(SNAPSHOT_DIR, 'session.v3.jsonl')
 const UI_EXPECTED = fileURLToPath(new URL('./expected/bot-workspace/ui.expected.md', import.meta.url))
 const MODE = webSnapshotMode()
 const CAPTURE_HISTORY = process.env.DSH_GROK_HISTORY_MEDIA === '1'
+const INLINE_VISUAL_DIR = process.env.DSH_GROK_INLINE_VISUAL_DIR
 
 describe('web e2e: Bot workspace retains one Conversation Session per Bot', () => {
   let scaffold: WebScaffold
@@ -63,6 +64,16 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     browser = await chromium.launch()
     page = await newEnglishPage(browser)
     tripwire = watchConsole(page)
+    await page.route('**/api/skill-compound.update', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          vendored: '0.17.2', upstream: '0.17.2', updateAvailable: false,
+          repository: 'tobenwarrior/compound-skills', checkedAt: null, error: null,
+        }),
+      })
+    })
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
     await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
   }, 120_000)
@@ -323,6 +334,70 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await createDialog.waitFor({ state: 'hidden' })
     await expect.poll(async () => (await scaffold.ctx.bots.list({})).bots.find(bot => bot.name === 'Verifier')?.description)
       .toBe('Checks releases')
+    expect(tripwire.pageErrors).toEqual([])
+    expect(tripwire.warnings).toEqual([])
+  }, 120_000)
+
+  it('renders the recovered Grok chat inline without replacing the live Bot conversation', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-grok-history-inline'))
+    const botsMode = page.getByRole('button', { name: 'Bots', exact: true })
+    if (await botsMode.getAttribute('aria-pressed') !== 'true') await botsMode.click()
+    const roster = page.locator('[data-yh-part="sidebar"] aside[aria-label="Bot workspace"]')
+    const firstRow = roster.locator(`[data-bot-id="${firstBot.id}"]`)
+    const secondRow = roster.locator(`[data-bot-id="${secondBot.id}"]`)
+    await secondRow.click()
+    const secondDetail = page.locator(`section[aria-label="${secondBot.name}"]`)
+    await expect.poll(() => secondDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
+      .toBe(secondBot.sessionId)
+    const composer = secondDetail.getByRole('textbox', { name: 'Message ' + secondBot.name, exact: true })
+    await composer.waitFor()
+    const inline = secondDetail.locator('section[aria-label="Imported Grok chat"]')
+    await inline.getByRole('button', { name: 'Show history', exact: true }).waitFor()
+    expect(await inline.getByText('Recovered question', { exact: true }).count()).toBe(0)
+
+    await composer.fill('Keep this draft while I inspect the recovery.')
+    await inline.getByRole('button', { name: 'Show history', exact: true }).click()
+    await inline.getByText('Recovered question', { exact: true }).waitFor()
+    await inline.getByText('Recovered answer', { exact: true }).waitFor()
+    const sourceSelect = inline.getByRole('combobox', { name: 'History source' })
+    await sourceSelect.selectOption('supplement')
+    await inline.getByText('Supplemental record', { exact: true }).waitFor()
+    await inline.getByText('Some records could not be recovered from this source.', { exact: true }).waitFor()
+    expect(await composer.textContent()).toContain('Keep this draft while I inspect the recovery.')
+    await sourceSelect.selectOption('primary')
+    await inline.getByText('Recovered question', { exact: true }).waitFor()
+    await expect.poll(() => secondDetail.locator('[data-composer-placement="bottom"]').count()).toBe(1)
+
+    if (INLINE_VISUAL_DIR !== undefined) {
+      await mkdir(INLINE_VISUAL_DIR, { recursive: true })
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+      await page.locator('body[data-ds-dark-theme]').waitFor({ state: 'visible' })
+      await page.screenshot({
+        path: join(INLINE_VISUAL_DIR, 'desktop-dark.png'), fullPage: true, animations: 'disabled',
+      })
+      await page.setViewportSize({ width: 480, height: 900 })
+      await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+      await page.locator('body[data-ds-dark-theme]').waitFor({ state: 'detached' })
+      await page.screenshot({
+        path: join(INLINE_VISUAL_DIR, 'narrow-light.png'), fullPage: true, animations: 'disabled',
+      })
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+      await page.locator('body[data-ds-dark-theme]').waitFor({ state: 'visible' })
+    }
+
+    await firstRow.click()
+    await expect.poll(() => page.locator(`section[aria-label="${firstBot.name}"] [data-conversation-session]`)
+      .getAttribute('data-conversation-session')).toBe(firstBot.sessionId)
+    await secondRow.click()
+    await expect.poll(() => page.locator(`section[aria-label="${secondBot.name}"] [data-conversation-session]`)
+      .getAttribute('data-conversation-session')).toBe(secondBot.sessionId)
+    const returnedDetail = page.locator(`section[aria-label="${secondBot.name}"]`)
+    expect(await returnedDetail.getByRole('textbox', { name: 'Message ' + secondBot.name, exact: true }).textContent())
+      .toContain('Keep this draft while I inspect the recovery.')
+    expect(await returnedDetail.locator('section[aria-label="Imported Grok chat"]')
+      .getByText('Recovered question', { exact: true }).count()).toBe(0)
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
   }, 120_000)

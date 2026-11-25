@@ -1,3 +1,7 @@
+- region "Imported Grok chat":
+  - strong: Imported Grok chat
+  - text: Read-only recovery from Grok Bot
+  - button "Show history"
 - text: Summarize the release checklist. {{clock}}
 - button "Copy"
 - status: Waiting for reply
@@ -8,6 +12,10 @@
 - button "Stop generating"
 - button "Activity"
 - button "Token usage"
+- region "Imported Grok chat":
+  - strong: Imported Grok chat
+  - text: Read-only recovery from Grok Bot
+  - button "Show history"
 - text: Summarize the release checklist. {{clock}}
 - button "Copy"
 - text: Scout
@@ -59,6 +67,10 @@
   - definition: 0 tok
   - term: Output
   - definition: 52 tok
+- region "Imported Grok chat":
+  - strong: Imported Grok chat
+  - text: Read-only recovery from Grok Bot
+  - button "Show history"
 - text: Summarize the release checklist. {{clock}}
 - button "Copy"
 - text: Scout

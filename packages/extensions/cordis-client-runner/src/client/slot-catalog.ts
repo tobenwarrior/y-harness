@@ -86,9 +86,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     summary: 'Embedded Conversation for the selected Bot.',
     doc: 'Embedded Conversation for the selected Bot.',
     registerOptions: [],
-    ownerProps: [
-      '/** Display identity supplied by the Bots workspace for one conversation. */\nexport interface ConversationBot {\n  readonly name: string\n}',
-    ],
+    ownerProps: [],
     ownerPropsReferences: [],
     standardProps: [
       'useResource: UseResource',
@@ -114,7 +112,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'shadows-shipped-ui',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'bots.conversation\', () => ctx.slots.register(\n      { name: \'bots.conversation\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-bots/src/client/panel.tsx:36',
+    source: 'packages/client/ui-bots/src/client/panel.tsx:43',
   },
   {
     key: 'conversation.approval.detail',

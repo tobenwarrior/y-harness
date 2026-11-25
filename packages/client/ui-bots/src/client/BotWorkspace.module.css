@@ -3063,6 +3063,95 @@
   width: min(640px, calc(100vw - 32px));
 }
 
+.grokHistoryInline {
+  align-self: center;
+  width: min(var(--dsh-chat-content-width, 748px), calc(100% - 32px));
+  margin: 12px auto 0;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-layer-1);
+}
+
+.grokHistoryInlineHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 6px 10px 6px 12px;
+}
+
+.grokHistoryInlineTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--yh-alias-label-secondary);
+}
+
+.grokHistoryInlineTitle > svg {
+  flex: none;
+}
+
+.grokHistoryInlineTitle > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.grokHistoryInlineTitle strong {
+  color: var(--yh-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.grokHistoryInlineTitle span,
+.grokHistoryInlineStatus,
+.grokHistoryInlineEmpty {
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+}
+
+.grokHistoryInlineTitle span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.grokHistoryInlineBody {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 12px;
+  border-top: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.grokHistoryInlineLoading,
+.grokHistoryInlineNotice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+}
+
+.grokHistoryInlineNotice {
+  justify-content: space-between;
+}
+
+.grokHistoryInlineStatus,
+.grokHistoryInlineEmpty {
+  margin: 10px 0 0;
+}
+
+.grokHistoryInlineMessages {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 .grokHistoryMessages {
   display: grid;
   gap: 10px;
