@@ -39,6 +39,7 @@
         "@yharness/api-session-controller",
         "@yharness/client-locale",
         "@yharness/client-ui-conversation",
+        "@yharness/client-ui-chat",
         "@yharness/client-ui-layout",
         "@yharness/client-ui-renderer",
         "@yharness/client-ui-session",
@@ -51,6 +52,7 @@
     "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
+    "@yharness/api-account-controller": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/brand": "workspace:*",
     "@yharness/api-remotes": "workspace:*",
@@ -61,8 +63,10 @@
     "@yharness/avatar-generation": "workspace:*",
     "@yharness/client-locale": "workspace:*",
     "@yharness/client-test-runtime": "workspace:*",
+    "@yharness/client-ui-chat": "workspace:*",
     "@yharness/client-ui-layout": "workspace:*",
     "@yharness/client-ui-conversation": "workspace:*",
+    "@yharness/client-ui-chat": "workspace:*",
     "@yharness/client-ui-input-trigger": "workspace:*",
     "@yharness/client-ui-primitives": "workspace:*",
     "@yharness/client-ui-renderer": "workspace:*",

@@ -23,6 +23,7 @@ import type { ToolDefinition, ToolExecution, ToolExecutionResult } from '@yharne
 import { assertSupportedJsonSchema } from '@yharness/tools'
 import type { JsonSchemaNode } from '@yharness/tools'
 import type { JsonValue } from '@yharness/util-values'
+import type { McpActionCatalogAction } from './action-catalog.ts'
 
 /** Resolved options relevant to tool bridging. */
 export interface ToolBridgeOptions {
@@ -30,6 +31,10 @@ export interface ToolBridgeOptions {
   registrationFailure: 'contain' | 'throw'
   serverName: string
   toolCallTimeoutMs: number
+  /** Exact raw MCP names excluded before they can be registered or called. */
+  disabledTools?: ReadonlySet<string>
+  /** Receives the exact raw discovery after a generation registers successfully. */
+  onToolsDiscovered?: (actions: readonly McpActionCatalogAction[]) => void
 }
 
 /** State for one sync generation: the current set of disposers keyed by public name. */
@@ -107,6 +112,7 @@ export function publicToolName(serverName: string, rawName: string): string {
  * @param opts - Bridge options: server namespace and per-call timeout.
  * @param previous - Disposer map from the prior sync generation; disposed
  *   during the swap phase (only after the fetch phase succeeded).
+ * @param admitted - Generation check before registration and each remote call.
  * @returns A map of registered public tool names to their unregister
  *   disposers — the exact set of live registrations owned by this server.
  */
@@ -115,6 +121,7 @@ export async function syncTools(
   ctx: Context,
   opts: ToolBridgeOptions,
   previous: ToolDisposers,
+  admitted: () => boolean = () => true,
 ): Promise<ToolDisposers> {
   // Phase 1: fetch and build the next generation without touching the registry.
   const definitions = new Map<string, ToolDefinition>()
@@ -122,6 +129,7 @@ export async function syncTools(
     ? { tools: [] }
     : await client.listTools(undefined, { cacheMode: 'refresh' })
   for (const tool of response.tools) {
+    if (opts.disabledTools?.has(tool.name) === true) continue
     const publicName = publicToolName(opts.serverName, tool.name)
     if (definitions.has(publicName)) {
       throw new Error(
@@ -136,14 +144,18 @@ export async function syncTools(
       inputSchema: tool.inputSchema,
       outputSchema: tool.outputSchema,
       taskRequired: tool.execution?.taskSupport === 'required',
-      call: (args, execution) => client.callTool(
-        { name: tool.name, arguments: args },
-        { signal: execution.signal, timeout: opts.toolCallTimeoutMs, toolDefinition: tool },
-      ),
+      call: (args, execution) => {
+        if (!admitted()) throw new Error(`mcp-client(${opts.serverName}): server is disconnected`)
+        return client.callTool(
+          { name: tool.name, arguments: args },
+          { signal: execution.signal, timeout: opts.toolCallTimeoutMs, toolDefinition: tool },
+        )
+      },
     }))
   }
 
   // Phase 2: swap generations.
+  if (!admitted()) return previous
   for (const dispose of previous.values()) dispose()
   const disposers: ToolDisposers = new Map()
   try {
@@ -159,6 +171,11 @@ export async function syncTools(
     if (opts.registrationFailure === 'throw') throw error
     return new Map()
   }
+  opts.onToolsDiscovered?.(response.tools.map(tool => ({
+    name: tool.name,
+    ...(tool.description === undefined ? {} : { description: tool.description }),
+    enabled: opts.disabledTools?.has(tool.name) !== true,
+  })))
   return disposers
 }
 

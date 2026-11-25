@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { ComponentProps } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionBinding, SessionListState, SessionReference } from '@yharness/api-session-controller/client'
@@ -202,6 +202,42 @@ describe('Bots conversation slot wiring', () => {
     }])
   })
 
+  it('wraps the embedded Conversation with the imported history entry when available', () => {
+    const owner = {
+      name: 'Research partner',
+      id: 'bot-history',
+      readGrokHistory: vi.fn(async () => null),
+      t,
+    }
+    const renderFactorySlot: BotsConversationProps['renderFactorySlot'] = (_key, _props, options) => {
+      const views = (options?.slots as { views?: (props: never) => ReactNode } | undefined)?.views
+      if (views === undefined) throw new Error('Conversation views were not registered')
+      return views({
+        bot: owner,
+        renderSlot: () => <span data-testid="conversation-live">Conversation</span>,
+      } as never)
+    }
+    render(<BotsConversation {...conversationProps(owner, renderFactorySlot)} />)
+
+    expect(screen.getByRole('region', { name: en.grokHistory })).toBeTruthy()
+    expect(screen.getByTestId('conversation-live')).toBeTruthy()
+  })
+
+  it('leaves the embedded Conversation unchanged when imported history is unavailable', () => {
+    const renderFactorySlot: BotsConversationProps['renderFactorySlot'] = (_key, _props, options) => {
+      const views = (options?.slots as { views?: (props: never) => ReactNode } | undefined)?.views
+      if (views === undefined) throw new Error('Conversation views were not registered')
+      return views({
+        bot: undefined,
+        renderSlot: () => <span data-testid="conversation-live">Conversation</span>,
+      } as never)
+    }
+    render(<BotsConversation {...conversationProps({ name: 'Research partner' }, renderFactorySlot)} />)
+
+    expect(screen.queryByRole('region', { name: en.grokHistory })).toBeNull()
+    expect(screen.getByTestId('conversation-live')).toBeTruthy()
+  })
+
   it('keeps the selected Bot visible without rendering a Conversation until its Session is retained', () => {
     const selected = bot()
     const state = workspaceState([selected], selected.id)
@@ -225,13 +261,17 @@ describe('Bots conversation slot wiring', () => {
     const calls: Array<{ key: string; props: object }> = []
     const renderSlot: BotsPanelProps['renderSlot'] = (key, props) => {
       calls.push({ key, props })
-      return <span data-testid="conversation-slot">{selected.name}</span>
+      return key === 'bots.conversation' ? <span data-testid="conversation-slot">{selected.name}</span> : null
     }
     const props = panelProps(state, reference, renderSlot)
     render(<BotsPanel {...props} />)
 
     expect(screen.getByTestId('conversation-slot').textContent).toBe(selected.name)
-    expect(calls).toEqual([{ key: 'bots.conversation', props: { bot: { name: selected.name } } }])
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).toEqual({ key: 'bots.conversation', props: { bot: { name: selected.name } } })
+    const agents = calls[1]!
+    expect(agents.key).toBe('conversation.session.header.agents')
+    expect('beforeOpen' in agents.props && typeof agents.props.beforeOpen).toBe('function')
   })
 
   it('shows the VPS Bot scope beside the Computer affordance before opening it', () => {
@@ -265,19 +305,19 @@ describe('Bots conversation slot wiring', () => {
     })
     render(<BotsPanel {...props} />)
 
-    fireEvent.click(screen.getByRole('button', { name: en.filesOpen }))
+    fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
     expect(screen.getByRole('menuitem', { name: en.filesPrivateWorkspace })).toBeTruthy()
     fireEvent.click(screen.getByRole('menuitem', { name: en.filesSharedWorkspace }))
     expect(openWorkspaceTab).toHaveBeenCalledWith('computer-shared-files')
 
-    fireEvent.click(screen.getByRole('button', { name: en.filesOpen }))
+    fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
     fireEvent.keyDown(document, { key: 'Escape' })
-    fireEvent.click(screen.getByRole('button', { name: en.filesOpen }))
+    fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
     fireEvent.click(screen.getByRole('menuitem', { name: en.filesPrivateWorkspace }))
     expect(openWorkspaceTab).toHaveBeenCalledWith('computer-files')
   })
 
-  it('keeps the Files action as a direct private workspace opener without sharing', () => {
+  it('offers only private files without shared workspace access', () => {
     const selected = bot()
     const state = workspaceState([selected], selected.id)
     const reference = sessionReference(selected.sessionId)
@@ -291,9 +331,10 @@ describe('Bots conversation slot wiring', () => {
       openWorkspaceTab,
     })} />)
 
-    fireEvent.click(screen.getByRole('button', { name: en.filesOpen }))
+    fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
+    expect(screen.queryByRole('menuitem', { name: en.filesSharedWorkspace })).toBeNull()
+    fireEvent.click(screen.getByRole('menuitem', { name: en.filesLabel }))
     expect(openWorkspaceTab).toHaveBeenCalledWith('computer-files')
-    expect(screen.queryByRole('menuitem')).toBeNull()
   })
 
   it('renders Computer and terminal controls for the selected Bot and closes the Computer panel', () => {
@@ -314,7 +355,8 @@ describe('Bots conversation slot wiring', () => {
 
     fireEvent.click(screen.getByRole('button', { name: en.computerOpen }))
     expect(setComputerTarget).toHaveBeenCalledWith(selected.sessionId)
-    fireEvent.click(screen.getByRole('button', { name: en.terminalOpen }))
+    fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.terminalLabel }))
     expect(openWorkspaceTab).toHaveBeenCalledWith('terminal')
 
     cleanup()
@@ -367,9 +409,16 @@ describe('Bots conversation slot wiring', () => {
     ])
     const select = vi.fn()
     const selectGroup = vi.fn()
+    const messageSearch = {
+      setOpen: vi.fn(),
+      search: async () => ({ items: [], hasMore: false }),
+      openResult: vi.fn(),
+    }
     const useWorkspace: BotsRosterProps['useWorkspace'] = selector => selector(state)
     const useSessionStatus: BotsRosterProps['useSessionStatus'] = selector => selector(statuses)
     const props: BotsRosterProps = {
+      useMessageSearchOpen: selector => selector(false),
+      messageSearch,
       wide: true,
       expandSidebar: () => {},
       usePanelInfo,
@@ -394,7 +443,7 @@ describe('Bots conversation slot wiring', () => {
       retry: () => {},
       t,
     }
-    render(<BotsRoster {...props} />)
+    const view = render(<BotsRoster {...props} />)
 
     expect(screen.getByRole('button', { name: 'Working bot, Working' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Preparing bot, Preparing' })).toBeTruthy()
@@ -402,6 +451,11 @@ describe('Bots conversation slot wiring', () => {
     expect(screen.getByRole('button', { name: 'Unknown bot' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Idle bot, Idle' }))
     expect(select).toHaveBeenCalledWith(idle.id)
+    fireEvent.click(screen.getByRole('button', { name: en.rosterMenu }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.searchChats }))
+    expect(messageSearch.setOpen).toHaveBeenCalledWith(true)
+    view.rerender(<BotsRoster {...props} useMessageSearchOpen={selector => selector(true)} />)
+    expect(screen.getByRole('dialog', { name: en.searchChats })).toBeTruthy()
   })
 
   it('keeps a populated roster out of its loading skeleton and projects an avatar', () => {
@@ -410,6 +464,7 @@ describe('Bots conversation slot wiring', () => {
     })
     const state = { ...workspaceState([avatarBot], avatarBot.id), phase: 'loading' as const }
     const props: BotsRosterProps = {
+      useMessageSearchOpen: selector => selector(false),
       wide: true,
       expandSidebar: () => {},
       usePanelInfo,
@@ -470,8 +525,8 @@ describe('Bots conversation slot wiring', () => {
       openWorkspaceTab,
     })} />)
 
-    expect(screen.getByRole('button', { name: en.terminalOpen })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: en.terminalOpen }))
+    fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.terminalLabel }))
     expect(openWorkspaceTab).toHaveBeenCalledWith('terminal')
 
     cleanup()
@@ -493,6 +548,7 @@ describe('Bots conversation slot wiring', () => {
       revokeMember: async () => ({ botId: selected.id, principalId: BotPrincipalId('principal'), revoked: true }),
     }
     const props: BotsRosterProps = {
+      useMessageSearchOpen: selector => selector(false),
       wide: false,
       expandSidebar: () => {},
       usePanelInfo,

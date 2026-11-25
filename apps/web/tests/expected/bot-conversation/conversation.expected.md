@@ -1,13 +1,21 @@
+- region "Imported Grok chat":
+  - strong: Imported Grok chat
+  - text: Read-only recovery from Grok Bot
+  - button "Show history"
 - text: Summarize the release checklist. {{clock}}
 - button "Copy"
 - status: Waiting for reply
-- textbox "Message or run a task, / commands, @ files or sessions"
+- textbox "Message Scout"
 - button "Add files or run commands"
 - 'button "Access mode, current: Approve for me"'
 - button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply
 - button "Stop generating"
 - button "Activity"
 - button "Token usage"
+- region "Imported Grok chat":
+  - strong: Imported Grok chat
+  - text: Read-only recovery from Grok Bot
+  - button "Show history"
 - text: Summarize the release checklist. {{clock}}
 - button "Copy"
 - text: Scout
@@ -18,7 +26,7 @@
 - button "Branch into a new conversation"
 - button "Token usage"
 - text: {{clock}}
-- textbox "Message or run a task, / commands, @ files or sessions"
+- textbox "Message Scout"
 - button "Add files or run commands"
 - 'button "Access mode, current: Approve for me"'
 - button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply
@@ -59,6 +67,10 @@
   - definition: 0 tok
   - term: Output
   - definition: 52 tok
+- region "Imported Grok chat":
+  - strong: Imported Grok chat
+  - text: Read-only recovery from Grok Bot
+  - button "Show history"
 - text: Summarize the release checklist. {{clock}}
 - button "Copy"
 - text: Scout
@@ -80,7 +92,7 @@
 - button "Branch into a new conversation"
 - button "Token usage"
 - text: {{clock}}
-- textbox "Message or run a task, / commands, @ files or sessions"
+- textbox "Message Scout"
 - button "Add files or run commands"
 - 'button "Access mode, current: Approve for me"'
 - button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply

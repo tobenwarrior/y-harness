@@ -4,7 +4,7 @@ import { ToolCallId } from '@yharness/llm'
 import { createScope } from '@yharness/scope'
 import { Session, SessionId } from '@yharness/session'
 import SystemPrompt from '@yharness/system-prompt'
-import ToolRuntime, { defineTool } from '@yharness/tools'
+import ToolRuntime, { defineTool, type ToolExecutionToken } from '@yharness/tools'
 import ApprovalService from '@yharness/user-approval'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -55,6 +55,7 @@ interface HarnessOptions {
   readonly withHistory?: boolean
   readonly withMemory?: boolean
   readonly connectedApps?: BotConnectedAppToolHost
+  readonly gitHubAuth?: 'github-app' | 'unrelated-connector'
   readonly withRegistrationConflict?: boolean
 }
 
@@ -65,11 +66,25 @@ async function harness({
   withHistory = false,
   withMemory = true,
   connectedApps,
+  gitHubAuth,
   withRegistrationConflict = false,
 }: HarnessOptions = {}) {
   const ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
+  const gitHubStatus = vi.fn<() => Promise<'connected' | 'needs-auth'>>()
+    .mockResolvedValue('needs-auth')
+  const removeGitHubAuth = gitHubAuth === undefined
+    ? undefined
+    : ctx.provide('githubAppAuth', { status: gitHubStatus } as never)
+  if (gitHubAuth !== undefined) {
+    ctx.on('mcp/actions/catalog', (accept) => {
+      accept({
+        serverName: 'github', entryId: 'test:github', connected: false, actions: [],
+        ...(gitHubAuth === 'github-app' ? { authKind: gitHubAuth } : {}),
+      })
+    })
+  }
   if (withApproval) {
     await ctx.plugin(ApprovalService, { policy: 'ask' })
     ctx.on('approval/request', () => Promise.resolve('allowed-once' as const))
@@ -122,7 +137,7 @@ async function harness({
     if (!withRegistrationConflict) throw error
     installationError = error
   }
-  return { ctx, agent, bound, dispose, manage, groupTools, historyRead, installationError }
+  return { ctx, agent, bound, dispose, manage, groupTools, historyRead, installationError, gitHubStatus, removeGitHubAuth }
 }
 
 async function execute(ctx: Context, agent: Agent, name: string, arguments_: unknown, callId = `bot-call-${name}`) {
@@ -294,6 +309,25 @@ describe('scoped Bot collaboration tools', () => {
     }
   })
 
+  it('rejects a Bot management call without a live Agent', async () => {
+    const h = await harness({ withManagement: true })
+    try {
+      const definition = h.ctx.tools.get('create_bot', h.agent)
+      if (definition === undefined) throw new Error('create_bot was not registered')
+      const callId = ToolCallId('orphan-management-call')
+      const args = { name: 'Research' }
+      await expect(definition.execute(args, {
+        name: 'create_bot', arguments: args, callId, rootCallId: callId,
+        token: Symbol('orphan-management-call') as ToolExecutionToken,
+        signal: new AbortController().signal, concludeTurn: vi.fn(), deferContext: vi.fn(),
+      })).rejects.toThrow('Bot management requires a live Bot.')
+      expect(h.manage).not.toHaveBeenCalled()
+    } finally {
+      h.dispose()
+      await h.ctx.fiber.dispose()
+    }
+  })
+
   it('runs approved memory list, remember, and forget through the bound Bot identity', async () => {
     const h = await harness({ withApproval: true })
     try {
@@ -357,6 +391,57 @@ describe('scoped Bot collaboration tools', () => {
       expect(h.bound.list).not.toHaveBeenCalled()
       expect(apps.guard).toHaveBeenCalled()
       expect(apps.beforeDispatch).toHaveBeenCalled()
+    } finally {
+      h.dispose()
+      await h.ctx.fiber.dispose()
+    }
+  })
+
+  it('checks owner-only app connection state without starting authorization', async () => {
+    const h = await harness({ connectedApps: connectedAppHost(), gitHubAuth: 'github-app' })
+    try {
+      expect(h.ctx.tools.schemas(h.agent).map(tool => tool.name)).toContain('request_app_connection')
+      const request = (id: string) => execute(h.ctx, h.agent, 'request_app_connection', { appId: 'github' }, id)
+      const result = await request('github-connect-pending')
+      expect(result.isError).toBe(false)
+      const pending = { appId: 'github', status: 'sign-in-required' }
+      expect(JSON.parse(text(result))).toEqual(pending)
+      expect(result.meta).toEqual(pending)
+      expect(h.gitHubStatus).toHaveBeenCalledTimes(1)
+
+      h.gitHubStatus.mockResolvedValueOnce('connected')
+      const connected = await request('github-connect-ready')
+      expect(JSON.parse(text(connected))).toEqual({ appId: 'github', status: 'connected' })
+      expect(connected.meta).toBeNull()
+
+      h.gitHubStatus.mockRejectedValueOnce(new Error('private credential-store error'))
+      const unavailable = { appId: 'github', status: 'unavailable' }
+      expect(JSON.parse(text(await request('github-connect-read-failed')))).toEqual(unavailable)
+      h.removeGitHubAuth?.()
+      expect(JSON.parse(text(await request('github-connect-provider-removed')))).toEqual(unavailable)
+      expect(h.gitHubStatus).toHaveBeenCalledTimes(3)
+    } finally {
+      h.dispose()
+      await h.ctx.fiber.dispose()
+    }
+  })
+
+  it('does not ask the owner to sign in for an unrelated connector', async () => {
+    const h = await harness({ connectedApps: connectedAppHost(), gitHubAuth: 'unrelated-connector' })
+    try {
+      const result = await execute(h.ctx, h.agent, 'request_app_connection', { appId: 'github' })
+      expect(JSON.parse(text(result))).toEqual({ appId: 'github', status: 'unavailable' })
+      expect(h.gitHubStatus).not.toHaveBeenCalled()
+    } finally {
+      h.dispose()
+      await h.ctx.fiber.dispose()
+    }
+  })
+
+  it('keeps the connection prompt absent when its owner-only Host capability is not mounted', async () => {
+    const h = await harness({ connectedApps: connectedAppHost() })
+    try {
+      expect(h.ctx.tools.schemas(h.agent).map(tool => tool.name)).not.toContain('request_app_connection')
     } finally {
       h.dispose()
       await h.ctx.fiber.dispose()

@@ -33,6 +33,7 @@ class SetupVpsTest(unittest.TestCase):
         unit = installer.service_unit(Path('/opt/node/bin/node'))
         self.assertIn('WorkingDirectory=%h/.yharness-vps/workspace', unit)
         self.assertIn('Environment="YH_HOME=%h/.yharness-vps/state"', unit)
+        self.assertIn('Environment="YH_VPS_SKIP_MISSED_SCHEDULES=1"', unit)
         self.assertIn('--profile web --no-open --host 127.0.0.1 --port 3080', unit)
         self.assertIn('StandardOutput=truncate:%h/.yharness-vps/host.log', unit)
         self.assertIn('Restart=on-failure', unit)

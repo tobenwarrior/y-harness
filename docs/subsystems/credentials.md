@@ -373,6 +373,35 @@ abstract getDeviceIdentity(): Promise<{ deviceId?: string; userId?: AccountUserI
 
 Source: [`packages/credentials/deepseek-account/src/index.ts`](../../packages/credentials/deepseek-account/src/index.ts)
 
+<a id="ctxgithubappauth--githubappauth"></a>
+
+### `ctx.githubAppAuth` — `GitHubAppAuth`
+
+Host-only GitHub App device authorization provider.
+
+```ts cordis-catalog
+/**
+ * Report whether a usable GitHub grant is stored without refreshing it.
+ * @returns `connected` when access or refresh credentials remain usable.
+ */
+async status(): Promise<'connected' | 'needs-auth'>
+
+/**
+ * Resolve a token only for the official GitHub MCP endpoint, refreshing an expired access token when possible.
+ * @param endpoint - endpoint that will receive the bearer token.
+ * @returns the access token for the exact GitHub MCP URL, or `undefined` when signed out or unavailable.
+ */
+async tokenFor(endpoint: URL): Promise<string | undefined>
+
+/**
+ * Cancel active authorization and refresh work, then remove the stored GitHub grant.
+ * @returns after local removal and its connection event, if a grant existed.
+ */
+async disconnect(): Promise<void>
+```
+
+Source: [`packages/credentials/github-app-auth/src/index.ts`](../../packages/credentials/github-app-auth/src/index.ts)
+
 <a id="authorization-events"></a>
 
 ### `authorization/*` events
@@ -492,6 +521,23 @@ Local grant removal has completed.
 ```
 
 Source: [`packages/credentials/deepseek-account/src/index.ts`](../../packages/credentials/deepseek-account/src/index.ts)
+
+<a id="github-app-auth-events"></a>
+
+### `github-app-auth/*` events
+
+<a id="github-app-authconnection-changed--emit"></a>
+
+#### `github-app-auth/connection-changed` — emit
+
+GitHub App sign-in, disconnect, or definitive grant invalidation completed. @mode emit
+
+```ts cordis-catalog
+/** GitHub App sign-in, disconnect, or definitive grant invalidation completed. @mode emit */
+'github-app-auth/connection-changed'(): void
+```
+
+Source: [`packages/credentials/github-app-auth/src/index.ts`](../../packages/credentials/github-app-auth/src/index.ts)
 <!-- END GENERATED cordis-surface -->
 
 The account Service Definition exposes getState, getProfile, getBalance, getUnnotifiedBonuses, ackBonusNotified, startSignIn, cancelSignIn, signOut, watch, and Host-only resolveToken and getPlatformSession. The platform provider implements it with an AuthorizationFlow and a private GrantRecord. AccountView distinguishes stored presence from server validation; attempt IDs bind cancellation to one local flow. See [the account package](../../packages/credentials/deepseek-account/README.md).

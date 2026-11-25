@@ -3,6 +3,8 @@ import {
   decodeGrokHistory,
   frameGrokHistoryPage,
   GROK_HISTORY_MAX_BYTES,
+  GROK_HISTORY_MAX_MESSAGES,
+  GROK_HISTORY_MAX_SOURCES,
   GROK_HISTORY_V1_MAX_BYTES,
   grokHistoryMessageCount,
   mergeGrokHistoryArchives,
@@ -340,19 +342,17 @@ describe('Grok history archive codec', () => {
         messages: [{ sourceSequence: 0, role: 'tool', text: 'source question', timestampMs: null }, currentSourceMessage],
       }],
     })
-    expect(mergeGrokHistoryArchives(current, incoming)).toBe(incoming)
+    expect(mergeGrokHistoryArchives(current, incoming)).toEqual(incoming)
     expect(grokHistoryMessageCount(archiveV1())).toBe(1)
     expect(grokHistoryMessageCount(archiveV2())).toBe(1)
     expect(grokHistoryMessageCount(incoming)).toBe(4)
     const incomingSource = incoming.sources?.[0]
     if (incomingSource === undefined) throw new Error('test source should be present')
-    const withoutIncomplete: BotGrokHistoryMessage = {
+    const withoutOptionalMetadata: BotGrokHistoryMessage = {
       sourceSequence: currentMessage.sourceSequence,
       role: currentMessage.role,
       text: currentMessage.text,
       timestampMs: currentMessage.timestampMs,
-      author: 'A',
-      fromBot: 'Grok',
     }
     const sourceWithoutComplete = {
       id: incomingSource.id,
@@ -370,12 +370,170 @@ describe('Grok history archive codec', () => {
     expect(() => mergeGrokHistoryArchives(current, archiveV2({ complete: false, messages: [{ ...currentMessage, timestampMs: 101 }], sources: [incomingSource] }))).toThrow('message conflict')
     expect(() => mergeGrokHistoryArchives(current, archiveV2({ complete: false, messages: [{ ...currentMessage, author: 'B' }], sources: [incomingSource] }))).toThrow('message conflict')
     expect(() => mergeGrokHistoryArchives(current, archiveV2({ complete: false, messages: [{ ...currentMessage, fromBot: 'Other' }], sources: [incomingSource] }))).toThrow('message conflict')
-    expect(() => mergeGrokHistoryArchives(current, archiveV2({ complete: false, messages: [withoutIncomplete], sources: [incomingSource] }))).toThrow('message conflict')
-    expect(() => mergeGrokHistoryArchives(current, archiveV2({ complete: false, messages: [currentMessage], sources: [] }))).toThrow('supplemental source changed')
+    const partialMetadataArchive = archiveV2({ complete: false, messages: [withoutOptionalMetadata], sources: [incomingSource] })
+    expect(mergeGrokHistoryArchives(current, partialMetadataArchive)).toMatchObject({ messages: [currentMessage] })
+    expect(mergeGrokHistoryArchives(current, archiveV2({ complete: false, messages: [currentMessage], sources: [] }))).toMatchObject({
+      sources: current.sources,
+    })
     expect(() => mergeGrokHistoryArchives(current, archiveV2({ complete: false, messages: [currentMessage], sources: [{ ...incomingSource, label: 'Changed' }] }))).toThrow('supplemental source changed')
     expect(() => mergeGrokHistoryArchives(current, archiveV2({ complete: false, messages: [currentMessage], sources: [{ ...incomingSource, firstCachedSequence: 2 }] }))).toThrow('source coverage')
     expect(() => mergeGrokHistoryArchives(current, archiveV2({ complete: false, messages: [currentMessage], sources: [sourceWithoutComplete] }))).toThrow('completeness')
     expect(mergeGrokHistoryArchives(archiveV2(), archiveV2())).toMatchObject({ version: 2, messages: [primaryMessage] })
     expect(mergeGrokHistoryArchives(archiveV1(), archiveV1())).toMatchObject({ version: 1, messages: [primaryMessage] })
+  })
+
+  it('reconciles disjoint reviewed fragments into one ordered archive', () => {
+    const current = archiveV2({
+      firstCachedSequence: 5,
+      complete: false,
+      messages: [{ sourceSequence: 5, role: 'assistant', text: 'later', timestampMs: 500 }],
+      sources: [{
+        id: 'builder', label: 'Builder', firstCachedSequence: 3, complete: false,
+        messages: [{ sourceSequence: 3, role: 'tool', text: 'later source', timestampMs: null }],
+      }],
+    })
+    const incoming = archiveV2({
+      firstCachedSequence: 1,
+      complete: false,
+      messages: [{ sourceSequence: 1, role: 'user', text: 'earlier', timestampMs: 100 }],
+      sources: [{
+        id: 'builder', label: 'Builder', firstCachedSequence: 1, complete: false,
+        messages: [{ sourceSequence: 1, role: 'tool', text: 'earlier source', timestampMs: null }],
+      }],
+    })
+
+    expect(mergeGrokHistoryArchives(current, incoming)).toEqual({
+      source: 'grok-bot',
+      version: 2,
+      firstCachedSequence: 1,
+      complete: false,
+      messages: [
+        { sourceSequence: 1, role: 'user', text: 'earlier', timestampMs: 100 },
+        { sourceSequence: 5, role: 'assistant', text: 'later', timestampMs: 500 },
+      ],
+      sources: [{
+        id: 'builder', label: 'Builder', firstCachedSequence: 1, complete: false,
+        messages: [
+          { sourceSequence: 1, role: 'tool', text: 'earlier source', timestampMs: null },
+          { sourceSequence: 3, role: 'tool', text: 'later source', timestampMs: null },
+        ],
+      }],
+    })
+  })
+
+  it('fills reviewed null timestamps and absent optional metadata without inventing fields', () => {
+    const current = archiveV2({
+      complete: false,
+      messages: [{ sourceSequence: 2, role: 'tool', text: '', timestampMs: null, incomplete: true }],
+    })
+    const incoming = archiveV2({
+      complete: false,
+      messages: [{
+        sourceSequence: 2,
+        role: 'tool',
+        text: '',
+        timestampMs: 200,
+        author: 'Recovered author',
+        fromBot: 'Recovered bot',
+        incomplete: true,
+      }],
+    })
+
+    expect(mergeGrokHistoryArchives(current, incoming)).toMatchObject({
+      messages: [{
+        sourceSequence: 2,
+        timestampMs: 200,
+        author: 'Recovered author',
+        fromBot: 'Recovered bot',
+        incomplete: true,
+      }],
+    })
+
+    const knownTimestamp = archiveV2({
+      messages: [{
+        sourceSequence: 2,
+        role: 'tool',
+        text: '',
+        timestampMs: 200,
+        incomplete: true,
+      }],
+    })
+    const erasedTimestamp = archiveV2({
+      messages: [{
+        sourceSequence: 2,
+        role: 'tool',
+        text: '',
+        timestampMs: null,
+        incomplete: true,
+      }],
+    })
+    expect(() => mergeGrokHistoryArchives(knownTimestamp, erasedTimestamp)).toThrow('message conflict')
+  })
+
+  it('keeps an incomplete marker supplied by a matching recovered record', () => {
+    const incoming = archiveV2({ messages: [{ ...primaryMessage, incomplete: true }] })
+
+    expect(mergeGrokHistoryArchives(archiveV2(), incoming).messages).toEqual(incoming.messages)
+  })
+
+  it('rejects fragments that would exceed the message limit together', () => {
+    const current = archiveV2({
+      messages: Array.from({ length: GROK_HISTORY_MAX_MESSAGES }, (_, index) => ({
+        ...primaryMessage, sourceSequence: index + 1,
+      })),
+    })
+    const incoming = archiveV2({ messages: [{ ...primaryMessage, sourceSequence: GROK_HISTORY_MAX_MESSAGES + 1 }] })
+
+    expect(() => mergeGrokHistoryArchives(current, incoming)).toThrow('archive exceeds the message limit')
+  })
+
+  it('retains omitted supplemental sources while merging an incremental source fragment', () => {
+    const current = archiveV2({
+      sources: [
+        {
+          id: 'builder', label: 'Builder', firstCachedSequence: 1,
+          messages: [{ sourceSequence: 1, role: 'tool', text: 'first', timestampMs: null }],
+        },
+        {
+          id: 'auditor', label: 'Auditor', firstCachedSequence: 1,
+          messages: [{ sourceSequence: 1, role: 'tool', text: 'audit', timestampMs: null }],
+        },
+      ],
+    })
+    const incoming = archiveV2({
+      sources: [{
+        id: 'builder', label: 'Builder', firstCachedSequence: 1,
+        messages: [{ sourceSequence: 2, role: 'tool', text: 'second', timestampMs: null }],
+      }],
+    })
+
+    expect(mergeGrokHistoryArchives(current, incoming).sources).toEqual([
+      {
+        id: 'builder', label: 'Builder', firstCachedSequence: 1,
+        messages: [
+          { sourceSequence: 1, role: 'tool', text: 'first', timestampMs: null },
+          { sourceSequence: 2, role: 'tool', text: 'second', timestampMs: null },
+        ],
+      },
+      {
+        id: 'auditor', label: 'Auditor', firstCachedSequence: 1,
+        messages: [{ sourceSequence: 1, role: 'tool', text: 'audit', timestampMs: null }],
+      },
+    ])
+  })
+
+  it('keeps merged source and byte limits enforced', () => {
+    const source = (id: string) => ({
+      id, label: id, firstCachedSequence: 1,
+      messages: [{ sourceSequence: 1, role: 'tool' as const, text: id, timestampMs: null }],
+    })
+    const current = archiveV2({ sources: Array.from({ length: GROK_HISTORY_MAX_SOURCES }, (_, index) => source(`source-${index}`)) })
+    expect(() => mergeGrokHistoryArchives(current, archiveV2({ sources: [source('new-source')] }))).toThrow('source limit')
+
+    const large = 'x'.repeat(1_100_000)
+    expect(() => mergeGrokHistoryArchives(
+      archiveV2({ messages: [{ sourceSequence: 1, role: 'assistant', text: large, timestampMs: null }] }),
+      archiveV2({ messages: [{ sourceSequence: 2, role: 'assistant', text: large, timestampMs: null }] }),
+    )).toThrow('byte limit')
   })
 })

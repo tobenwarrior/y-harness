@@ -10,7 +10,10 @@
  * the next disconnect starts a fresh budget while a crash-looping server —
  * even one whose connects briefly succeed — still exhausts the cap instead of
  * restarting forever. Exhaustion unregisters the server's tools and stops;
- * disposal (including HMR) is the only way back from that state.
+ * disposal (including HMR) is the general way back, while an exact configured
+ * bearer-token reference update or GitHub App owner-change event also starts a
+ * fresh authentication transition. A missing GitHub login stays idle instead
+ * of consuming the reconnect budget.
  *
  * @module
  */
@@ -20,10 +23,16 @@ import type { Context } from '@yharness/cordis'
 import { assertNever, type JsonValue } from '@yharness/util-values'
 import type { ServerContext } from './server-context.ts'
 import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
+import { credentialRef } from '@yharness/credentials'
 import { createTransport } from './transport.ts'
+import type GitHubAppAuth from '@yharness/github-app-auth'
 import { syncTools } from './tools.ts'
 import type { ToolBridgeOptions, ToolDisposers } from './tools.ts'
 import type { Config } from './index.ts'
+import { createMcpActionCatalog, loaderEntryId } from './action-catalog.ts'
+import type { McpActionCatalog, McpActionCatalogAction } from './action-catalog.ts'
+
+type GitHubAppAuthService = Pick<GitHubAppAuth, 'status' | 'tokenFor'>
 
 /** Automatic reconnect policy for one MCP server connection. */
 export interface ReconnectConfig {
@@ -93,6 +102,30 @@ export function resolveReconnectPolicy(config: ReconnectConfig | undefined, path
   return Object.freeze({ enabled, initialDelayMs, maxDelayMs, maxAttempts })
 }
 
+/**
+ * Resolve the optional list of exact remote MCP tool names to suppress.
+ *
+ * The names are compared before public-name normalization, so punctuation,
+ * separators, and other names accepted by an MCP server remain usable here.
+ * Only an empty name is rejected because it cannot identify a remote action.
+ *
+ * @param disabledTools - Raw names advertised by the remote MCP server.
+ * @param path - Diagnostic prefix naming the config location.
+ * @returns A copied list safe for the connection generation to retain.
+ */
+export function resolveDisabledTools(disabledTools: unknown, path: string): string[] {
+  if (disabledTools == null) return []
+  if (!Array.isArray(disabledTools) || !disabledTools.every(name => typeof name === 'string')) {
+    throw new Error(`${path} must be an array of MCP tool names`)
+  }
+  for (const [index, name] of disabledTools.entries()) {
+    if (name.length === 0) {
+      throw new Error(`${path}[${index}] must be a non-empty MCP tool name`)
+    }
+  }
+  return disabledTools.slice()
+}
+
 /** Result from the initial connection attempt, for startup-await semantics. */
 export interface ConnectionOutcome {
   /** If the initial connection or tool sync failed, the error; otherwise absent. */
@@ -113,6 +146,8 @@ export interface ConnectionHandle extends ServerContext {
    * unregister every tool this server still owns.
    */
   dispose(): Promise<void>
+  /** Read this connection's Host action catalog, when it is loader-owned and unscoped. */
+  actionCatalog(): McpActionCatalog | undefined
 }
 
 /**
@@ -126,11 +161,21 @@ export interface ConnectionHandle extends ServerContext {
  */
 export function startConnection(ctx: Context, config: Config, policy: ResolvedReconnectPolicy): ConnectionHandle {
   const label = `mcp-client(${config.serverName})`
+  const disabledTools = new Set(resolveDisabledTools(config.disabledTools, `${label}.disabledTools`))
+  const entryId = loaderEntryId(ctx)
+  const githubAppAuthorization = config.transport === 'streamable-http' && config.githubAppAuthorization === true
+  const actionCatalog = entryId === undefined
+    ? undefined
+    : createMcpActionCatalog(config.serverName, entryId, githubAppAuthorization ? 'github-app' : undefined)
   const incompleteDisposalMessage = `${label}: transport closure could not be confirmed during disposal — server shutdown may be incomplete`
   const opts: ToolBridgeOptions = {
     registrationFailure: 'contain',
     serverName: config.serverName,
     toolCallTimeoutMs: config.toolCallTimeoutMs,
+    disabledTools,
+    ...(actionCatalog === undefined
+      ? {}
+      : { onToolsDiscovered: (actions: readonly McpActionCatalogAction[]) => { actionCatalog.discovered(actions) } }),
   }
   // The initial sync uses 'throw' when failOnStartupError is configured, so
   // a registration conflict propagates to the startup-await path. Re-syncs
@@ -155,9 +200,20 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
   let connectedAt: number | undefined
   /** The real error from the first connection attempt, for startup-await diagnostics. */
   let firstAttemptError: unknown
+  /** Serializes provider-triggered retire/reconnect transitions. */
+  let authRefreshChain: Promise<void> = Promise.resolve()
+  /** The in-flight (or last settled) connection attempt; dispose awaits it for quiescence. */
+  let settling: Promise<void> = Promise.resolve()
+  /** Only configured HTTP authentication reacts to owner/credential changes. */
+  const bearerTokenRef = config.transport === 'streamable-http' ? config.bearerTokenRef : undefined
+  let authRevision = 0
+  /** A replacement must never overlap a transport whose closure was unconfirmed. */
+  let transportCloseUnconfirmed = false
 
   /** A generation may act only while it is the current one on a live plugin. */
   const isCurrent = (generation: Client): boolean => !disposed && client === generation
+  /** Read disposal state without retaining a narrowing across an await. */
+  const isDisposed = (): boolean => disposed
 
   /**
    * Serializes every syncTools call — initial syncs and notification re-syncs
@@ -169,11 +225,37 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
   function enqueueSync(generation: Client, syncOpts: ToolBridgeOptions = opts): Promise<void> {
     const run = syncChain.then(async () => {
       if (!isCurrent(generation)) return
-      disposers = await syncTools(generation, ctx, syncOpts, disposers)
+      const previous = disposers
+      const next = await syncTools(generation, ctx, syncOpts, previous, () => isCurrent(generation))
+      if (!isCurrent(generation)) {
+        if (next !== previous) for (const dispose of next.values()) dispose()
+        return
+      }
+      disposers = next
     })
     // The chain tail must survive a failed sync; the enqueuing caller owns reporting.
     syncChain = run.catch(() => {})
     return run
+  }
+
+  /** Retire a generation before an authentication change is allowed to reconnect. */
+  function retireCurrentGeneration(): (() => Promise<boolean>) | undefined {
+    const close = closeClient
+    client = undefined
+    closeClient = undefined
+    connectedAt = undefined
+    serverInstructions = ''
+    actionCatalog?.setConnected(false)
+    for (const dispose of disposers.values()) dispose()
+    disposers = new Map()
+    return close
+  }
+
+  /** Take the current close operation across an async teardown step. */
+  function takeCloseClient(): (() => Promise<boolean>) | undefined {
+    const close = closeClient
+    closeClient = undefined
+    return close
   }
 
   /** One disconnect decision per generation: the isCurrent guard makes racing close/error signals idempotent. */
@@ -181,15 +263,22 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     if (!isCurrent(generation)) return
     client = undefined
     closeClient = undefined
+    actionCatalog?.setConnected(false)
     scheduleReconnect()
   }
 
   /** Decide retry ownership after a failed connection's close barrier settles. */
-  function settleFailedGeneration(generation: Client, quiesced: boolean): void {
+  function settleFailedGeneration(
+    generation: Client,
+    quiesced: boolean,
+    close: (() => Promise<boolean>) | undefined,
+  ): void {
     if (!isCurrent(generation)) return
     if (!quiesced) {
+      transportCloseUnconfirmed = true
       client = undefined
-      closeClient = undefined
+      closeClient = close
+      actionCatalog?.setConnected(false)
       ctx.logger.error(`${label}: failed generation could not confirm transport closure — reconnect stopped to avoid overlapping server processes; reload the plugin or restart the Host to retry`)
       return
     }
@@ -205,6 +294,124 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
         clearTimeout(timeout)
         resolve(true)
       })
+    })
+  }
+
+  /** Read whether one bearer reference currently has a value. */
+  async function hasBearerCredential(refName: string): Promise<boolean> {
+    let timer: NodeJS.Timeout | undefined
+    try {
+      const credentials = ctx.get('credentials', false)
+      if (credentials === undefined) return false
+      const timeout = new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => { resolve(undefined) }, GENERATION_CLOSE_TIMEOUT_MS)
+        timer.unref()
+      })
+      const result = await Promise.race([credentials.describe(credentialRef(refName)), timeout])
+      if (result === undefined) {
+        if (!isDisposed()) ctx.logger.warn(`${label}: bearer credential status did not respond before the reconnect deadline`)
+        return false
+      }
+      return result.configured
+    } catch (_error) {
+      if (!isDisposed()) ctx.logger.warn(`${label}: could not read the bearer credential status`)
+      return false
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /** Retire the current generation synchronously when its authentication changes. */
+  function prepareCredentialRefresh(): {
+    close: (() => Promise<boolean>) | undefined
+    previousAttempt: Promise<void>
+  } {
+    if (reconnectTimer !== undefined) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = undefined
+    }
+    failedAttempts = 0
+    const previousAttempt = settling
+    const close = retireCurrentGeneration()
+    return { close, previousAttempt }
+  }
+
+  /** Reconnect one authentication generation after its predecessor quiesces. */
+  async function refreshAfterAuthChange(
+    revision: number,
+    ready: () => Promise<boolean>,
+    retired: { close: (() => Promise<boolean>) | undefined; previousAttempt: Promise<void> },
+  ): Promise<void> {
+    const { close, previousAttempt } = retired
+    if (close !== undefined && !await close()) {
+      transportCloseUnconfirmed = true
+      closeClient = close
+      if (!isDisposed()) {
+        ctx.logger.error(`${label}: authentication changed but the previous transport did not close; staying disconnected to avoid overlapping generations`)
+      }
+      return
+    }
+    // A failed connect may still be unwinding after its transport close. Do not
+    // start a replacement until it has returned and all queued tool swaps have
+    // stopped using the retired client.
+    await previousAttempt
+    await syncChain
+    if (isDisposed() || transportCloseUnconfirmed || revision !== authRevision) return
+    if (!await ready()) return
+    if (isDisposed() || revision !== authRevision) return
+    await beginConnection(false)
+  }
+
+  /** Read the optional provider without making it a required plugin dependency. */
+  function githubAppAuthService(): GitHubAppAuthService | undefined {
+    return ctx.get('githubAppAuth')
+  }
+
+  /** Read GitHub App availability without exposing or resolving an access token. */
+  async function hasGithubAppAuthorization(auth: GitHubAppAuthService): Promise<boolean> {
+    try {
+      return await auth.status() === 'connected'
+    } catch (_error) {
+      if (!isDisposed()) ctx.logger.warn(`${label}: could not read GitHub App authorization status`)
+      return false
+    }
+  }
+
+  function scheduleAuthRefresh(ready: () => Promise<boolean>): Promise<void> {
+    const revision = ++authRevision
+    const retired = prepareCredentialRefresh()
+    authRefreshChain = authRefreshChain.then(() => refreshAfterAuthChange(revision, ready, retired))
+    return authRefreshChain
+  }
+
+  /** Restart this exact connector without exposing credentials to the caller. */
+  const reconnectReady = (): Promise<boolean> => {
+    if (bearerTokenRef !== undefined) return hasBearerCredential(bearerTokenRef)
+    if (githubAppAuthorization) {
+      const auth = githubAppAuthService()
+      return auth === undefined ? Promise.resolve(false) : hasGithubAppAuthorization(auth)
+    }
+    return Promise.resolve(true)
+  }
+
+  if (entryId !== undefined) {
+    ctx.on('mcp/actions/reconnect', (request) => {
+      if (disposed || request.serverName !== config.serverName || request.entryId !== entryId) return
+      const settled = scheduleAuthRefresh(reconnectReady)
+      request.onSettled(settled)
+    })
+  }
+
+  if (bearerTokenRef !== undefined) {
+    ctx.on('credentials/reference-updated', (ref) => {
+      if (disposed || ref !== bearerTokenRef) return
+      void scheduleAuthRefresh(reconnectReady)
+    })
+  } else if (githubAppAuthorization) {
+    ctx.on('github-app-auth/connection-changed', () => {
+      const auth = githubAppAuthService()
+      if (disposed || auth === undefined) return
+      void scheduleAuthRefresh(reconnectReady)
     })
   }
 
@@ -238,7 +445,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     ctx.logger.warn(`${label}: ${action} in ${delayMs}ms (attempt ${failedAttempts}/${policy.maxAttempts})`)
     reconnectTimer = setTimeout(() => {
       reconnectTimer = undefined
-      settling = connectGeneration(false)
+      settling = beginConnection(false)
     }, delayMs)
     // An armed reconnect timer must never hold the process open on its own.
     reconnectTimer.unref()
@@ -255,6 +462,23 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
    * @param startup - Whether this is the plugin's activation attempt.
    */
   async function connectGeneration(startup: boolean): Promise<void> {
+    const githubAuth = githubAppAuthorization ? githubAppAuthService() : undefined
+    if (githubAppAuthorization) {
+      try {
+        if (githubAuth === undefined) throw new Error(`${label}: githubAppAuthorization requires the host github-app-auth service`)
+        if (await githubAuth.status() === 'needs-auth') {
+          // A missing login is an intentional idle state, not a failed attempt:
+          // do not spend reconnect budget or emit a warning until the provider's
+          // owner-change event says that authorization may be retried.
+          return
+        }
+      } catch (error) {
+        if (firstAttemptError === undefined) firstAttemptError = error
+        if (!isDisposed()) ctx.logger.warn(`${label}: connection attempt failed: ${String(error)}`)
+        scheduleReconnect()
+        return
+      }
+    }
     const generation = new Client(
       { name: 'dsh-mcp-client', version: '0.0.1' },
       {
@@ -304,7 +528,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     }
     let instructions: string
     try {
-      transport = createTransport(config)
+      transport = createTransport(config, ctx.get('credentials'), githubAuth)
       await generation.connect(transport)
       if (hasClosed()) {
         attemptSettled = true
@@ -326,9 +550,10 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
       // Disposal clears current ownership before it closes the generation, so
       // only a live supervisor reports an attempt failure.
       if (isCurrent(generation)) ctx.logger.warn(`${label}: connection attempt failed: ${String(error)}`)
+      const close = closeClient
       const quiesced = await closeGeneration()
       attemptSettled = true
-      settleFailedGeneration(generation, quiesced)
+      settleFailedGeneration(generation, quiesced, close)
       return
     }
     attemptSettled = true
@@ -338,12 +563,22 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     }
     if (!isCurrent(generation)) return
     serverInstructions = instructions
+    actionCatalog?.setConnected(true)
     connectedAt = Date.now()
     if (failedAttempts > 0) ctx.logger.info(`${label}: reconnected and re-synced tools (attempt ${failedAttempts}/${policy.maxAttempts})`)
   }
 
-  /** The in-flight (or last settled) connection attempt; dispose awaits it for quiescence. */
-  let settling = connectGeneration(true)
+  /** Publish an attempt before running its synchronous setup side effects. */
+  function beginConnection(startup: boolean): Promise<void> {
+    const pending = Promise.withResolvers<void>()
+    settling = pending.promise
+    const attempt = connectGeneration(startup)
+    settling = attempt
+    void attempt.then(pending.resolve, pending.resolve)
+    return attempt
+  }
+
+  settling = beginConnection(true)
 
   // The ready promise settles when the first attempt finishes (regardless of
   // success). If the first attempt fails and reconnect is enabled, the
@@ -355,7 +590,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     // Note: settling.then() is a microtask; stdio onclose is a macrotask — so
     // a server that crashes AFTER a successful initial sync cannot flip client
     // to undefined before this continuation runs.
-    if (client !== undefined) return {}
+    if (client !== undefined || (githubAppAuthorization && firstAttemptError === undefined)) return {}
     /* v8 ignore next -- defensive: firstAttemptError is always set when connect/sync fails */
     return { error: firstAttemptError ?? new Error(`${label}: initial connection failed`) }
   })
@@ -363,6 +598,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
   return {
     ready,
     instructions: () => serverInstructions,
+    actionCatalog: () => actionCatalog?.snapshot(),
     resources: {
       async request(request, exec): Promise<JsonValue> {
         const generation = client
@@ -388,13 +624,13 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     async dispose(): Promise<void> {
       disposed = true
       serverInstructions = ''
+      actionCatalog?.setConnected(false)
       if (reconnectTimer !== undefined) {
         clearTimeout(reconnectTimer)
         reconnectTimer = undefined
       }
-      const close = closeClient
+      const close = takeCloseClient()
       client = undefined
-      closeClient = undefined
       if (close !== undefined && !await close()) {
         ctx.logger.error(incompleteDisposalMessage)
       }
@@ -402,6 +638,14 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
       // sync before settling, so awaiting both leaves `disposers` final.
       await settling
       await syncChain
+      await authRefreshChain
+      // An authentication rotation may have finished its close timeout after
+      // this disposer captured the original handle. Retry that preserved handle
+      // so teardown still gets one chance to confirm the retired transport.
+      const retryClose = takeCloseClient()
+      if (retryClose !== undefined && !await retryClose()) {
+        ctx.logger.error(incompleteDisposalMessage)
+      }
       for (const dispose of disposers.values()) dispose()
       disposers = new Map()
     },

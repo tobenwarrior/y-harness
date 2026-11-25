@@ -3,12 +3,14 @@ import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   Button, IconArchiveOffOutlineRegular, IconCheckOutlineRegular,
-  IconEditOutlineRegular, IconEllipsisOutlineRegular,
+  IconCopyOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular,
   IconFolderOpenOutlineRegular, IconLinkOutlineRegular, IconPaperPlaneOutlineRegular, IconPlusOutlineRegular,
   IconPinFillRegular, IconPinOutlineRegular, IconShareOutlineRegular, IconContextInjectionOutlineRegular, IconClockOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
   IconSidebarSkillsOutlineRegular,
-  IconUnarchiveOutlineRegular, IconUsersOutlineRegular, Input, Menu, MenuSurface, Modal, StateDot, Tag, Tooltip, connectedAppGlyph,
+  IconUnarchiveOutlineRegular, IconUsersOutlineRegular, Input, Menu, MenuSurface, Modal, StateDot, Switch, Tag, Tooltip, connectedAppGlyph,
+  writeClipboard,
+  type MenuItem,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import { randomUUID } from '@yharness/util-crypto'
@@ -31,18 +33,22 @@ import { compactGroupQuote, GROUP_REACTION_OPTIONS } from './group-interactions.
 import { BotMemoryManager } from './BotMemoryManager.tsx'
 import { BotSkillsManager } from './BotSkillsManager.tsx'
 import { BotRoutineManager } from './BotRoutineManager.tsx'
+import { GrokHistoryDialog } from './GrokHistoryAction.tsx'
+import type { BotGrokHistoryView } from '@yharness/bots/client'
 import css from './BotWorkspace.module.css'
 import type {
   BotAccent, BotConnectedAppAccess, BotGroupAttachmentDraft, BotGroupCreation, BotGroupDeliverySummary,
   BotGroupDetailData, BotGroupMessageSummary, BotGroupReactionSummary, BotGroupSummary,
   BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotProfileUpdate, BotSkillManagerActions, BotRoutineManagerActions,
-  BotStatus, BotSummary, BotWorkspaceProps,
+  BotStatus, BotSummary, BotWorkspaceProps, GitHubAppSignInActions, GitHubAppSignInAttempt, GitHubAppSignInView,
+  McpActionServerView,
 } from './types.ts'
 
 type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & {
   children?: ReactNode
   share?: BotShareActions
   sharedClient?: SharedBotsClient
+  openMessageSearch?: () => void
 }
 
 const MAX_SHARED_OWNER_CAPABILITY_FOCUS_RETRIES = 3
@@ -85,16 +91,6 @@ function statusKey(status: BotStatus): 'status.idle' | 'status.working' | 'statu
     case 'preparing': return 'status.preparing'
     case 'offline': return 'status.offline'
     case 'idle': return 'status.idle'
-  }
-}
-
-function statusTone(status: BotStatus): 'info' | 'neutral' {
-  switch (status) {
-    case 'working': return 'info'
-    case 'preparing': return 'info'
-    case 'idle':
-    case 'offline':
-      return 'neutral'
   }
 }
 
@@ -149,6 +145,46 @@ function sectionItemId(index: number): string {
 
 function statusLabel(status: BotStatus, t: BotWorkspaceViewProps['t']): string {
   return t(statusKey(status))
+}
+
+type BotToolbarItem = MenuItem & { run: () => void }
+
+function BotToolbarMenu({ items, label, compact }: {
+  readonly items: readonly BotToolbarItem[]
+  readonly label: string
+  readonly compact?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  if (items.length === 0) return null
+  return (
+    <Menu
+      open={open}
+      onClose={() => { setOpen(false) }}
+      items={items}
+      onSelect={(id) => {
+        setOpen(false)
+        items.find(item => item.id === id)?.run()
+      }}
+      align={compact === true ? 'start' : 'end'}
+      autoFocus
+      dense
+      portal
+      anchor={(
+        <Tooltip label={label} side={compact === true ? 'right' : 'bottom'} portal>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={compact === true ? css.botRailAction : css.toolbarMore}
+            icon={<IconEllipsisOutlineRegular size={18} />}
+            aria-label={label}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            onClick={() => { setOpen(value => !value) }}
+          />
+        </Tooltip>
+      )}
+    />
+  )
 }
 
 function BotActionsMenu({ bot, groups, onOrganize, onSetSection, onOpenConnectedApps, t }: {
@@ -1143,12 +1179,16 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
 }
 
 export function BotDetail({
-  bot, children, headerActions, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, routineManager,
-  skillManager, routineRevision = 0, loading,
+  bot, sessionId, children, headerActions, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, routineManager,
+  skillManager, routineRevision = 0, loading, workspaceActions = [], readGrokHistory,
 }: {
   bot: BotSummary | undefined
+  /** Session selected by the Bots panel, used by session-scoped toolbar actions. */
+  sessionId?: string
   children: ReactNode
   headerActions?: ReactNode
+  workspaceActions?: readonly BotToolbarItem[]
+  readGrokHistory?: ((id: string) => Promise<BotGrokHistoryView | null>) | undefined
   t: BotWorkspaceViewProps['t']
   loadAvatar: BotWorkspaceViewProps['loadAvatar']
   onEditAvatar?: (() => void) | undefined
@@ -1194,6 +1234,8 @@ export function BotDetail({
     setSkillsOpen(false)
   }, [bot?.id])
   const [routineOpen, setRoutineOpen] = useState(false)
+  const [shareTarget, setShareTarget] = useState<string | null>(null)
+  const [historyTarget, setHistoryTarget] = useState<string | null>(null)
   if (bot === undefined) {
     if (loading) {
       return (
@@ -1212,6 +1254,56 @@ export function BotDetail({
       </section>
     )
   }
+  const items: BotToolbarItem[] = [
+    ...(onUpdateProfile === undefined ? [] : [{
+      id: 'edit-profile',
+      label: t('editBotProfile'),
+      icon: <IconEditOutlineRegular size={16} />,
+      run: () => {
+        profileOperationGeneration.current += 1
+        setProfileName(bot.name)
+        setProfileDescription(bot.description ?? '')
+        setProfilePersona(bot.persona ?? '')
+        setProfileCapabilities(profileCapabilityText(bot.capabilities))
+        setProfileError(null)
+        setProfileRevision(bot.updatedAt)
+        setProfileTarget(bot.id)
+      },
+    }]),
+    ...(onUpdateProfile !== undefined || onRename === undefined ? [] : [{
+      id: 'rename', label: t('renameBot'), icon: <IconEditOutlineRegular size={16} />,
+      run: () => { setName(bot.name); setRenameError(false); setRenameTarget(bot.id) },
+    }]),
+    ...(onEditAvatar === undefined ? [] : [{
+      id: 'edit-avatar', label: t('editAvatar'), icon: <IconEditOutlineRegular size={16} />, run: onEditAvatar,
+    }]),
+    ...(share === undefined ? [] : [{
+      id: 'share', label: t('shareBot'), icon: <IconShareOutlineRegular size={16} />, run: () => { setShareTarget(bot.id) },
+    }]),
+    ...(memoryManager === undefined ? [] : [{
+      id: 'memory', label: t('manageMemories'), icon: <IconContextInjectionOutlineRegular size={16} />, run: () => { setMemoryOpen(true) },
+    }]),
+    ...(skillManager === undefined ? [] : [{
+      id: 'skills', label: t('manageSkills'), icon: <IconSidebarSkillsOutlineRegular size={16} />, run: () => { setSkillsOpen(true) },
+    }]),
+    ...(routineManager === undefined ? [] : [{
+      id: 'routines', label: t('manageRoutines'), icon: <IconClockOutlineRegular size={16} />, run: () => { setRoutineOpen(true) },
+    }]),
+    ...(sessionId === undefined ? [] : [{
+      id: 'find-in-chat',
+      label: t('findInChat'),
+      icon: <IconSidebarSearchOutlineRegular size={16} />,
+      run: () => {
+        globalThis.dispatchEvent(new CustomEvent('yharness:bot-find-chat', {
+          detail: { sessionId },
+        }))
+      },
+    }]),
+    ...(readGrokHistory === undefined ? [] : [{
+      id: 'history', label: t('grokHistory'), icon: <IconArchiveOffOutlineRegular size={16} />, run: () => { setHistoryTarget(bot.id) },
+    }]),
+    ...workspaceActions,
+  ]
   return (
     <section className={css.detail} aria-label={bot.name}>
       <header className={css.detailHeader}>
@@ -1219,61 +1311,30 @@ export function BotDetail({
           <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} botId={bot.id} loadAvatar={loadAvatar} status={bot.status} size="large" />
           <span className={css.detailIdentityCopy}>
             <span className={css.detailName}>{bot.name}</span>
-            {bot.description !== undefined && bot.description !== '' && <span className={css.detailRole}>{bot.description}</span>}
+            <span className={css.detailMeta}>
+              {bot.status !== undefined && bot.status !== 'idle' && (
+                <span className={css.detailStatus}>
+                  <StateDot state={statusState(bot.status)} size={8} />
+                  {statusLabel(bot.status, t)}
+                </span>
+              )}
+              {bot.description !== undefined && bot.description !== '' && <span className={css.detailRole}>{bot.description}</span>}
+            </span>
           </span>
         </span>
         <span className={css.detailActions}>
           {headerActions}
-          {onUpdateProfile !== undefined && (
-            <Tooltip label={t('editBotProfile')} side="bottom" portal>
-              <Button variant="ghost" size="sm" aria-label={t('editBotProfile')} icon={<IconEditOutlineRegular size={14} />}
-                onClick={() => {
-                  profileOperationGeneration.current += 1
-                  setProfileName(bot.name)
-                  setProfileDescription(bot.description ?? '')
-                  setProfilePersona(bot.persona ?? '')
-                  setProfileCapabilities(profileCapabilityText(bot.capabilities))
-                  setProfileError(null)
-                  setProfileRevision(bot.updatedAt)
-                  setProfileTarget(bot.id)
-                }} />
-            </Tooltip>
-          )}
-          {onUpdateProfile === undefined && onRename !== undefined && (
-            <Tooltip label={t('renameBot')} side="bottom" portal>
-              <Button variant="ghost" size="sm" aria-label={t('renameBot')} icon={<IconEditOutlineRegular size={14} />}
-                onClick={() => { setName(bot.name); setRenameError(false); setRenameTarget(bot.id) }} />
-            </Tooltip>
-          )}
-          {share !== undefined && <BotShareButton bot={bot} actions={share} t={t} />}
-          {memoryManager !== undefined && (
-            <Tooltip label={t('manageMemories')} side="bottom" portal>
-              <Button variant="ghost" size="sm" aria-label={t('manageMemories')} icon={<IconContextInjectionOutlineRegular size={14} />} onClick={() => { setMemoryOpen(true) }} />
-            </Tooltip>
-          )}
-          {skillManager !== undefined && (
-            <Tooltip label={t('manageSkills')} side="bottom" portal>
-              <Button variant="ghost" size="sm" aria-label={t('manageSkills')} icon={<IconSidebarSkillsOutlineRegular size={14} />} onClick={() => { setSkillsOpen(true) }} />
-            </Tooltip>
-          )}
-          {routineManager !== undefined && (
-            <Tooltip label={t('manageRoutines')} side="bottom" portal>
-              <Button variant="ghost" size="sm" aria-label={t('manageRoutines')} icon={<IconClockOutlineRegular size={14} />} onClick={() => { setRoutineOpen(true) }} />
-            </Tooltip>
-          )}
-          {onEditAvatar !== undefined && (
-            <Tooltip label={t('editAvatar')} side="bottom" portal>
-              <Button variant="ghost" size="sm" aria-label={t('editAvatar')} icon={<IconEditOutlineRegular size={14} />} onClick={onEditAvatar} />
-            </Tooltip>
-          )}
-          {bot.status !== undefined && (
-            <Tag tone={statusTone(bot.status)}>
-              <StateDot state={statusState(bot.status)} size={8} />
-              {statusLabel(bot.status, t)}
-            </Tag>
-          )}
+          <BotToolbarMenu key={bot.id} items={items} label={t('botMenu')} />
         </span>
       </header>
+      {share !== undefined && (
+        <BotShareDialog key={bot.id} bot={bot} actions={share} open={shareTarget === bot.id}
+          onClose={() => { setShareTarget(null) }} t={t} />
+      )}
+      {readGrokHistory !== undefined && (
+        <GrokHistoryDialog key={bot.id} botId={bot.id} botName={bot.name} read={readGrokHistory}
+          open={historyTarget === bot.id} onClose={() => { setHistoryTarget(null) }} t={t} />
+      )}
       {bot.status === 'working' && (bot.preview !== undefined || bot.activity !== undefined) && (
         <div className={css.activityBanner} role="status">
           <StateDot state="ongoing" size={14} />
@@ -1464,12 +1525,228 @@ function BotSectionDialog({ bot, onClose, onOrganize, t }: {
   )
 }
 
-function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
+const GITHUB_APP_POLL_MS = 2000
+
+function isActiveGitHubAttempt(attempt: GitHubAppSignInAttempt | null | undefined): boolean {
+  return attempt?.phase === 'starting' || attempt?.phase === 'waiting'
+}
+
+/**
+ * Render the owner-facing GitHub device-flow controls.
+ * @param props - Account actions, locale, and optional state from an inline Bot card.
+ * @returns the redacted GitHub account section.
+ */
+export function GitHubAppSignInSection({ actions, t, initialView, compact = false }: {
+  actions: GitHubAppSignInActions
+  t: BotWorkspaceViewProps['t']
+  /** Optional already-started view supplied by an in-chat connection request. */
+  initialView?: GitHubAppSignInView
+  /** Keep only the flow controls when a parent Bot card already supplies its chrome. */
+  compact?: boolean
+}): ReactNode {
+  const [view, setView] = useState<GitHubAppSignInView | undefined>(initialView)
+  const [loading, setLoading] = useState(initialView === undefined)
+  const [busy, setBusy] = useState<'start' | 'cancel' | 'disconnect' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const epochRef = useRef(0)
+  const timerRef = useRef<number | undefined>()
+  const copyTimerRef = useRef<number | undefined>()
+  const viewRef = useRef<GitHubAppSignInView | undefined>()
+  const pollRef = useRef<((epoch: number) => Promise<void>) | undefined>()
+
+  const schedulePoll = useMemo(() => (epoch: number) => {
+    if (epochRef.current !== epoch || !isActiveGitHubAttempt(viewRef.current?.attempt)) return
+    if (timerRef.current !== undefined) window.clearTimeout(timerRef.current)
+    timerRef.current = window.setTimeout(() => { void pollRef.current?.(epoch) }, GITHUB_APP_POLL_MS)
+  }, [])
+
+  const poll = useMemo(() => async (epoch: number): Promise<void> => {
+    if (epochRef.current !== epoch) return
+    try {
+      const next = await actions.getGitHubAppSignIn()
+      if (epochRef.current !== epoch) return
+      viewRef.current = next
+      setView(next)
+      setError(null)
+      setLoading(false)
+    } catch {
+      if (epochRef.current === epoch) {
+        setError(t('githubAccountError'))
+        setLoading(false)
+      }
+    } finally {
+      if (epochRef.current === epoch) schedulePoll(epoch)
+    }
+  }, [actions, schedulePoll, t])
+
+  pollRef.current = poll
+  useEffect(() => {
+    const epoch = ++epochRef.current
+    viewRef.current = initialView
+    setBusy(null)
+    setView(initialView)
+    setLoading(initialView === undefined)
+    setError(null)
+    setCopied(false)
+    void poll(epoch)
+    return () => {
+      epochRef.current += 1
+      if (timerRef.current !== undefined) window.clearTimeout(timerRef.current)
+      if (copyTimerRef.current !== undefined) window.clearTimeout(copyTimerRef.current)
+    }
+  }, [initialView, poll])
+
+  const apply = async (
+    kind: 'start' | 'cancel' | 'disconnect',
+    operation: () => Promise<GitHubAppSignInView>,
+  ): Promise<void> => {
+    const epoch = ++epochRef.current
+    setBusy(kind)
+    setError(null)
+    try {
+      const next = await operation()
+      if (epochRef.current !== epoch) return
+      viewRef.current = next
+      setView(next)
+      setCopied(false)
+    } catch {
+      if (epochRef.current === epoch) setError(t('githubAccountError'))
+    } finally {
+      if (epochRef.current === epoch) {
+        setBusy(null)
+        schedulePoll(epoch)
+      }
+    }
+  }
+
+  const attempt = view?.attempt ?? null
+  const waitingAttempt = attempt?.phase === 'waiting' ? attempt : undefined
+  const active = isActiveGitHubAttempt(attempt)
+  const connected = view?.status === 'connected'
+  if (view?.status === 'unavailable') return null
+
+  const copyCode = (): void => {
+    if (waitingAttempt === undefined || copied) return
+    const epoch = epochRef.current
+    void writeClipboard(waitingAttempt.code).then((success: boolean) => {
+      if (!success || epochRef.current !== epoch) return
+      setCopied(true)
+      if (copyTimerRef.current !== undefined) window.clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = window.setTimeout(() => {
+        if (epochRef.current === epoch) setCopied(false)
+      }, 1000)
+    })
+  }
+
+  const accountActions = (
+    <span className={css.githubAccountActions}>
+      {connected && (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy !== null}
+          onClick={() => { void apply('disconnect', actions.disconnectGitHubApp) }}
+        >
+          {busy === 'disconnect' ? t('githubAccountDisconnecting') : t('githubAccountDisconnect')}
+        </Button>
+      )}
+      {!connected && !active && (view !== undefined || error !== null) && (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy !== null || loading}
+          onClick={() => { void apply('start', actions.startGitHubAppSignIn) }}
+        >
+          {attempt?.phase === 'failed' ? t('githubAccountRetry') : t('githubAccountConnect')}
+        </Button>
+      )}
+    </span>
+  )
+
+  return (
+    <section
+      className={compact ? css.githubAccountInline : css.githubAccountSection}
+      {...(compact ? { 'aria-label': t('githubAccountLabel') } : { 'aria-labelledby': 'yharness-github-account-title' })}
+    >
+      {compact ? (
+        <div className={css.githubAccountInlineActions}>
+          {connected ? <span className={css.githubAccountStatus} role="status">{t('githubAccountConnected')}</span> : accountActions}
+        </div>
+      ) : (
+        <div className={css.githubAccountHeader}>
+          <span className={css.githubAccountIcon} aria-hidden="true">
+            {connectedAppGlyph({ appId: 'github', size: 18 })}
+          </span>
+          <span className={css.githubAccountCopy}>
+            <strong id="yharness-github-account-title">{t('githubAccountLabel')}</strong>
+            <span>{connected ? t('githubAccountConnected') : t('githubAccountDescription')}</span>
+          </span>
+          {accountActions}
+        </div>
+      )}
+      {loading && view === undefined && (
+        <div className={css.githubAccountStatus} role="status">
+          <StateDot state="ongoing" size={12} />
+          <span>{t('githubAccountChecking')}</span>
+        </div>
+      )}
+      {active && attempt?.phase === 'starting' && (
+        <div className={css.githubAccountStatus} role="status">
+          <StateDot state="ongoing" size={12} />
+          <span>{t('githubAccountStarting')}</span>
+        </div>
+      )}
+      {waitingAttempt !== undefined && (
+        <div className={css.githubAccountFlow}>
+          <span className={css.githubAccountHelper}>{t('githubAccountWaiting')}</span>
+          <div className={css.githubAccountCodeRow}>
+            <span className={css.githubAccountCodeLabel}>{t('githubAccountCodeLabel')}</span>
+            <code>{waitingAttempt.code}</code>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={copied ? <IconCheckOutlineRegular size={14} /> : <IconCopyOutlineRegular size={14} />}
+              onClick={copyCode}
+            >
+              {copied ? t('githubAccountCodeCopied') : t('githubAccountCopyCode')}
+            </Button>
+          </div>
+          <div className={css.githubAccountFlowActions}>
+            <a className={css.githubAccountLink} href={waitingAttempt.url} target="_blank" rel="noreferrer">
+              {t('githubAccountOpenGitHub')}
+            </a>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy !== null}
+              onClick={() => { void apply('cancel', () => actions.cancelGitHubAppSignIn(waitingAttempt.id)) }}
+            >
+              {busy === 'cancel' ? t('githubAccountCancelling') : t('githubAccountCancel')}
+            </Button>
+          </div>
+        </div>
+      )}
+      {attempt?.phase === 'failed' && <div className={css.githubAccountStatus}>{t('githubAccountFailed')}</div>}
+      {error !== null && <div className={css.githubAccountError} role="alert">{error}</div>}
+    </section>
+  )
+}
+
+function ConnectedAppsDialog({
+  bot, open, onClose, onLoad, onSet, onLoadMcpActions, onSetMcpActionEnabled, onReconnectMcpConnector, githubAppSignIn, t,
+}: {
   bot: BotSummary | undefined
   open: boolean
   onClose: () => void
-  onLoad: (botId: string) => Promise<readonly BotConnectedAppAccess[]>
-  onSet: (botId: string, appId: string, allowed: boolean) => Promise<void>
+  onLoad?: ((botId: string) => Promise<readonly BotConnectedAppAccess[]>) | undefined
+  onSet?: ((botId: string, appId: string, allowed: boolean) => Promise<void>) | undefined
+  onLoadMcpActions?: (() => Promise<readonly McpActionServerView[]>) | undefined
+  onSetMcpActionEnabled?: (
+    (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
+  ) | undefined
+  onReconnectMcpConnector?: ((serverName: string) => Promise<readonly McpActionServerView[]>) | undefined
+  githubAppSignIn?: GitHubAppSignInActions | undefined
   t: BotWorkspaceViewProps['t']
 }) {
   type ConnectedAppCatalog = {
@@ -1483,22 +1760,49 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
     readonly requestId: number
     readonly appId: string
   }
+  type McpActionSave = {
+    readonly requestId: number
+    readonly serverName: string
+    readonly actionName: string
+  }
+  type McpActionReconnect = {
+    readonly requestId: number
+    readonly serverName: string
+  }
   const [catalog, setCatalog] = useState<ConnectedAppCatalog | undefined>()
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState<ConnectedAppSave | null>(null)
+  const [actionMode, setActionMode] = useState(false)
+  const [actionCatalog, setActionCatalog] = useState<readonly McpActionServerView[] | undefined>()
+  const [actionLoading, setActionLoading] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [actionSaving, setActionSaving] = useState<McpActionSave | null>(null)
+  const [actionReconnecting, setActionReconnecting] = useState<McpActionReconnect | null>(null)
   const requestSequence = useRef(0)
+  const actionRequestSequence = useRef(0)
   const botId = bot?.id
   useEffect(() => {
     if (!open || botId === undefined) {
       setCatalog(undefined)
       setLoading(false)
       setSaving(null)
+      actionRequestSequence.current += 1
+      setActionMode(false)
+      setActionCatalog(undefined)
+      setActionLoading(false)
+      setActionError(null)
+      setActionSaving(null)
+      setActionReconnecting(null)
       return
     }
     const requestId = requestSequence.current + 1
     requestSequence.current = requestId
     let active = true
     setCatalog({ botId, requestId, apps: [], error: null })
+    if (onLoad === undefined) {
+      setLoading(false)
+      return () => { active = false }
+    }
     setLoading(true)
     setSaving(null)
     void onLoad(botId).then((next) => {
@@ -1521,9 +1825,78 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
   const error = currentCatalog?.error ?? null
   const loadingCurrentCatalog = loading || (open && currentCatalog === undefined)
   const savingAppId = saving?.botId === bot.id ? saving.appId : null
+  const loadActions = onLoadMcpActions
+  const setActionEnabled = onSetMcpActionEnabled
+  const reconnectMcpConnector = onReconnectMcpConnector
+  const actionManagementAvailable = loadActions !== undefined && setActionEnabled !== undefined
+  const openActions = (): void => {
+    if (loadActions === undefined || setActionEnabled === undefined) return
+    const requestId = actionRequestSequence.current + 1
+    actionRequestSequence.current = requestId
+    setActionMode(true)
+    setActionCatalog(undefined)
+    setActionError(null)
+    setActionLoading(true)
+    setActionSaving(null)
+    setActionReconnecting(null)
+    void loadActions().then((next) => {
+      if (actionRequestSequence.current === requestId) setActionCatalog(next)
+    }).catch((cause: unknown) => {
+      if (actionRequestSequence.current === requestId) {
+        setActionError(cause instanceof Error ? cause.message : t('mcpActionsLoadFailed'))
+      }
+    }).finally(() => {
+      if (actionRequestSequence.current === requestId) setActionLoading(false)
+    })
+  }
+  const closeActions = (): void => {
+    actionRequestSequence.current += 1
+    setActionMode(false)
+    setActionCatalog(undefined)
+    setActionLoading(false)
+    setActionError(null)
+    setActionSaving(null)
+    setActionReconnecting(null)
+  }
+  const toggleAction = (server: McpActionServerView, action: McpActionServerView['actions'][number]): void => {
+    if (actionSaving !== null || !server.connected || !server.editable || setActionEnabled === undefined) return
+    const requestId = actionRequestSequence.current
+    const request = { requestId, serverName: server.serverName, actionName: action.name }
+    setActionSaving(request)
+    setActionError(null)
+    void setActionEnabled(request.serverName, request.actionName, !action.enabled).then((next) => {
+      if (actionRequestSequence.current === requestId && actionMode) setActionCatalog(next)
+    }).catch((cause: unknown) => {
+      if (actionRequestSequence.current === requestId && actionMode) {
+        setActionError(cause instanceof Error ? cause.message : t('mcpActionsSaveFailed'))
+      }
+    }).finally(() => {
+      if (actionRequestSequence.current === requestId) setActionSaving(null)
+    })
+  }
+  const reconnect = (server: McpActionServerView): void => {
+    /* v8 ignore next -- the native button is disabled while a reconnect is pending and only disconnected rows render this action. */
+    if (actionReconnecting !== null || reconnectMcpConnector === undefined || server.connected) return
+    const requestId = actionRequestSequence.current
+    const request = { requestId, serverName: server.serverName }
+    setActionReconnecting(request)
+    setActionError(null)
+    void reconnectMcpConnector(request.serverName).then((next) => {
+      /* v8 ignore next -- a response from a superseded action dialog is discarded by the request fence. */
+      if (actionRequestSequence.current === requestId && actionMode) setActionCatalog(next)
+    }).catch((cause: unknown) => {
+      /* v8 ignore next -- a failure from a superseded action dialog is discarded by the request fence. */
+      if (actionRequestSequence.current === requestId && actionMode) {
+        setActionError(cause instanceof Error ? cause.message : t('mcpActionsReconnectFailed'))
+      }
+    }).finally(() => {
+      /* v8 ignore next -- the reconnect state belongs only to the current action dialog request. */
+      if (actionRequestSequence.current === requestId) setActionReconnecting(null)
+    })
+  }
   const toggle = async (app: BotConnectedAppAccess): Promise<void> => {
     /* v8 ignore next -- access controls render only for a loaded catalog and disable while saving. */
-    if (savingAppId !== null || currentCatalog === undefined) return
+    if (savingAppId !== null || currentCatalog === undefined || onSet === undefined) return
     const allowed = !app.allowed
     const request = { botId: bot.id, requestId: currentCatalog.requestId, appId: app.id }
     setSaving(request)
@@ -1556,55 +1929,145 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
       open={open}
       onClose={onClose}
       title={t('connectedAppsTitle')}
-      description={t('connectedAppsDescription', { name: bot.name })}
+      description={actionMode ? t('mcpActionsDescription') : t('connectedAppsDescription', { name: bot.name })}
       closeLabel={t('cancel')}
       className={css.connectedAppsDialog as string}
       contentClassName={css.connectedAppsDialogContent as string}
-      footer={<Button variant="ghost" onClick={onClose} disabled={savingAppId !== null}>{t('done')}</Button>}
+      footer={(
+        <div className={css.connectedAppsFooter}>
+          {actionMode && <Button variant="ghost" onClick={closeActions} disabled={actionSaving !== null || actionReconnecting !== null}>{t('mcpActionsBack')}</Button>}
+          <Button variant="ghost" onClick={onClose} disabled={savingAppId !== null || actionSaving !== null || actionReconnecting !== null}>{t('done')}</Button>
+        </div>
+      )}
     >
-      {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
-      {loadingCurrentCatalog && (
-        <div className={css.connectedAppsLoading} role="status">
-          <StateDot state="ongoing" size={13} />
-          <span>{t('connectedAppsLoading')}</span>
-        </div>
-      )}
-      {!loadingCurrentCatalog && error === null && apps.length === 0 && (
-        <div className={css.connectedAppsEmpty} role="status">
-          <span className={css.connectedAppsEmptyIcon} aria-hidden="true"><IconLinkOutlineRegular size={18} /></span>
-          <strong>{t('connectedAppsEmptyTitle')}</strong>
-          <span className={css.connectedAppsEmptyDescription}>{t('connectedAppsEmpty')}</span>
-        </div>
-      )}
-      {!loadingCurrentCatalog && apps.length > 0 && (
-        <div className={css.connectedAppsList} role="list" aria-label={t('connectedAppsTitle')}>
-          {apps.map((app) => {
-            const name = connectedAppName(app, t)
-            return (
-              <div className={css.connectedAppRow} key={app.id} role="listitem">
-                <span className={css.connectedAppIcon} data-app-id={app.id} aria-hidden="true">{connectedAppMark(app, name)}</span>
-                <span className={css.connectedAppCopy}>
-                  <strong>{name}</strong>
-                  <span>{app.description ?? t('connectedAppDescription', { name })}</span>
-                  <span className={app.allowed ? css.connectedAppAllowed : css.connectedAppBlocked}>
-                    {app.allowed ? t('connectedAppAllowed') : t('connectedAppBlocked')}
-                  </span>
-                </span>
-                <Button
-                  variant={app.allowed ? 'ghost' : 'outline'}
-                  size="sm"
-                  disabled={savingAppId !== null}
-                  aria-pressed={app.allowed}
-                  aria-label={t(app.allowed ? 'revokeConnectedApp' : 'grantConnectedApp', { name })}
-                  icon={app.allowed ? <IconCheckOutlineRegular size={14} /> : undefined}
-                  onClick={() => { void toggle(app) }}
-                >
-                  {app.allowed ? t('allowed') : t('grant')}
-                </Button>
-              </div>
-            )
-          })}
-        </div>
+      {actionMode ? (
+        <>
+          {actionError !== null && (
+            <div className={css.dialogNotice} role="alert">
+              <span>{actionError}</span>
+              {actionCatalog === undefined && <Button variant="ghost" size="sm" onClick={openActions}>{t('retry')}</Button>}
+            </div>
+          )}
+          {actionLoading && (
+            <div className={css.connectedAppsLoading} role="status">
+              <StateDot state="ongoing" size={13} />
+              <span>{t('mcpActionsLoading')}</span>
+            </div>
+          )}
+          {!actionLoading && actionCatalog !== undefined && actionError === null && actionCatalog.length === 0 && (
+            <div className={css.connectedAppsEmpty} role="status">
+              <span className={css.connectedAppsEmptyIcon} aria-hidden="true"><IconLinkOutlineRegular size={18} /></span>
+              <strong>{t('mcpActionsEmptyTitle')}</strong>
+              <span className={css.connectedAppsEmptyDescription}>{t('mcpActionsEmpty')}</span>
+            </div>
+          )}
+          {!actionLoading && actionCatalog !== undefined && actionCatalog.length > 0 && (
+            <div className={css.mcpActionsList} aria-label={t('mcpActionsTitle')}>
+              {actionCatalog.map((server, serverIndex) => {
+                const serverLabel = server.serverName.trim() || t('mcpActionsUnknownConnector')
+                return (
+                  <section className={css.mcpActionGroup} key={`${server.serverName}-${serverIndex}`} role="group" aria-label={serverLabel}>
+                    <div className={css.mcpActionGroupHeader}>
+                      <strong>{serverLabel}</strong>
+                      <div className={css.mcpActionGroupMeta}>
+                        <span>{server.connected ? t('mcpActionsConnected') : t('mcpActionsDisconnected')}</span>
+                        {!server.connected && reconnectMcpConnector !== undefined && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={actionReconnecting !== null}
+                            onClick={() => { reconnect(server) }}
+                          >
+                            {actionReconnecting?.serverName === server.serverName
+                              ? t('mcpActionsReconnecting')
+                              : t('mcpActionsReconnect')}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    {server.actions.length === 0
+                      ? <div className={css.mcpActionUnavailable}>{t('mcpActionsNoActions')}</div>
+                      : <div className={css.mcpActionRows} role="list">
+                        {server.actions.map((action, actionIndex) => {
+                          const actionLabel = action.name || t('mcpActionsUnknownAction')
+                          const locked = !server.connected || !server.editable
+                          const saveMatches = actionSaving?.requestId === actionRequestSequence.current
+                            && actionSaving.serverName === server.serverName && actionSaving.actionName === action.name
+                          return (
+                            <div className={css.mcpActionRow} key={`${action.name}-${actionIndex}`} role="listitem">
+                              <span className={css.mcpActionCopy}>
+                                <strong>{actionLabel}</strong>
+                                {action.description !== undefined && <span>{action.description}</span>}
+                                {locked && <small>{server.connected ? t('mcpActionsLocked') : t('mcpActionsUnavailable')}</small>}
+                              </span>
+                              <Switch
+                                checked={action.enabled}
+                                disabled={locked || actionSaving !== null}
+                                label={actionLabel}
+                                title={locked ? (server.connected ? t('mcpActionsLocked') : t('mcpActionsUnavailable')) : undefined}
+                                className={saveMatches ? css.mcpActionSwitchSaving : undefined}
+                                onChange={() => { toggleAction(server, action) }}
+                              />
+                            </div>
+                          )
+                        })}
+                      </div>}
+                  </section>
+                )
+              })}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          {githubAppSignIn !== undefined && <GitHubAppSignInSection actions={githubAppSignIn} t={t} />}
+          {actionManagementAvailable && (
+            <div className={css.connectedAppsTools}>
+              <Button variant="outline" size="sm" onClick={openActions}>{t('manageActions')}</Button>
+            </div>
+          )}
+          {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
+          {loadingCurrentCatalog && (
+            <div className={css.connectedAppsLoading} role="status">
+              <StateDot state="ongoing" size={13} />
+              <span>{t('connectedAppsLoading')}</span>
+            </div>
+          )}
+          {!loadingCurrentCatalog && error === null && apps.length === 0 && (
+            <div className={css.connectedAppsEmpty} role="status">
+              <span className={css.connectedAppsEmptyIcon} aria-hidden="true"><IconLinkOutlineRegular size={18} /></span>
+              <strong>{t('connectedAppsEmptyTitle')}</strong>
+              <span className={css.connectedAppsEmptyDescription}>{t('connectedAppsEmpty')}</span>
+            </div>
+          )}
+          {!loadingCurrentCatalog && apps.length > 0 && (
+            <div className={css.connectedAppsList} role="list" aria-label={t('connectedAppsTitle')}>
+              {apps.map((app) => {
+                const name = connectedAppName(app, t)
+                return (
+                  <div className={css.connectedAppRow} key={app.id} role="listitem">
+                    <span className={css.connectedAppIcon} data-app-id={app.id} aria-hidden="true">{connectedAppMark(app, name)}</span>
+                    <span className={css.connectedAppCopy}>
+                      <strong>{name}</strong>
+                      {app.description !== undefined && <span>{app.description}</span>}
+                    </span>
+                    <Button
+                      variant={app.allowed ? 'ghost' : 'outline'}
+                      size="sm"
+                      disabled={savingAppId !== null}
+                      aria-pressed={app.allowed}
+                      aria-label={t(app.allowed ? 'revokeConnectedApp' : 'grantConnectedApp', { name })}
+                      icon={app.allowed ? <IconCheckOutlineRegular size={14} /> : undefined}
+                      onClick={() => { void toggle(app) }}
+                    >
+                      {app.allowed ? t('allowed') : t('grant')}
+                    </Button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </>
       )}
     </Modal>
   )
@@ -1621,9 +2084,9 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
 export function BotRoster({
   bots, selectedBotId, onSelectBot, onCreateBot, onConnectApps, onOpenAvatarSettings,
   groups: localGroups = [], selectedGroupId = null, onSelectGroup, onCreateGroup, groupError = null,
-  onLoadConnectedApps, onSetConnectedAppAccess,
+  onLoadConnectedApps, onSetConnectedAppAccess, onLoadMcpActions, onSetMcpActionEnabled, onReconnectMcpConnector, githubAppSignIn,
   onOrganizeBot, templates, templateActions, onRetry, loadAvatar, avatarEditor, sharedClient,
-  error = null, loading = false, wide = true, expandSidebar, t,
+  error = null, loading = false, wide = true, expandSidebar, openMessageSearch, t,
 }: BotWorkspaceViewProps & BotRosterLayoutProps): ReactNode {
   const [query, setQuery] = useState('')
   const [collapsedFolders, setCollapsedFolders] = useState<ReadonlySet<string>>(readCollapsedFolders)
@@ -1731,8 +2194,6 @@ export function BotRoster({
     setNewBotOpen(true)
   }
   const openAvatarEditor = (): void => {
-    /* v8 ignore next -- the avatar-editor button is rendered only in the wide header. */
-    if (!wide) expandSidebar?.()
     setAvatarEditorOpen(true)
   }
   const openNewGroup = (): void => {
@@ -1753,8 +2214,11 @@ export function BotRoster({
     setSharedOwnerMode(false)
     setSharedBotsOpen(false)
   }
+  const hasConnectedAppsDialog = (onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined)
+    || (onLoadMcpActions !== undefined && onSetMcpActionEnabled !== undefined)
+    || githubAppSignIn !== undefined
   const openConnectedApps = (bot: BotSummary): void => {
-    if (onLoadConnectedApps === undefined || onSetConnectedAppAccess === undefined) {
+    if (!hasConnectedAppsDialog) {
       onConnectApps?.()
       return
     }
@@ -1765,11 +2229,30 @@ export function BotRoster({
   const connectedAppsBot = connectedAppsBotId === null
     ? undefined
     : bots.find(bot => bot.id === connectedAppsBotId)
-  const canOpenConnectedApps = (onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined)
-    || onConnectApps !== undefined
+  const canOpenConnectedApps = hasConnectedAppsDialog || onConnectApps !== undefined
   const connectedAppsAction = canOpenConnectedApps
     ? openConnectedApps
     : undefined
+  const rosterActions: BotToolbarItem[] = [
+    ...(openMessageSearch === undefined ? [] : [{
+      id: 'search-chats', label: t('searchChats'), icon: <IconSidebarSearchOutlineRegular size={16} />, run: openMessageSearch,
+    }]),
+    ...(selectedBot === undefined || avatarEditor === undefined ? [] : [{
+      id: 'avatar', label: t('editAvatar'), icon: <IconEditOutlineRegular size={16} />, run: openAvatarEditor,
+    }]),
+    ...(templates === undefined || templateActions === undefined ? [] : [{
+      id: 'templates', label: t('templates'), icon: <IconSidebarSkillsOutlineRegular size={16} />,
+      run: () => { setTemplatesOpen(true) },
+    }]),
+    ...(sharedClient === undefined ? [] : [{
+      id: 'join', label: t('joinBot'), icon: <IconLinkOutlineRegular size={16} />, run: openSharedBots,
+    }]),
+    ...(!sharedOwnerAvailable && !sharedOwnerUnsupported ? [] : [{
+      id: 'create-shared-group', label: t('createSharedGroup'), icon: <IconUsersOutlineRegular size={16} />,
+      ...(sharedOwnerUnsupported ? { disabled: true, description: t('sharedOwnerSetupUnavailable') } : {}),
+      run: openSharedOwner,
+    }]),
+  ]
 
   return (
     <aside className={css.roster} aria-label={t('title')}>
@@ -1781,36 +2264,13 @@ export function BotRoster({
                 <span className={css.brandCopy}>
                   <span className={css.brandTitle}>{t('panel')}</span>
                 </span>
-                {selectedBot !== undefined && avatarEditor !== undefined && (
-                  <Tooltip label={t('editAvatar')} side="bottom" portal>
-                    <Button variant="ghost" size="sm" aria-label={t('editAvatar')} icon={<IconEditOutlineRegular size={15} />} onClick={openAvatarEditor} />
+                <div className={css.rosterToolbar}>
+                  <Tooltip label={t('newBot')} side="bottom" portal>
+                    <Button variant="ghost" size="sm" className={css.toolbarMore} aria-label={t('newBot')}
+                      icon={<IconPlusOutlineRegular size={18} />} onClick={openNewBot} />
                   </Tooltip>
-                )}
-                {templates !== undefined && templateActions !== undefined && (
-                  <Tooltip label={t('templates')} side="bottom" portal>
-                    <Button variant="ghost" size="sm" aria-label={t('templates')} icon={<IconShareOutlineRegular size={15} />} onClick={() => { setTemplatesOpen(true) }} />
-                  </Tooltip>
-                )}
-                <Button variant="ghost" size="sm" aria-label={t('newBot')} icon={<IconSidebarBotAddOutlineRegular size={16} />} onClick={openNewBot} />
-                {sharedClient !== undefined && (
-                  <>
-                    <Tooltip label={t('joinBot')} side="bottom" portal>
-                      <Button variant="ghost" size="sm" aria-label={t('joinBot')} icon={<IconShareOutlineRegular size={16} />} onClick={openSharedBots} />
-                    </Tooltip>
-                    {sharedOwnerAvailable && (
-                      <Tooltip label={t('createSharedGroup')} side="bottom" portal>
-                        <Button variant="ghost" size="sm" aria-label={t('createSharedGroup')} icon={<IconUsersOutlineRegular size={16} />} onClick={openSharedOwner} />
-                      </Tooltip>
-                    )}
-                    {sharedOwnerUnsupported && (
-                      <Tooltip label={t('sharedOwnerSetupUnavailable')} side="bottom" portal>
-                        <span>
-                          <Button variant="ghost" size="sm" aria-label={t('createSharedGroup')} title={t('sharedOwnerSetupUnavailable')} icon={<IconUsersOutlineRegular size={16} />} disabled />
-                        </span>
-                      </Tooltip>
-                    )}
-                  </>
-                )}
+                  <BotToolbarMenu items={rosterActions} label={t('rosterMenu')} />
+                </div>
               </div>
               <Input
                 /* v8 ignore next -- the CSS module always exports the search class. */
@@ -1915,52 +2375,7 @@ export function BotRoster({
                 onClick={openNewBot}
               />
             </Tooltip>
-            {sharedClient !== undefined && (
-              <>
-                <Tooltip label={t('joinBot')} side="right" delayMs={500}>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={css.botRailAction}
-                    aria-label={t('joinBot')}
-                    icon={<IconShareOutlineRegular size={18} />}
-                    onClick={openSharedBots}
-                  />
-                </Tooltip>
-                {sharedOwnerAvailable && (
-                  <Tooltip label={t('createSharedGroup')} side="right" delayMs={500}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className={css.botRailAction}
-                      aria-label={t('createSharedGroup')}
-                      icon={<IconUsersOutlineRegular size={18} />}
-                      onClick={openSharedOwner}
-                    />
-                  </Tooltip>
-                )}
-                {sharedOwnerUnsupported && (
-                  <Tooltip label={t('sharedOwnerSetupUnavailable')} side="right" delayMs={500}>
-                    <span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={css.botRailAction}
-                        aria-label={t('createSharedGroup')}
-                        title={t('sharedOwnerSetupUnavailable')}
-                        icon={<IconUsersOutlineRegular size={18} />}
-                        disabled
-                      />
-                    </span>
-                  </Tooltip>
-                )}
-              </>
-            )}
-            {templates !== undefined && templateActions !== undefined && (
-              <Tooltip label={t('templates')} side="right" delayMs={500}>
-                <Button variant="ghost" size="sm" className={css.botRailAction} aria-label={t('templates')} icon={<IconShareOutlineRegular size={17} />} onClick={() => { setTemplatesOpen(true) }} />
-              </Tooltip>
-            )}
+            <BotToolbarMenu items={rosterActions} label={t('rosterMenu')} compact />
             {visibleBots.map((bot) => {
               const status = bot.status
               const label = status === undefined ? bot.name : `${bot.name}, ${statusLabel(status, t)}`
@@ -2025,13 +2440,17 @@ export function BotRoster({
       {sharedClient !== undefined && (
         <SharedBotsDialog client={sharedClient} open={sharedBotsOpen} ownerMode={sharedOwnerMode} onClose={closeSharedBots} t={t} />
       )}
-      {onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined && (
+      {hasConnectedAppsDialog && (
         <ConnectedAppsDialog
           bot={connectedAppsBot}
           open={connectedAppsBot !== undefined}
           onClose={() => { setConnectedAppsBotId(null) }}
           onLoad={onLoadConnectedApps}
           onSet={onSetConnectedAppAccess}
+          onLoadMcpActions={onLoadMcpActions}
+          onSetMcpActionEnabled={onSetMcpActionEnabled}
+          onReconnectMcpConnector={onReconnectMcpConnector}
+          githubAppSignIn={githubAppSignIn}
           t={t}
         />
       )}
@@ -2046,21 +2465,5 @@ export function BotRoster({
         />
       )}
     </aside>
-  )
-}
-
-function BotShareButton({ bot, actions, t }: {
-  readonly bot: BotSummary
-  readonly actions: BotShareActions
-  readonly t: BotWorkspaceViewProps['t']
-}) {
-  const [open, setOpen] = useState(false)
-  return (
-    <>
-      <Tooltip label={t('shareBot')} side="bottom" portal>
-        <Button variant="ghost" size="sm" aria-label={t('shareBot')} icon={<IconShareOutlineRegular size={15} />} onClick={() => { setOpen(true) }} />
-      </Tooltip>
-      <BotShareDialog bot={bot} actions={actions} open={open} onClose={() => { setOpen(false) }} t={t} />
-    </>
   )
 }

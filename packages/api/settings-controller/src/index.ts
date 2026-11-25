@@ -19,7 +19,8 @@ import { Remote, RemoteError, TypertRemoteService } from '@yharness/typert-proto
 import type { JsonValue } from '@yharness/util-values'
 import { z } from 'zod'
 import { CredentialsController } from './credentials.ts'
-import type { SettingsDocumentOpenValue } from './types.ts'
+import { listMcpActions, reconnectMcpConnector, setMcpActionEnabled } from './mcp-actions.ts'
+import type { McpActionServerView, SettingsDocumentOpenValue } from './types.ts'
 
 export { CredentialsController } from './credentials.ts'
 export type * from './types.ts'
@@ -67,11 +68,10 @@ declare module '@yharness/cordis' {
 }
 
 /**
- * Host service backing the generated `ctx.remote.settings` namespace. Every
- * remote read uses `redactSecrets: true`, so a `role('secret')` field cannot
- * ride a response. Writes expose the settings service's merge, replacement,
- * and path-addressed operations, and classify every provider refusal as
- * `settings/conflict` or `settings/rejected` with the service's message.
+ * Host service backing the generated `ctx.remote.settings` namespace.
+ * Configuration reads redact secret fields. Connector reads return discovery
+ * metadata. Form writes classify stale revisions and provider refusals
+ * separately.
  */
 export class SettingsController extends TypertRemoteService {
   private readonly openTextFile: (path: string, signal: AbortSignal) => Promise<void>
@@ -102,6 +102,36 @@ export class SettingsController extends TypertRemoteService {
       hasDocument: true,
       namespaces: settings.describe({ redactSecrets: true }).map(namespaceView),
     }
+  }
+
+  /** List discovered actions for the workspace's configured MCP connectors.
+   * @returns Redacted connector and action metadata for the owner UI.
+   */
+  @Remote
+  listMcpActions(): McpActionServerView[] {
+    return listMcpActions(this.ctx)
+  }
+
+  /** Set whether a discovered connector action is available in this workspace.
+   * @param serverName - Configured connector name.
+   * @param actionName - Exact raw name from the connector's action list.
+   * @param enabled - Desired action availability.
+   * @param signal - Caller cancellation for the profile edit.
+   * @returns Connector action metadata after configuration reconciliation.
+   */
+  @Remote
+  setMcpActionEnabled(serverName: string, actionName: string, enabled: boolean, signal: AbortSignal): Promise<McpActionServerView[]> {
+    return setMcpActionEnabled(this.ctx, serverName, actionName, enabled, signal)
+  }
+
+  /** Request a fresh connection generation for one configured connector.
+   * @param serverName - Configured connector name.
+   * @param signal - Caller cancellation for the reconnect request.
+   * @returns Redacted connector metadata after the retry attempt or its bounded wait.
+   */
+  @Remote
+  reconnectMcpConnector(serverName: string, signal: AbortSignal): Promise<McpActionServerView[]> {
+    return reconnectMcpConnector(this.ctx, serverName, signal)
   }
 
   /**

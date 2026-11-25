@@ -44,17 +44,23 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@yharness/brand": "workspace:*",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
+    "@yharness/authorization": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/deepseek-account": "workspace:*",
+    "@yharness/github-app-auth": "workspace:*",
     "@yharness/typert-protocol": "workspace:*",
     "@yharness/agent": "workspace:*"
   },
   "devDependencies": {
+    "@yharness/authorization": "workspace:*",
+    "@yharness/brand": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/deepseek-account": "workspace:*",
+    "@yharness/github-app-auth": "workspace:*",
     "@yharness/typert-protocol": "workspace:*",
     "@yharness/agent": "workspace:*"
   }

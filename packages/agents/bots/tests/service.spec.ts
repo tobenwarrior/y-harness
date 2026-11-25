@@ -13,6 +13,7 @@ import AgentLoop from '@yharness/agent-loop'
 import { bindScopeParent, createScope, scopeOf, scopeTarget } from '@yharness/scope'
 import LlmRuntime, { createAssistantMessage, createSystemMessage, createUserMessage, freezeMessage, markAgentLoopRequest, MessageId, ToolCallId } from '@yharness/llm'
 import SessionStore, { Session, SessionId, SessionSeq } from '@yharness/session'
+import { SessionSearchCursor, type SessionSearchHit, type SessionSearchRequest } from '@yharness/session-query'
 import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
 import SessionProjectionRegistry from '@yharness/session-projection'
 import type { SessionEvent } from '@yharness/session'
@@ -46,6 +47,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { registerServerContext } from '../../../mcp/mcp-client/src/server-context.ts'
+import type { McpActionCatalog } from '../../../mcp/mcp-client/src/action-catalog.ts'
 import ScheduleService from '../../../schedule/schedule/src/index.ts'
 import { registerScheduleTools } from '../../../schedule/tool-schedule/src/index.ts'
 import BotService from '../src/index.ts'
@@ -828,6 +830,125 @@ function provideResolvedTemplatePreset(ctx: Context): void {
 }
 
 describe('durable Bot roster', () => {
+  it('validates Bot message search input and reports an unavailable query provider', async () => {
+    const h = await harness()
+    try {
+      await expect(h.service.searchMessages(null as never)).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.searchMessages({ query: 1 } as never)).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.searchMessages({ query: '  ' })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.searchMessages({ query: 'x'.repeat(501) })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.searchMessages({ query: '\0' })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.searchMessages({ query: 'marker' })).resolves.toEqual({ items: [], hasMore: false })
+      await h.service.create({ id: BotId('bot-search-provider'), name: 'Search provider bot', cwd: '/tmp' })
+      await expect(h.service.searchMessages({ query: 'marker' })).rejects.toMatchObject({ code: 'gateway/internal' })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('searches only owner Bot Sessions and preserves the exact matching sequence', async () => {
+    let ownerSessionId: SessionId | undefined
+    const searchSessions = vi.fn(async (_request: SessionSearchRequest) => {
+      const unrelatedSession = Session.create(SessionId('private-session'))
+      const botSession = Session.create(ownerSessionId ?? SessionId('bot-session-search'))
+      const unrelated: SessionSearchHit = {
+        header: unrelatedSession.header,
+        live: false,
+        persisted: true,
+        bestMatch: {
+          sessionId: unrelatedSession.id,
+          seq: SessionSeq(4),
+          type: 'user/message',
+          time: 4,
+          surface: 'current',
+          snippet: 'private marker',
+        },
+      }
+      const owned: SessionSearchHit = {
+        header: botSession.header,
+        live: true,
+        persisted: true,
+        bestMatch: {
+          sessionId: botSession.id,
+          seq: SessionSeq(17),
+          type: 'assistant/message',
+          time: 17,
+          surface: 'current',
+          snippet: 'owned marker',
+        },
+      }
+      const mismatched: SessionSearchHit = {
+        header: botSession.header,
+        live: true,
+        persisted: true,
+        bestMatch: {
+          sessionId: SessionId('private-session-mismatch'),
+          seq: SessionSeq(15),
+          type: 'assistant/message',
+          time: 15,
+          surface: 'current',
+          snippet: 'mismatched marker',
+        },
+      }
+      const toolResult: SessionSearchHit = {
+        header: botSession.header,
+        live: true,
+        persisted: true,
+        bestMatch: {
+          sessionId: botSession.id,
+          seq: SessionSeq(16),
+          type: 'tool/result',
+          time: 16,
+          surface: 'current',
+          snippet: 'tool marker',
+        },
+      }
+      const shadowed: SessionSearchHit = {
+        header: botSession.header,
+        live: true,
+        persisted: true,
+        bestMatch: {
+          sessionId: botSession.id,
+          seq: SessionSeq(18),
+          type: 'user/message',
+          time: 18,
+          surface: 'shadowed',
+          snippet: 'shadowed marker',
+        },
+      }
+      return { items: [unrelated, mismatched, toolResult, shadowed, owned], nextCursor: SessionSearchCursor('next-page') }
+    })
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => { ctx.provide('sessionQuery', { searchSessions } as never) },
+    })
+    try {
+      const created = await h.service.create({ id: BotId('bot-search'), name: 'Search bot', cwd: '/tmp' })
+      ownerSessionId = created.bot.sessionId
+      const result = await h.service.searchMessages({ query: '  marker  ' })
+      expect(result).toEqual({
+        items: [{
+          botId: created.bot.id,
+          sessionId: created.bot.sessionId,
+          seq: SessionSeq(17),
+          snippet: 'owned marker',
+        }],
+        hasMore: true,
+      })
+      expect(searchSessions).toHaveBeenCalledOnce()
+      expect(searchSessions).toHaveBeenCalledWith({
+        query: 'marker',
+        sessionFilters: [{ kind: 'id', values: [created.bot.sessionId] }],
+        eventFilters: [
+          { kind: 'type', values: ['user/message', 'assistant/message'] },
+          { kind: 'surface', values: ['current'] },
+        ],
+        limit: 20,
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('orders equal-age Bots by stable id for roster display', async () => {
     const h = await harness()
     const clock = vi.spyOn(Date, 'now').mockReturnValue(1_234)
@@ -11641,6 +11762,269 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('previews and applies only exact reviewed Grok connector mappings', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Reviewed app importer', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    try {
+      h.ctx.tools.register(mcpFixtureTool('mcp__github__list_issues', 'github', async () => 'called'))
+      const catalogs: readonly McpActionCatalog[] = [
+        { serverName: 'github', entryId: 'fixture:github', connected: true, actions: [] },
+        { serverName: 'offline', entryId: 'fixture:offline', connected: false, actions: [] },
+      ]
+      h.ctx.on('mcp/actions/catalog', (accept) => { for (const catalog of catalogs) accept(catalog) })
+      const document = JSON.stringify({
+        format: 'grok-bot-export', version: 1, bots: [{
+          name: 'Source', apps: ['GitHub workspace', 'Offline source', 'Missing source'],
+        }],
+      })
+      const mappings = [
+        { sourceIndex: 0, sourceLabel: 'GitHub workspace', targetServerName: 'github' },
+        { sourceIndex: 1, sourceLabel: 'Offline source', targetServerName: 'offline' },
+        { sourceIndex: 2, sourceLabel: 'Missing source', targetServerName: 'not-configured' },
+      ] as const
+      const preview = await h.service.importGrokConnectedApps({
+        botId: created.bot.id, document, sourceName: 'Source', mappings, preview: true,
+      })
+      expect(preview.mappings).toMatchObject([
+        { sourceIndex: 0, resolution: 'connected', entryId: 'fixture:github' },
+        { sourceIndex: 1, resolution: 'unconnected', entryId: 'fixture:offline' },
+        { sourceIndex: 2, resolution: 'missing', targetServerName: 'not-configured' },
+      ])
+      expect(preview.catalogAvailable).toBe(true)
+      expect(preview.changedAppIds).toEqual([])
+      expect(preview).not.toHaveProperty('bot')
+      await expect(h.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
+        apps: [{ id: 'github', allowed: false }],
+      })
+
+      await expect(h.service.importGrokConnectedApps({
+        botId: created.bot.id, document, sourceName: 'Source', mappings,
+        expectedUpdatedAt: preview.updatedAt,
+      })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
+        apps: [{ id: 'github', allowed: false }],
+      })
+
+      const validMappings = mappings.slice(0, 2)
+      const applied = await h.service.importGrokConnectedApps({
+        botId: created.bot.id, document, sourceName: 'Source', mappings: validMappings,
+        expectedUpdatedAt: preview.updatedAt,
+      })
+      expect(applied.changedAppIds).toEqual(['github', 'offline'])
+      expect(applied.updatedAt).toBeGreaterThan(preview.updatedAt)
+      expect(applied.mappings.slice(0, 2)).toMatchObject([
+        { sourceIndex: 0, resolution: 'connected', allowed: true },
+        { sourceIndex: 1, resolution: 'unconnected', allowed: true },
+      ])
+      await expect(h.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
+        apps: [
+          { id: 'github', allowed: true },
+          { id: 'offline', allowed: true },
+        ],
+      })
+      await expect(h.service.importGrokConnectedApps({
+        botId: created.bot.id, document, sourceName: 'Source', mappings: validMappings,
+        expectedUpdatedAt: applied.updatedAt,
+      })).resolves.toEqual({ ...applied, changedAppIds: [] })
+
+      const stale = await h.service.importGrokConnectedApps({
+        botId: created.bot.id, document, sourceName: 'Source', mappings: validMappings, preview: true,
+      })
+      await h.service.setConnectedAppAccess({ botId: created.bot.id, appId: 'github', allowed: false })
+      await expect(h.service.importGrokConnectedApps({
+        botId: created.bot.id, document, sourceName: 'Source', mappings: validMappings,
+        expectedUpdatedAt: stale.updatedAt,
+      })).rejects.toMatchObject({ code: 'gateway/conflict' })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('keeps connector mapping unavailable without an action catalog', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Unavailable app importer', cwd: '/tmp' })
+    await close(first.ctx)
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    try {
+      h.ctx.tools.register(mcpFixtureTool('mcp__github__list_issues', 'github', async () => 'called'))
+      const preview = await h.service.importGrokConnectedApps({
+        botId: created.bot.id,
+        document: JSON.stringify({ format: 'grok-bot-export', version: 1, bots: [{ name: 'Source', apps: ['GitHub'] }] }),
+        mappings: [{ sourceIndex: 0, sourceLabel: 'GitHub', targetServerName: 'github' }],
+        preview: true,
+      })
+      expect(preview.mappings).toEqual([{
+        sourceIndex: 0, sourceLabel: 'GitHub', resolution: 'unavailable', targetServerName: 'github',
+      }])
+      expect(preview.catalogAvailable).toBe(false)
+      await expect(h.service.importGrokConnectedApps({
+        botId: created.bot.id,
+        document: JSON.stringify({ format: 'grok-bot-export', version: 1, bots: [{ name: 'Source', apps: ['GitHub'] }] }),
+        mappings: [{ sourceIndex: 0, sourceLabel: 'GitHub', targetServerName: 'github' }],
+        expectedUpdatedAt: preview.updatedAt,
+      })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('rejects malformed reviewed connector maps before applying anything', async () => {
+    const h = await harness()
+    const created = await h.service.create({ name: 'Malformed app importer', cwd: '/tmp' })
+    const document = JSON.stringify({
+      format: 'grok-bot-export', version: 1, bots: [{ name: 'Source', apps: ['GitHub'] }],
+    })
+    const valid = { sourceIndex: 0, sourceLabel: 'GitHub', targetServerName: 'github' }
+    const malformed: readonly object[] = [
+      { document, mappings: [valid], preview: true },
+      { botId: created.bot.id, document, preview: true },
+      { botId: created.bot.id, document, mappings: [null], preview: true },
+      { botId: created.bot.id, document, mappings: [{ ...valid, extra: true }], preview: true },
+      { botId: created.bot.id, document, mappings: [{ ...valid, sourceIndex: -1 }], preview: true },
+      { botId: created.bot.id, document, mappings: [{ ...valid, sourceIndex: 0.5 }], preview: true },
+      { botId: created.bot.id, document, mappings: [{ ...valid, sourceLabel: '' }], preview: true },
+      { botId: created.bot.id, document, mappings: [{ ...valid, sourceLabel: ' GitHub' }], preview: true },
+      { botId: created.bot.id, document, mappings: [{ ...valid, targetServerName: '' }], preview: true },
+      { botId: created.bot.id, document, mappings: [{ ...valid, targetServerName: ' github' }], preview: true },
+      { botId: created.bot.id, document, mappings: [valid], preview: 'yes' },
+      { botId: created.bot.id, document, mappings: [valid], expectedUpdatedAt: -1, preview: true },
+      { botId: created.bot.id, document, mappings: [valid] },
+      {
+        botId: created.bot.id, document, mappings: [{ ...valid, sourceIndex: 1 }], preview: true,
+      },
+    ]
+    try {
+      for (const request of malformed) {
+        await expect(h.service.importGrokConnectedApps(request as never)).rejects.toMatchObject({
+          code: 'gateway/bad-request',
+        })
+      }
+      await expect(h.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({ apps: [] })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('requires the destination Bot to finish setup before reviewing a connector import', async () => {
+    const create = vi.fn(async (_request: { readonly sessionId?: string }) => {
+      throw new Error('model unavailable')
+    })
+    const h = await harness(new MemoryMediaPool(), create)
+    const botId = BotId('bot-pending-connector-import')
+    try {
+      await expect(h.service.create({ id: botId, name: 'Pending importer', cwd: '/tmp' }))
+        .rejects.toMatchObject({ code: 'bot/provisioning-failed' })
+      await expect(h.service.importGrokConnectedApps({
+        botId,
+        document: JSON.stringify({ format: 'grok-bot-export', version: 1, bots: [{ name: 'Source', apps: ['GitHub'] }] }),
+        mappings: [{ sourceIndex: 0, sourceLabel: 'GitHub', targetServerName: 'github' }],
+        preview: true,
+      })).rejects.toMatchObject({
+        code: 'gateway/bad-request',
+        message: 'Wait for the destination Bot to finish setup.',
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('classifies ambiguous mappings and clears an existing deny grant on apply', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Ambiguous app importer', cwd: '/tmp' })
+    const domain = first.ctx.storageDomain.get(botDomain.name) as Domain<typeof botDomain> | undefined
+    if (domain === undefined) throw new Error('connector fixture Bot domain was not mounted')
+    const storedBot = domain.table('bots').get(created.bot.id)
+    if (storedBot === undefined) throw new Error('connector fixture Bot row was not stored')
+    await domain.table('bots').put(created.bot.id, {
+      ...storedBot,
+      connectedAppIds: undefined,
+      connectedAppDenyIds: undefined,
+    })
+    const records = first.records
+    await close(first.ctx)
+
+    const key = credentialKey('agent-bots', 'profile-revisions-v4')
+    const stored = records.get(key)
+    if (stored?.kind !== 'grant') throw new Error('connector fixture profile record was not stored as a grant')
+    const payload = JSON.parse(JSON.stringify(stored.payload)) as {
+      profiles: Record<string, Record<string, unknown>>
+    }
+    const profile = payload.profiles[String(created.bot.id)]
+    if (profile === undefined) throw new Error('connector fixture profile is missing')
+    delete profile.connectedAppIds
+    delete profile.connectedAppDenyIds
+    records.set(key, { kind: 'grant', payload })
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
+    try {
+      h.ctx.tools.register(mcpFixtureTool('mcp__github__list_issues', 'github', async () => 'called'))
+      const catalogs: readonly McpActionCatalog[] = [
+        { serverName: 'github', entryId: 'fixture:github', connected: true, actions: [] },
+        { serverName: 'offline', entryId: 'fixture:offline', connected: false, actions: [] },
+        { serverName: 'duplicate', entryId: 'fixture:duplicate-a', connected: true, actions: [] },
+        { serverName: 'duplicate', entryId: 'fixture:duplicate-b', connected: true, actions: [] },
+      ]
+      h.ctx.on('mcp/actions/catalog', (accept) => { for (const catalog of catalogs) accept(catalog) })
+      const warmup = await h.service.importGrokConnectedApps({
+        botId: created.bot.id,
+        document: JSON.stringify({
+          format: 'grok-bot-export', version: 1, bots: [{ name: 'Source', apps: ['Offline'] }],
+        }),
+        mappings: [{ sourceIndex: 0, sourceLabel: 'Offline', targetServerName: 'offline' }],
+        preview: true,
+      })
+      expect(warmup.mappings).toEqual([expect.objectContaining({ resolution: 'unconnected', allowed: true })])
+      await h.service.setConnectedAppAccess({ botId: created.bot.id, appId: 'github', allowed: false })
+      const document = JSON.stringify({
+        format: 'grok-bot-export', version: 1, bots: [{
+          name: 'Source', apps: ['GitHub', 'Offline', 'Duplicate', 'Missing', 'Unmapped', 'Denied'],
+        }],
+      })
+      const reviewed = [
+        { sourceIndex: 0, sourceLabel: 'GitHub', targetServerName: 'github' },
+        { sourceIndex: 0, sourceLabel: 'GitHub', targetServerName: 'offline' },
+        { sourceIndex: 1, sourceLabel: 'Offline', targetServerName: 'offline' },
+        { sourceIndex: 2, sourceLabel: 'Duplicate', targetServerName: 'duplicate' },
+        { sourceIndex: 3, sourceLabel: 'Missing', targetServerName: 'not-configured' },
+        { sourceIndex: 5, sourceLabel: 'Denied', targetServerName: 'github' },
+      ] as const
+      const preview = await h.service.importGrokConnectedApps({
+        botId: created.bot.id, document, mappings: reviewed, preview: true,
+      })
+      expect(preview.mappings).toMatchObject([
+        { sourceIndex: 0, resolution: 'ambiguous' },
+        { sourceIndex: 1, resolution: 'unconnected', allowed: true },
+        { sourceIndex: 2, resolution: 'ambiguous' },
+        { sourceIndex: 3, resolution: 'missing' },
+        { sourceIndex: 4, resolution: 'unmapped' },
+        { sourceIndex: 5, resolution: 'connected', allowed: false },
+      ])
+      expect(preview.catalogAvailable).toBe(true)
+      expect(preview.changedAppIds).toEqual([])
+
+      const applied = await h.service.importGrokConnectedApps({
+        botId: created.bot.id, document,
+        mappings: [{ sourceIndex: 5, sourceLabel: 'Denied', targetServerName: 'github' }],
+        expectedUpdatedAt: preview.updatedAt,
+      })
+      expect(applied.changedAppIds).toEqual(['github'])
+      expect(applied.mappings).toContainEqual(expect.objectContaining({
+        sourceIndex: 5, resolution: 'connected', allowed: true,
+      }))
+      await expect(h.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
+        apps: [{ id: 'github', allowed: true }],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('fails closed after a Bot row disappears without affecting ordinary Sessions', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
@@ -12262,8 +12646,13 @@ describe('durable Bot roster', () => {
       await expect(first.service.importGrokHistory(request)).resolves.toEqual({ messages: 2 })
       await expect(first.service.importGrokHistory(request)).resolves.toEqual({ messages: 2 })
       await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
-        source: 'grok-bot', version: 1, firstCachedSequence: 4, messages: messages.slice(1),
+        source: 'grok-bot', version: 1, firstCachedSequence: 4, messages: [{
+          ...messages[1], text: 'Changed answer',
+        }],
       }) })).rejects.toThrow('would remove or change')
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
+        source: 'grok-bot', version: 1, firstCachedSequence: 4, messages: messages.slice(1),
+      }) })).resolves.toEqual({ messages: 2 })
       expect((await first.ctx.sessionController.inspect(sessionId)).events).toEqual(events)
     } finally {
       await close(first.ctx)
@@ -12387,7 +12776,8 @@ describe('durable Bot roster', () => {
 
       const sourceRemoved = { ...structuredClone(enriched), sources: undefined }
       await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(sourceRemoved) }))
-        .rejects.toThrow('would remove or change')
+        .resolves.toEqual({ messages: 6 })
+      await expect(first.service.readGrokHistory({ botId })).resolves.toEqual(enriched)
 
       await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
         source: 'grok-bot', version: 1, firstCachedSequence: 1, messages: [

@@ -4499,6 +4499,41 @@ describe('shared Bot service', () => {
     }
   })
 
+  it('waits for an in-flight membership refresh before handling a request', async () => {
+    vi.useFakeTimers()
+    const value = await fixture(10)
+    const releaseRead = Promise.withResolvers<undefined>()
+    const originalRead = value.authority.readExtension.bind(value.authority)
+    let delayed = false
+    let readStarted = false
+    const readSpy = vi.spyOn(value.authority, 'readExtension').mockImplementation(async (key) => {
+      if (!delayed && key === 'agent-bots/shared-memberships') {
+        delayed = true
+        readStarted = true
+        await releaseRead.promise
+      }
+      return originalRead(key)
+    })
+    try {
+      await vi.advanceTimersByTimeAsync(10)
+      expect(readStarted).toBe(true)
+      let inviteSettled = false
+      const invite = value.service.createInvite(BotId('bot-chief'), 'owner').then((result) => {
+        inviteSettled = true
+        return result
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(inviteSettled).toBe(false)
+      releaseRead.resolve(undefined)
+      await expect(invite).resolves.toMatchObject({ expiresAt: 61_000 })
+    } finally {
+      releaseRead.resolve(undefined)
+      readSpy.mockRestore()
+      await value.close()
+      vi.useRealTimers()
+    }
+  })
+
   it('does not commit a late authority outcome after its mutation times out', async () => {
     vi.useFakeTimers()
     const value = await fixture(10, true)

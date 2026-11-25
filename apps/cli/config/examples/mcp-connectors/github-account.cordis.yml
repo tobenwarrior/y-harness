@@ -1,0 +1,16 @@
+# Set YH_GITHUB_APP_CLIENT_ID on the Host to the public Client ID of a GitHub App with Device Flow enabled.
+- insert:
+    - id: github-app-auth
+      name: '@yharness/github-app-auth'
+      config:
+        clientId: !!js process.env.YH_GITHUB_APP_CLIENT_ID
+    - id: mcp-github-account
+      name: '@yharness/mcp-client'
+      config:
+        transport: streamable-http
+        serverName: github
+        url: https://api.githubcopilot.com/mcp/
+        githubAppAuthorization: true
+        headers:
+          X-MCP-Toolsets: repos,issues,pull_requests
+          X-MCP-Readonly: 'true'

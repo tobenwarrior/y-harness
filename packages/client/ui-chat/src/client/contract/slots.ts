@@ -254,6 +254,8 @@ export interface ChatViewInjected {
   loadOlder: () => void
   /** Jump loader: page history back through seq; resolves when the window covers it. */
   loadThrough: (seq: SessionSeq) => Promise<void>
+  /** Register the mounted Chat's exact-sequence navigation target. */
+  registerChatNavigation: (listener: (seq: SessionSeq) => void) => () => void
   loadImage: MessageImageLoader
   chatScroll: {
     save: (position: ChatScrollPosition | null) => void

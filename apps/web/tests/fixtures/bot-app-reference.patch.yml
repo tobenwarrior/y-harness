@@ -1,0 +1,10 @@
+- insert:
+    - id: bot-app-github-fixture
+      name: '@yharness/mcp-client'
+      config:
+        transport: streamable-http
+        serverName: github
+        url: https://bot-app-fixture.example.test/mcp
+        bearerTokenRef: DSH_BOT_APP_E2E_KEY
+        reconnect:
+          enabled: false

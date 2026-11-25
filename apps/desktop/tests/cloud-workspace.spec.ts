@@ -32,6 +32,7 @@ vi.mock('electron', () => ({
     readonly webContents = { focus: vi.fn() }
     readonly contentView = { addChildView: vi.fn(), removeChildView: vi.fn() }
     readonly isDestroyed = () => false
+    readonly isFullScreen = () => false
     readonly getContentBounds = () => ({ width: 900, height: 700 })
   },
   WebContentsView: class {
@@ -41,6 +42,7 @@ vi.mock('electron', () => ({
       isDestroyed: vi.fn(() => false),
       close: vi.fn(),
       focus: vi.fn(),
+      send: vi.fn(),
       getUserAgent: vi.fn(() => 'Cloud workspace fixture'),
       setUserAgent: vi.fn(),
       setWindowOpenHandler: vi.fn(),
@@ -80,8 +82,10 @@ type FakeView = {
   readonly webContents: EventEmitter & {
     close: ReturnType<typeof vi.fn>
     loadURL: ReturnType<typeof vi.fn<(url: string) => Promise<void>>>
+    send: ReturnType<typeof vi.fn>
   }
   readonly setVisible: ReturnType<typeof vi.fn>
+  readonly setBounds: ReturnType<typeof vi.fn>
 }
 
 function view(index: number): FakeView {
@@ -118,15 +122,18 @@ it('keeps the loaded Cloud chat across a failed reconnect and reauthenticates at
   fixture.open.mockResolvedValueOnce(first.value).mockRejectedValueOnce(new Error('Offline')).mockResolvedValueOnce(restored.value)
   workspace.attach(new BrowserWindow())
   await vi.advanceTimersByTimeAsync(0)
-  expect(visibleControls()).toContain('Connected')
+  expect(view(0).setVisible).toHaveBeenLastCalledWith(false)
   const chat = view(1)
+  expect(chat.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 900, height: 700 })
+  chat.webContents.emit('did-finish-load')
+  expect(chat.webContents.send).toHaveBeenCalledWith('dsh-desktop:window-fullscreen', false)
 
   first.ended.resolve(undefined)
   await vi.advanceTimersByTimeAsync(5_000)
   expect(fixture.open).toHaveBeenCalledTimes(2)
   expect(chat.webContents.close).not.toHaveBeenCalled()
   expect(chat.setVisible).toHaveBeenLastCalledWith(true)
-  expect(visibleControls()).toContain('Reconnecting to Cloud')
+  expect(view(0).setVisible).toHaveBeenLastCalledWith(false)
   workspace.showVault()
   expect(fixture.vault.open).not.toHaveBeenCalled()
 
@@ -145,7 +152,7 @@ it('keeps the loaded Cloud chat across a failed reconnect and reauthenticates at
   expect(fixture.views).toHaveLength(2)
   expect(chat.webContents.loadURL).toHaveBeenCalledExactlyOnceWith(ORIGIN + '/')
   expect(fetch).toHaveBeenCalledTimes(2)
-  expect(visibleControls()).toContain('Connected')
+  expect(view(0).setVisible).toHaveBeenLastCalledWith(false)
   workspace.showVault()
   expect(fixture.vault.open).toHaveBeenCalledOnce()
 })
@@ -208,7 +215,7 @@ it('waits for a saved Cloud server on launch and stops retrying on Mac', async (
   workspace.showCloud()
   await vi.advanceTimersByTimeAsync(0)
   expect(fixture.open).toHaveBeenCalledTimes(2)
-  expect(visibleControls()).toContain('Connected')
+  expect(view(0).setVisible).toHaveBeenLastCalledWith(false)
 })
 
 it('cancels the old retry and closes the old chat when the owner changes servers', async () => {

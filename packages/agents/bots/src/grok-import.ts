@@ -28,16 +28,27 @@ const routine = z.object({
   timezone: text(128),
   skills: z.array(text(160)).max(24).default([]),
 })
+const connectedApp = z.union([
+  text(160),
+  z.object({ name: text(160) }).strict().transform(value => value.name),
+])
+const botSchema = z.object({
+  name: text(160),
+  memories,
+  user_facts: memories,
+  skills: z.array(skill).max(32).default([]),
+  routines: z.array(routine).max(64).default([]),
+})
+const connectedAppBotSchema = botSchema.extend({ apps: z.array(connectedApp).max(128).default([]) })
 const documentSchema = z.object({
   format: z.literal('grok-bot-export'),
   version: z.literal(1),
-  bots: z.array(z.object({
-    name: text(160),
-    memories,
-    user_facts: memories,
-    skills: z.array(skill).max(32).default([]),
-    routines: z.array(routine).max(64).default([]),
-  })).min(1).max(32),
+  bots: z.array(botSchema).min(1).max(32),
+})
+const connectedAppDocumentSchema = z.object({
+  format: z.literal('grok-bot-export'),
+  version: z.literal(1),
+  bots: z.array(connectedAppBotSchema).min(1).max(32),
 })
 const timedTriggers = new Set(['schedule', 'scheduled', 'cron', 'time', 'interval'])
 
@@ -72,12 +83,7 @@ function checkCredentials(data: unknown): void {
   }
 }
 
-/** Parse one Bot and validate its cron definitions before any durable writes.
- * @param document - Grok Bot export JSON.
- * @param sourceName - Source Bot display name when the file contains multiple Bots.
- * @returns Memory text, skill definitions, and normalized timed routines for the selected Bot.
- */
-export function parseGrokImport(document: string, sourceName?: string): GrokImportPlan {
+function parseDocument<T>(document: string, schema: z.ZodType<T>): T {
   if (typeof document !== 'string' || Buffer.byteLength(document) > MAX_DOCUMENT_BYTES) {
     return invalid('Choose a Grok Bot export of at most 512 KiB.')
   }
@@ -89,13 +95,21 @@ export function parseGrokImport(document: string, sourceName?: string): GrokImpo
     return invalid('The Grok Bot export must be valid JSON.')
   }
   checkCredentials(json)
-  const parsed = documentSchema.safeParse(json)
+  const parsed = schema.safeParse(json)
   if (!parsed.success) return invalid('Expected a version-one Grok Bot export with valid memories, skills, and timed routines.')
+  return parsed.data
+}
+
+function selectBot<T extends { readonly name: string }>(bots: readonly T[], sourceName?: string): T {
   const candidates = sourceName === undefined
-    ? parsed.data.bots
-    : parsed.data.bots.filter(bot => bot.name.toLowerCase() === sourceName.trim().toLowerCase())
+    ? bots
+    : bots.filter(bot => bot.name.toLowerCase() === sourceName.trim().toLowerCase())
   const [bot] = candidates
   if (bot === undefined || candidates.length !== 1) return invalid('Select exactly one source Bot from the Grok Bot export.')
+  return bot
+}
+
+function buildImportPlan(bot: z.infer<typeof botSchema>): GrokImportPlan {
   const uniqueMemories = [...new Set([...bot.memories, ...bot.user_facts])]
   if (uniqueMemories.length > BOT_MEMORY_ENTRY_LIMIT) return invalid('This export exceeds the Bot memory limit.')
   const titles = new Set<string>()
@@ -115,4 +129,25 @@ export function parseGrokImport(document: string, sourceName?: string): GrokImpo
     }
   })
   return { name: bot.name, memories: uniqueMemories, skills: bot.skills, routines }
+}
+
+/** Parse one Bot and validate its cron definitions before any durable writes.
+ * @param document - Grok Bot export JSON.
+ * @param sourceName - Source Bot display name when the file contains multiple Bots.
+ * @returns Memory text, skill definitions, and normalized timed routines for the selected Bot.
+ */
+export function parseGrokImport(document: string, sourceName?: string): GrokImportPlan {
+  const parsed = parseDocument(document, documentSchema)
+  return buildImportPlan(selectBot(parsed.bots, sourceName))
+}
+
+/** Parse one Bot's display-only connected-app labels for owner-reviewed mapping.
+ * @param document - Grok Bot export JSON.
+ * @param sourceName - Source Bot display name when the file contains multiple Bots.
+ * @returns The ordinary import plan plus normalized connected-app labels.
+ */
+export function parseGrokConnectedAppImport(document: string, sourceName?: string): GrokImportPlan & { readonly apps: readonly string[] } {
+  const parsed = parseDocument(document, connectedAppDocumentSchema)
+  const bot = selectBot(parsed.bots, sourceName)
+  return { ...buildImportPlan(bot), apps: bot.apps }
 }

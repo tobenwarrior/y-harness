@@ -1537,6 +1537,39 @@ describe('ModelsSection', () => {
     expect(mutate).not.toHaveBeenCalled()
   })
 
+  it('opens a subscription setup row and reloads after its status refresh', async () => {
+    const mounted = await mountSection()
+    const view = { connected: false, enabled: false, busy: false, running: 0, tiers: {} }
+    const refresh = vi.fn(async () => view)
+    const codexBackend: NonNullable<ModelsOperations['codexBackend']> = {
+      getState: vi.fn(async () => view),
+      models: vi.fn(async () => []),
+      refresh,
+      publish: vi.fn(async () => view),
+      start: vi.fn(async () => ({ verificationUrl: 'https://chatgpt.test', userCode: 'test-code' })),
+      cancel: vi.fn(async () => {}),
+      configure: vi.fn(async () => view),
+      disconnect: vi.fn(async () => view),
+    }
+    const load = vi.spyOn(mounted.controller, 'load')
+    mounted.view.rerender(<ModelsSection
+      {...mounted.injected}
+      operations={{ ...operationsWith(mounted.face), codexBackend }}
+    />)
+
+    const edit = screen.getByRole('button', { name: providerCopy(en.editProvider, {
+      provider: en.codexTitle, displayName: en.codexTitle,
+    }) })
+    fireEvent.click(edit)
+    expect(await screen.findByText(en.codexHint)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.codexRefresh }))
+    await waitFor(() => { expect(load).toHaveBeenCalled() })
+    expect(refresh).toHaveBeenCalled()
+
+    fireEvent.click(edit)
+    expect(screen.queryByText(en.codexHint)).toBeNull()
+  })
+
   it('opens the add card on the catalog mode with both modes offered', async () => {
     await mountSection()
     fireEvent.click(screen.getByRole('button', { name: en.add }))

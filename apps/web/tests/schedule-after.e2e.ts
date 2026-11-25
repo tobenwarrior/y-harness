@@ -74,6 +74,35 @@ const BASE_PATCH = fileURLToPath(new URL('../../../packages/bundle/base/cordis.p
 const WEB_BUNDLE = fileURLToPath(new URL('../../../packages/bundle/web-app/', import.meta.url))
 const WEB_PATCHES = bundlePatchPaths(WEB_BUNDLE, (JSON.parse(readFileSync(join(WEB_BUNDLE, 'package.json'), 'utf8')) as { dsh: { bundle: { patch: string[] } } }).dsh.bundle)
 
+it('skips past VPS occurrences when the shipped Web profile starts', async () => {
+  const workspaceCwd = await mkdtemp(join(tmpdir(), 'dsh-vps-schedule-startup-'))
+  const previous = process.env.YH_VPS_SKIP_MISSED_SCHEDULES
+  let web: WebScaffold | undefined
+  try {
+    const root = join(workspaceCwd, '.dsh-storages')
+    const id = ScheduleId('vps-recurring')
+    const sessionId = SessionId('vps-recurring-session')
+    const missed = Date.now() - 300_000
+    const record = createEveryScheduleRecord(id, 'Run the regular check', EVERY_INTERVAL_SECONDS,
+      missed - EVERY_INTERVAL_SECONDS * 1_000, 'Regular VPS check')
+    await mkdir(root)
+    await writeFile(join(root, 'schedule.json'), JSON.stringify({
+      unit: { name: 'schedule', version: 1 }, global: null,
+      tables: { tasks: { [id]: { sessionId, record, status: 'active' } } },
+    }))
+    process.env.YH_VPS_SKIP_MISSED_SCHEDULES = '1'
+    web = await launchWebScaffold({ workspaceCwd })
+    expect(await web.ctx.schedule.catalog()).toContainEqual(expect.objectContaining({
+      id, sessionId, status: 'active', scheduledAt: new Date(missed + EVERY_INTERVAL_SECONDS * 1_000).toISOString(),
+    }))
+    expect(await web.ctx.schedule.history({ sessionId, id, limit: 10 })).toMatchObject({ records: [] })
+  } finally {
+    if (previous === undefined) delete process.env.YH_VPS_SKIP_MISSED_SCHEDULES
+    else process.env.YH_VPS_SKIP_MISSED_SCHEDULES = previous
+    try { await web?.close() } finally { await rm(workspaceCwd, { recursive: true, force: true }) }
+  }
+})
+
 /**
  * Write the overlay that makes every step carry a fresh clock reading.
  *
@@ -243,14 +272,22 @@ function requestText(options: GenerateOptions): string {
     .join('\n')
 }
 
-/** Require one assembled request to frame the reminder as a scheduled user message. */
-function expectReminderFraming(options: GenerateOptions): void {
+/** Compare the scheduled request sent to the model with the message saved in the Session. */
+function expectReminderFraming(options: GenerateOptions, handle: AgentHandle): void {
   const reminder = options.messages.find(message => (
     message.role === 'user' && message.source?.kind === 'schedule'
   ))
   expect(reminder?.role).toBe('user')
   const text = reminder?.content.find(block => block.type === 'text')?.text
   expect(text).toContain('This is a scheduled message from the user')
+  expect(text).toContain('Handle the reminder prompts below as the current user requests.')
+  expect(text).toContain('Earlier occurrences are conversation history.')
+  const deliveries = handle.agent.session.snapshotEvents().flatMap(event => (
+    event.type === 'user/message' && event.data.source.kind === 'schedule'
+      ? event.data.content.flatMap(block => block.type === 'text' ? [block.text] : [])
+      : []
+  ))
+  expect(deliveries).toContain(text)
 }
 
 /** Wait for and return one exact durable assistant reply. */
@@ -497,7 +534,7 @@ describe.skipIf(MODE === 'record')('web e2e: conversational reminders', () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-schedule-after'))
     const reminderRequest = afterAdapter.requests[0]
     if (reminderRequest === undefined) throw new Error('model did not receive the After reminder')
-    expectReminderFraming(reminderRequest)
+    expectReminderFraming(reminderRequest, afterHandle)
     const session = page.getByRole('treeitem', { name: /Scheduled After follow-up/ })
     await session.click()
     if (afterAssistantReply === undefined) throw new Error('After assistant reply was not captured')
@@ -586,7 +623,7 @@ describe.skipIf(MODE === 'record')('web e2e: conversational reminders', () => {
       expect(texts.some(text => text.includes(record.prompt))).toBe(true)
     }
     expect(everyAdapter.requests).toHaveLength(1)
-    for (const request of everyAdapter.requests) expectReminderFraming(request)
+    for (const request of everyAdapter.requests) expectReminderFraming(request, everyHandle)
     const active = await scaffold.ctx.schedule.list({ sessionId: everyHandle.agent.id })
     expect(active).toHaveLength(2)
     for (const record of active) {
@@ -722,7 +759,7 @@ describe.skipIf(MODE === 'record')('web e2e: conversational reminders', () => {
     expect(atAdapter.requests).toHaveLength(4)
     const reminderRequest = atAdapter.requests[3]
     if (reminderRequest === undefined) throw new Error('model did not receive the At reminder')
-    expectReminderFraming(reminderRequest)
+    expectReminderFraming(reminderRequest, atHandle)
 
     const session = page.getByRole('treeitem', { name: /Explicit local-time reminder/ })
     await session.click()

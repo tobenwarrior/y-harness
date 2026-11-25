@@ -304,6 +304,8 @@ describe('weekly durable decoding', () => {
     expect(renderRecurringReminderBatchFraming([{ record, occurrenceAt: record.scheduledAt }])).toBe([
       '[SCHEDULE REMINDER BATCH]',
       'This is a scheduled message from the user',
+      'Handle the reminder prompts below as the current user requests. Use available tools and follow the existing approval policy when the work calls for them.',
+      'Report results from this turn or explain what prevented the work. Earlier occurrences are conversation history.',
       `reminders_json: [{"schedule_id":"weekly","occurrence_at":"${record.scheduledAt}","reminder_prompt":"Weekly reminder"}]`,
     ].join('\n'))
   })

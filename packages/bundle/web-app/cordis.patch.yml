@@ -153,6 +153,11 @@
     # which declare them in their own scope.
     - id: schedule
       name: '@yharness/schedule'
+      config:
+        skipMissedRecurringOnStartup: !!js |
+          process.env.YH_VPS_SKIP_MISSED_SCHEDULES === undefined ? false
+            : process.env.YH_VPS_SKIP_MISSED_SCHEDULES === '1' ? true
+            : process.env.YH_VPS_SKIP_MISSED_SCHEDULES
 
     # Configuration-surface reads and writes over Typert Remote. Each method
     # reports an actionable error when its settings-domain provider is absent.

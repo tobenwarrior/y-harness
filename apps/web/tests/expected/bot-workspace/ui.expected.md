@@ -3,11 +3,8 @@
   - button "Bots" [pressed]
 - complementary "Bot workspace":
   - text: Bots
-  - button "Edit avatar"
-  - button "Bot templates"
   - button "New bot"
-  - button "Join a shared bot"
-  - button "Create a shared group"
+  - button "Bot workspace options"
   - textbox "Search bots"
   - region "General":
     - heading "General" [level=2]:
@@ -29,13 +26,12 @@
 - region "Scout":
   - img "Scout"
   - text: Scout Keeps the team informed
-  - button "Edit bot profile"
-  - button "Share bot"
-  - button "Manage memories"
-  - button "Manage skills"
-  - button "Manage routines"
-  - text: Idle
-  - textbox "Message or run a task, / commands, @ files or sessions"
+  - button "Bot options"
+  - region "Imported Grok chat":
+    - strong: Imported Grok chat
+    - text: Read-only recovery from Grok Bot
+    - button "Show history"
+  - textbox "Message Scout"
   - button "Add files or run commands"
   - 'button "Access mode, current: Approve for me"': Approve for me
   - button "Select model, current DeepSeek-V4-Flash": DeepSeek-V4-Flash
@@ -187,6 +183,7 @@
   - combobox "History source":
     - option "Original recovery" [selected]
     - option "Recovered supplement"
+  - searchbox "Search imported messages"
   - list:
     - listitem:
       - strong: Archive owner
@@ -202,4 +199,3 @@
       - text: Unknown time
       - paragraph: Recovered tool record
       - text: Incomplete source record
-  - button "Close"

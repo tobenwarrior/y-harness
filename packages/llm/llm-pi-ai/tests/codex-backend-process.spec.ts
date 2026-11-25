@@ -215,6 +215,7 @@ actualCodexSmoke('initializes the pinned package-local Codex CLI with an isolate
       await handle.done
       await expect(handle.waitForExit()).resolves.toBe(true)
     }
-    await rm(root, { recursive: true, force: true })
+    // Windows can release the native directory handle after process quiescence.
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })

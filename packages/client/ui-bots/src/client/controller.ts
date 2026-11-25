@@ -117,7 +117,7 @@ export interface BotWorkspaceRemote {
 
   rename(request: { readonly botId: BotIdType; readonly name: string }): Promise<RemoteResult<{ readonly bot: BotView }>>
   updateProfile?: (request: BotProfileUpdateRequest) => Promise<RemoteResult<BotProfileUpdateValue>>
-  readGrokHistory?: (request: BotGrokHistoryRequest) => Promise<RemoteResult<BotGrokHistoryView | null>>
+  readGrokHistory?: (request: BotGrokHistoryRequest, signal?: AbortSignal) => Promise<RemoteResult<BotGrokHistoryView | null>>
   updateOrganization?: (request: BotOrganizationUpdateRequest) => Promise<RemoteResult<BotOrganizationUpdateValue>>
 
   listTemplates?: (request: BotTemplateListRequest) => Promise<RemoteResult<BotTemplateListValue>>
@@ -292,7 +292,7 @@ export interface BotWorkspaceFace {
   readonly retryGroup: () => void
   readonly loadConnectedApps?: (botId: string) => Promise<readonly BotConnectedAppAccess[]>
   readonly setConnectedAppAccess?: (botId: string, appId: string, allowed: boolean) => Promise<void>
-  readonly readGrokHistory?: (botId: string) => Promise<BotGrokHistoryView | null>
+  readonly readGrokHistory?: (botId: string, signal?: AbortSignal) => Promise<BotGrokHistoryView | null>
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>
   readonly avatarEditor?: BotAvatarEditorActions
   readonly memoryManager?: BotMemoryManagerActions
@@ -642,10 +642,13 @@ export class BotWorkspaceController {
       ...(this.remote.setConnectedAppAccess === undefined
         ? {}
         : { setConnectedAppAccess: (id: string, appId: string, allowed: boolean) => this.setConnectedAppAccess(id, appId, allowed) }),
-      ...(readGrokHistory === undefined ? {} : { readGrokHistory: async (id: string) => {
-        const result = await readGrokHistory({ botId: brandString<BotIdType>(id) })
-        if (!result.ok) throw new Error(result.error.message)
-        return result.value
+      ...(readGrokHistory === undefined ? {} : { readGrokHistory: async (id: string, signal?: AbortSignal) => {
+        const request = { botId: brandString<BotIdType>(id) }
+        const result = signal === undefined
+          ? await readGrokHistory(request)
+          : await readGrokHistory(request, signal)
+        if (result.ok) return result.value
+        throw new Error(result.error.message)
       } }),
       loadAvatar: (botId, avatar) => this.loadAvatar(botId, avatar),
       ...(

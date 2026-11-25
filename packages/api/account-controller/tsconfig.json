@@ -18,6 +18,15 @@
       "path": "../../credentials/deepseek-account"
     },
     {
+      "path": "../../credentials/authorization"
+    },
+    {
+      "path": "../../credentials/github-app-auth"
+    },
+    {
+      "path": "../../util/brand"
+    },
+    {
       "path": "../../typert/protocol"
     },
     {

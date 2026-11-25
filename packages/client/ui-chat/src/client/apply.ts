@@ -43,6 +43,7 @@ import { PerformanceUsageRow, type PerformanceUsageRowInjected } from './setting
 import { PerformanceUsagePolicy } from './performance-usage.ts'
 import { useTurnDataValue } from './chat/use-turn-data.ts'
 import { bindDisclosure } from './chat/use-disclosure.ts'
+import { ChatNavigationService } from './chat/chat-navigation-service.ts'
 
 const CHAT_NODE_INJECT: ChatNodeInjected = {
   hooks: {
@@ -64,6 +65,9 @@ export const inject = [
  * @param ctx - Client root context.
  */
 export function apply(ctx: Context): void {
+  const chatNavigation = new ChatNavigationService()
+  ctx.provide('chatNavigation', chatNavigation)
+  ctx.effect(() => () => { chatNavigation.dispose() }, 'ui-chat: exact navigation')
   const quotaNotice = createSnapshotStore<QuotaNoticeState | null>(null)
   let quotaNoticeSeq = 0
   // Each hold is its own token, so a release can only drop the hold it was
@@ -235,6 +239,7 @@ export function apply(ctx: Context): void {
           },
           loadOlder: () => { void session.loadOlder() },
           loadThrough: seq => session.loadThrough(seq),
+          registerChatNavigation: listener => chatNavigation.register(sessionId, listener),
           loadImage: Object.assign(
             (attachment: ImageAttachmentRef) => ctx.uiConversation.imageUrl(sessionId, attachment),
             { peek: (attachment: ImageAttachmentRef) => ctx.uiConversation.peekImageUrl(sessionId, attachment) },

@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BotGrokHistoryArchive, BotGrokHistoryView } from '@yharness/bots/client'
 import { makeTranslate } from '@yharness/client-test-runtime'
-import { GrokHistoryAction } from '../src/client/GrokHistoryAction.tsx'
+import { BotDetail } from '../src/client/BotWorkspace.tsx'
 import { en } from '../src/client/locales.ts'
 
 afterEach(cleanup)
@@ -70,16 +70,43 @@ const attachmentArchive = {
   ],
 } as const satisfies BotGrokHistoryView
 
-describe('GrokHistoryAction', () => {
+function renderHistory(botId: string, read: (id: string) => Promise<BotGrokHistoryView | null>) {
+  return render(<BotDetail bot={{ id: botId, name: 'Grok', accent: 'blue', identity: 'round' }}
+    loading={false} loadAvatar={undefined} children={null} readGrokHistory={read} t={t} />)
+}
+
+function openHistory(): void {
+  fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
+  fireEvent.click(screen.getByRole('menuitem', { name: en.grokHistory }))
+}
+
+it('opens the active Bot chat search from Bot options without changing the session', () => {
+  const request = vi.fn<(event: Event) => void>()
+  globalThis.addEventListener('yharness:bot-find-chat', request)
+  try {
+    render(<BotDetail bot={{ id: 'bot-one', name: 'Grok', accent: 'blue', identity: 'round' }}
+      sessionId="session-one" loading={false} loadAvatar={undefined} children={null} t={t} />)
+    fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.findInChat }))
+    expect(request).toHaveBeenCalledOnce()
+    const event = request.mock.calls[0]?.[0]
+    expect(event).toBeInstanceOf(CustomEvent)
+    expect((event as CustomEvent<{ sessionId: string }>).detail).toEqual({ sessionId: 'session-one' })
+  } finally {
+    globalThis.removeEventListener('yharness:bot-find-chat', request)
+  }
+})
+
+describe('Imported chat from Bot options', () => {
   it('loads and displays a valid version-one archive, then closes and reopens it', async () => {
     const read = vi.fn<(id: string) => Promise<BotGrokHistoryArchive>>().mockResolvedValue(versionOneArchive)
-    render(<GrokHistoryAction botId="bot-one" botName="Grok" read={read} t={t} />)
+    renderHistory('bot-one', read)
 
-    expect(screen.queryByRole('button', { name: en.grokHistory })).toBeNull()
-    const action = await screen.findByRole('button', { name: en.grokHistory })
+    expect(screen.queryByRole('dialog', { name: en.grokHistory })).toBeNull()
+    expect(read).not.toHaveBeenCalled()
+    openHistory()
     expect(read).toHaveBeenCalledWith('bot-one')
-
-    fireEvent.click(action)
+    await screen.findByText('Question from the first export')
     expect(screen.getByRole('dialog', { name: en.grokHistory })).toBeTruthy()
     expect(screen.getByText(en.grokHistoryRecovered)).toBeTruthy()
     expect(screen.getByText(en.grokHistoryYou)).toBeTruthy()
@@ -91,15 +118,16 @@ describe('GrokHistoryAction', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: en.close })[0]!)
     expect(screen.queryByRole('dialog', { name: en.grokHistory })).toBeNull()
-    fireEvent.click(action)
+    openHistory()
     expect(screen.getByRole('dialog', { name: en.grokHistory })).toBeTruthy()
   })
 
   it('switches between complete and partial version-two sources and resets to primary', async () => {
     const read = vi.fn<(id: string) => Promise<BotGrokHistoryArchive>>().mockResolvedValue(versionTwoArchive)
-    render(<GrokHistoryAction botId="bot-two" botName="Grok" read={read} t={t} />)
+    renderHistory('bot-two', read)
 
-    fireEvent.click(await screen.findByRole('button', { name: en.grokHistory }))
+    openHistory()
+    await screen.findByText(en.grokHistoryRecovered)
     expect(screen.getByText(en.grokHistoryRecovered)).toBeTruthy()
     expect(screen.getByRole('combobox', { name: en.grokHistorySource })).toBeTruthy()
     expect(screen.getByRole('option', { name: en.grokHistoryPrimary })).toBeTruthy()
@@ -134,7 +162,8 @@ describe('GrokHistoryAction', () => {
     fireEvent.change(source, { target: { value: 'gap' } })
     fireEvent.click(screen.getAllByRole('button', { name: en.close })[0]!)
     expect(screen.queryByRole('dialog', { name: en.grokHistory })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: en.grokHistory }))
+    openHistory()
+    await screen.findByText('Primary question')
     expect(screen.getByRole('combobox', { name: en.grokHistorySource })).toHaveProperty('value', 'primary')
     expect(screen.getByText(en.grokHistoryRecovered)).toBeTruthy()
     expect(screen.getByText('Primary question')).toBeTruthy()
@@ -142,10 +171,10 @@ describe('GrokHistoryAction', () => {
 
   it('offers verified attachment downloads scoped to the selected Bot, source, and position', async () => {
     const read = vi.fn<(id: string) => Promise<BotGrokHistoryArchive>>().mockResolvedValue(attachmentArchive)
-    render(<GrokHistoryAction botId="bot-attachment" botName="Grok" read={read} t={t} />)
+    renderHistory('bot-attachment', read)
 
-    fireEvent.click(await screen.findByRole('button', { name: en.grokHistory }))
-    const primaryDownload = screen.getByRole('link', { name: 'Download report.txt' })
+    openHistory()
+    const primaryDownload = await screen.findByRole('link', { name: 'Download report.txt' })
     expect(primaryDownload.getAttribute('href')).toBe(
       '/api/bots/grokHistory/downloadAttachment?botId=bot-attachment&sourceId=primary&sourceSequence=7',
     )
@@ -161,39 +190,70 @@ describe('GrokHistoryAction', () => {
     expect(screen.queryByRole('link', { name: 'Download report.txt' })).toBeNull()
   })
 
-  it('stays unavailable when the archive is absent or the reader fails', async () => {
+  it('filters recovered messages by text and author within the selected source', async () => {
+    const read = vi.fn<(id: string) => Promise<BotGrokHistoryArchive>>().mockResolvedValue(versionTwoArchive)
+    renderHistory('bot-two', read)
+    openHistory()
+
+    const search = await screen.findByRole('searchbox', { name: 'Search imported messages' })
+    fireEvent.change(search, { target: { value: '  OPERATOR  ' } })
+    expect(await screen.findByText('2 of 6 messages')).toBeTruthy()
+    expect(screen.getByText('Author-labelled answer')).toBeTruthy()
+    expect(screen.getByText('Bot-attributed answer')).toBeTruthy()
+    expect(screen.queryByText('Primary question')).toBeNull()
+
+    fireEvent.change(search, { target: { value: 'QUESTION' } })
+    expect(await screen.findByText('Primary question')).toBeTruthy()
+    fireEvent.change(screen.getByRole('combobox', { name: en.grokHistorySource }), { target: { value: 'gap' } })
+    expect(await screen.findByText('No matches in this source.')).toBeTruthy()
+    expect(screen.queryByText('Gap source answer')).toBeNull()
+    expect(screen.queryByText('Primary question')).toBeNull()
+
+    fireEvent.change(search, { target: { value: '' } })
+    expect(await screen.findByText('Gap source answer')).toBeTruthy()
+    fireEvent.change(search, { target: { value: 'unmatched' } })
+    await screen.findByText('No matches in this source.')
+    fireEvent.click(screen.getAllByRole('button', { name: en.close })[0]!)
+    openHistory()
+    expect(await screen.findByRole('searchbox', { name: 'Search imported messages' })).toHaveProperty('value', '')
+    expect(screen.getByText('Primary question')).toBeTruthy()
+  })
+
+  it('explains when the archive is absent or the reader fails', async () => {
     const unavailable = vi.fn<(id: string) => Promise<BotGrokHistoryArchive | null>>().mockResolvedValue(null)
-    const unavailableView = render(<GrokHistoryAction botId="missing" botName="Grok" read={unavailable} t={t} />)
-    await waitFor(() => { expect(unavailable).toHaveBeenCalledWith('missing') })
-    expect(screen.queryByRole('button', { name: en.grokHistory })).toBeNull()
+    const unavailableView = renderHistory('missing', unavailable)
+    openHistory()
+    expect(await screen.findByText(en.grokHistoryEmpty)).toBeTruthy()
     unavailableView.unmount()
 
     const failed = vi.fn<(id: string) => Promise<BotGrokHistoryArchive | null>>().mockRejectedValue(new Error('read failed'))
-    render(<GrokHistoryAction botId="failed" botName="Grok" read={failed} t={t} />)
-    await act(async () => { await Promise.resolve() })
-    expect(failed).toHaveBeenCalledWith('failed')
-    expect(screen.queryByRole('button', { name: en.grokHistory })).toBeNull()
+    renderHistory('failed', failed)
+    openHistory()
+    expect((await screen.findByRole('alert')).textContent).toBe(en.grokHistoryUnavailable)
   })
 
   it('ignores fulfilled and rejected reads that settle after unmount', async () => {
     const fulfilled = Promise.withResolvers<BotGrokHistoryArchive | null>()
     const staleSuccess = vi.fn<(id: string) => Promise<BotGrokHistoryArchive | null>>().mockReturnValue(fulfilled.promise)
-    const successView = render(<GrokHistoryAction botId="stale-success" botName="Grok" read={staleSuccess} t={t} />)
+    const successView = renderHistory('stale-success', staleSuccess)
+    openHistory()
+    expect(screen.getByRole('status', { name: en.grokHistoryLoading })).toBeTruthy()
     successView.unmount()
     await act(async () => {
       fulfilled.resolve(versionOneArchive)
       await fulfilled.promise
     })
-    expect(screen.queryByRole('button', { name: en.grokHistory })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: en.grokHistory })).toBeNull()
 
     const rejected = Promise.withResolvers<BotGrokHistoryArchive | null>()
     const staleFailure = vi.fn<(id: string) => Promise<BotGrokHistoryArchive | null>>().mockReturnValue(rejected.promise)
-    const failureView = render(<GrokHistoryAction botId="stale-failure" botName="Grok" read={staleFailure} t={t} />)
+    const failureView = renderHistory('stale-failure', staleFailure)
+    openHistory()
     failureView.unmount()
     await act(async () => {
       rejected.reject(new Error('late read failure'))
       await Promise.resolve()
     })
-    expect(screen.queryByRole('button', { name: en.grokHistory })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: en.grokHistory })).toBeNull()
   })
 })
