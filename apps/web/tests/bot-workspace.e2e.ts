@@ -47,8 +47,7 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
       name: 'Orbit', identity: 'goal', accent: 'amber', cwd: scaffold.workspaceCwd,
     })).bot
     await scaffold.ctx.bots.importGrokHistory({ botId: secondBot.id, document: JSON.stringify({
-      source: 'grok-bot', version: 2, firstCachedSequence: 0, complete: false, messages: [
-        { sourceSequence: 0, role: 'user', author: 'Archive owner', text: 'Recovered question', timestampMs: null },
+      source: 'grok-bot', version: 2, firstCachedSequence: 1, complete: false, messages: [
         { sourceSequence: 1, role: 'assistant', author: 'Original author', fromBot: 'Orbit historian', text: 'Recovered answer', timestampMs: 2000 },
         { sourceSequence: 2, role: 'tool', author: 'Archive tool', text: 'Recovered tool record', timestampMs: null, incomplete: true },
       ],
@@ -57,6 +56,11 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
           { sourceSequence: 3, role: 'agent', author: 'Recovered collaborator', text: 'Supplemental record', timestampMs: null },
         ],
       }],
+    }) })
+    await scaffold.ctx.bots.importGrokHistory({ botId: secondBot.id, document: JSON.stringify({
+      source: 'grok-bot', version: 2, firstCachedSequence: 0, complete: false, messages: [
+        { sourceSequence: 0, role: 'user', author: 'Archive owner', text: 'Recovered question', timestampMs: null },
+      ],
     }) })
     await scaffold.ctx.schedule.create(firstBot.sessionId, {
       title: 'Morning check-in', prompt: 'Review the project.', every_seconds: 86400,

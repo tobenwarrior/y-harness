@@ -96,7 +96,7 @@ The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so
 
 ### Imported Grok chat history
 
-Owner-imported Grok chat archives retain source order, roles, known timestamps, and available authorship. The owner uses `bots.importGrokHistory` to store an archive on an existing Bot. A repeat import is idempotent. Updates retain every recovered record and its known fields, and can add records or fill previously absent metadata. Version-two archives retain their version and every supplemental source's label, sequence coverage, and completeness markers. Imports write only the archive. The conversation header reads it through `bots.readGrokHistory`.
+Owner-imported Grok chat archives retain source order, roles, known timestamps, and available authorship. The owner uses `bots.importGrokHistory` to store an archive on an existing Bot. A repeat import is idempotent. Updates retain every recovered record and its known fields, and can add disjoint source-sequence fragments or fill previously absent metadata. Version-two archives retain their version and every supplemental source's label, sequence coverage, and completeness markers. Imports write only the archive. The conversation header reads it through `bots.readGrokHistory`.
 
 The Web owner can download verified files from **Imported Grok chat** when the Host has a private attachment vault. The Host checks the exact Bot, source, sequence, filename, and timestamp against the stored v2 archive, then verifies the SHA-256 digest when displaying availability and when opening the download. Missing or altered files stay unavailable. Vault metadata and bytes stay outside the archive and model-facing history.
 
