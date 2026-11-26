@@ -46,6 +46,7 @@ import * as ToolBashPersistent from '@yharness/tool-bash-persistent'
 import * as ToolPwshPersistent from '@yharness/tool-pwsh-persistent'
 import CordisHostRunner from '@yharness/cordis-host-runner'
 import * as ToolCordis from '@yharness/tool-cordis'
+import * as ToolLiveEdit from '@yharness/tool-cordis/live-edit'
 import * as ToolPresent from '@yharness/tool-present'
 import * as ToolFs from '@yharness/tool-fs'
 import * as ToolFsSearch from '@yharness/tool-fs-search'
@@ -316,15 +317,20 @@ const TOOL_PACKAGES: ToolPackage[] = [
   {
     pkg: '@yharness/tool-cordis',
     dir: 'tool-cordis',
-    source: 'packages/extensions/tool-cordis/src/index.ts',
-    requires: ['ctx.tools', 'ctx.cordisInspect'],
+    source: {
+      cordis_inspect_list: 'packages/extensions/tool-cordis/src/index.ts',
+      cordis_inspect_query: 'packages/extensions/tool-cordis/src/index.ts',
+      live_edit_ui: 'packages/extensions/tool-cordis/src/live-edit.ts',
+    },
+    requires: ['ctx.tools', 'ctx.cordisInspect', 'ctx.dynamicCordisRunner'],
     writes: ['tool/call', 'tool/result'],
     async mount(ctx) {
       await ctx.plugin(CordisHostRunner)
       await ctx.plugin(ToolCordis)
+      await ctx.plugin(ToolLiveEdit)
     },
     note:
-      'Creator mode provides two read-only runtime inspection tools. The Cordis host runner supplies the inspection registry; Client queries require a connected page. Author persistent changes as bundles and install them with plugin_manager.',
+      'The Cordis host runner supplies the inspection registry and Live Edit previews. Client queries require a connected page. Live Edit changes presentation through validated operations, with Keep and Undo in the open window.',
   },
   {
     pkg: '@yharness/tool-bash-persistent',

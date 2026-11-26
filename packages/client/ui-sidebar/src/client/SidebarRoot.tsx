@@ -56,6 +56,7 @@ function PanelRow({ id, label, wide, usePanelInfo, selectPanel, renderSlot }: Pa
         type="button"
         className={clsx(css.panelRow, active && css.panelActive)}
         data-yh-part="sidebar-nav-row"
+        data-yh-live-target={`sidebar-panel-${id}`}
         aria-label={label}
         aria-current={active ? 'page' : undefined}
         onClick={() => { selectPanel(id) }}
@@ -84,7 +85,7 @@ function SidebarModeSwitch({ botMode, wide, selectCodePanel, selectPanel, t }: {
   t: SidebarRootComponentProps['t']
 }) {
   return (
-    <div className={css.modeSwitch} role="group" aria-label={t('mode.label')}>
+    <div className={css.modeSwitch} data-yh-live-target="sidebar-modes" role="group" aria-label={t('mode.label')}>
       <Tooltip label={t('mode.code')} delayMs={500} disabled={wide}>
         <button
           type="button"
@@ -261,11 +262,12 @@ export function SidebarRoot({
             </span>
           )
           return darwinDesktop || botMode
-            ? <span className={clsx(css.brand, css.wide)}>{identity}</span>
+            ? <span className={clsx(css.brand, css.wide)} data-yh-live-target="sidebar-brand">{identity}</span>
             : (
               <button
                 type="button"
                 className={clsx(css.brand, css.wide)}
+                data-yh-live-target="sidebar-brand"
                 aria-label={t('session.new.label')}
                 aria-keyshortcuts={newShortcut?.aria}
                 onClick={() => { startSession() }}
@@ -327,7 +329,7 @@ export function SidebarRoot({
 
       {/* The browsing region fills the column between the controls and the
           foot in both states; its rail icon column rides the same slot. */}
-      <div className={css.regionArea}>
+      <div className={css.regionArea} data-yh-live-target="sidebar-workspaces">
         {botMode
           ? renderSlot('sidebar.bots', {
             wide,

@@ -1,5 +1,5 @@
 ---
-description: "Read-only runtime API discovery for agents developing and configuring installed Harness plugins."
+description: "Runtime API discovery for plugin development and reversible previews of the Y Harness interface."
 kind: "package-reference"
 ---
 
@@ -8,6 +8,8 @@ kind: "package-reference"
 ## Summary
 
 Inspect Host and Client runtime APIs before writing plugin code. Creator mode provides these read-only tools alongside Plugin Manager, which owns persistent profile changes. The inspection registry is supplied by the Cordis host runner; browser queries need a connected page.
+
+The Standard and Creator presets also expose `live_edit_ui` for an explicit request to edit the open interface. It can add plain-text UI, hide existing elements, and change spacing, color, corners, or flex order on supported targets. The tool previews the patch. **Keep** and **Undo** belong to the person using the window.
 
 ## Table of Contents
 
@@ -56,7 +58,7 @@ The [tool catalog](../../../docs/tool-catalog.md#yharnesstool-cordis) describes 
 
 #### Token effect
 
-Only the two tool schemas enter model requests while this plugin is visible. Query results append to the transcript; exact queries avoid loading unrelated declarations.
+The configured tool schemas enter model requests while their preset entries are visible. Inspection and preview receipts append to the transcript. Exact inspection queries avoid loading unrelated declarations.
 
 #### KV Cache effect
 

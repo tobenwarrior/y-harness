@@ -7,6 +7,29 @@ import type { Branded } from '@yharness/brand'
 import type { SessionId } from '@yharness/session/types'
 import type { JsonValue } from '@yharness/util-values'
 
+/** Stable renderer targets are the names of product-owned `data-yh-part` markers. */
+export type LiveEditOperation =
+  | { kind: 'hide'; target: string }
+  | { kind: 'add'; target: string; id: string; position: 'before' | 'after' | 'start' | 'end'; title: string; text?: string }
+  | { kind: 'style'; target: string; color?: string; background?: string; radius?: number; padding?: number; order?: number }
+
+/** Reversible UI customization proposed by one chat. */
+export interface LiveEditPatch {
+  title: string
+  operations: LiveEditOperation[]
+}
+
+/** Owner-visible state for the window's Live Edit controls. */
+export interface LiveEditState {
+  revision: string
+  kept?: LiveEditPatch
+  preview?: LiveEditPatch
+  canUndo: boolean
+}
+
+/** Owner actions on the exact revision displayed by the window. */
+export type LiveEditAction = 'keep' | 'undo'
+
 /** Stable identity of one dynamic plugin instance. */
 export type CordisDynamicPluginId = Branded<'CordisDynamicPluginId'>
 
@@ -387,6 +410,11 @@ declare module '@yharness/cordis' {
      * @mode emit
      */
     'cordis/dynamic-retract'(retracted: DynamicCordisRetracted): void
+    /**
+     * The private profile's Live Edit state changed and the open window should refresh.
+     * @mode emit
+     */
+    'cordis/live-edit-changed'(): void
     /**
      * Request a live read-only query from the Client inspect registry.
      * @param request - correlation, Session, provider, method, and JSON input.

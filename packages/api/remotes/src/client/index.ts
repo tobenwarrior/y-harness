@@ -145,6 +145,10 @@ export type {
   DynamicCordisRunResponse,
   DynamicCordisStopResponse,
   DynamicCordisUndefineReceipt,
+  LiveEditAction,
+  LiveEditOperation,
+  LiveEditPatch,
+  LiveEditState,
   RequestRunOutcome,
 } from '@yharness/cordis-host-runner/types'
 // Credential state vocabulary for the credentials namespace (values never ride it).

@@ -1,6 +1,6 @@
 {
   "name": "@yharness/tool-cordis",
-  "description": "Read-only runtime API inspection for Harness plugin development",
+  "description": "Runtime API inspection and reversible Y Harness interface previews",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
@@ -21,6 +21,10 @@
     "./host": {
       "types": "./lib/types/host.d.ts",
       "default": "./lib/types/host.js"
+    },
+    "./live-edit": {
+      "types": "./lib/types/live-edit.d.ts",
+      "default": "./lib/types/live-edit.js"
     },
     "./src/*": "./src/*",
     "./package.json": "./package.json"

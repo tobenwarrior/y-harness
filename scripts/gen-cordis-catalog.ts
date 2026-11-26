@@ -1131,6 +1131,8 @@ export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
   DynamicCordisDefineRequest: 'dynamic-package payload contract is owned by packages/extensions/cordis-host-runner/src/types.ts',
   DynamicCordisHostHalfResult: 'dynamic-package payload contract is owned by packages/extensions/cordis-host-runner/src/types.ts',
   DynamicCordisInventoryRow: 'dynamic-package payload contract is owned by packages/extensions/cordis-host-runner/src/types.ts',
+  LiveEditAction: 'Live Edit action is owned by packages/extensions/cordis-host-runner/src/types.ts',
+  LiveEditState: 'Live Edit state is owned by packages/extensions/cordis-host-runner/src/types.ts',
   DynamicCordisInvokeResult: 'dynamic-package payload contract is owned by packages/extensions/cordis-host-runner/src/types.ts',
   DynamicCordisPackageInspection: 'dynamic Package source inspection is owned by packages/extensions/cordis-host-runner/src/registry.ts',
   DynamicCordisPluginInspection: 'dynamic Plugin inspection is owned by packages/extensions/cordis-host-runner/src/registry.ts',

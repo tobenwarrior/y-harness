@@ -164,6 +164,8 @@
 
     - id: cordis-host-runner
       name: '@yharness/cordis-host-runner'
+      config:
+        liveEditFile: !!js "ctx.get('profileContext') ? process.getBuiltinModule('node:path').join(ctx.get('profileContext').dir, 'live-ui.json') : undefined"
 
     # The Host inspect providers are process-global: the registry rejects a
     # duplicate id, so they register here once and every preset's `tool-cordis`

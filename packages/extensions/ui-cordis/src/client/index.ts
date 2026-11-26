@@ -5,6 +5,7 @@ import type { SessionId } from '@yharness/session/types'
 import type {} from '@yharness/client-ui-tool/client'
 import type {} from '@yharness/client-locale/client'
 import type {} from '@yharness/client-ui-sidebar/client'
+import type {} from '@yharness/client-ui-layout/client'
 import type {} from '@yharness/api-remotes/client'
 import type {} from '@yharness/client-ui-renderer/client'
 import type {} from '@yharness/client-ui-session/client'
@@ -13,8 +14,11 @@ import { CordisActionRow } from './CordisActionRow.tsx'
 import { CordisDefineRow } from './CordisDefineRow.tsx'
 import { CordisRunRow } from './CordisRunRow.tsx'
 import { CordisPanel } from './CordisPanel.tsx'
+import { LiveEditBadge, LiveEditOverlay } from './LiveEditOverlay.tsx'
 import { createCordisInventory } from './inventory.ts'
 import { CordisRunCardRegistry } from './run-card-index.ts'
+import { createLiveEditController } from './live-edit-controller.ts'
+import { createLiveEditPreview } from './live-edit-preview.ts'
 import type { CordisDynamicPort } from './dynamic-port.ts'
 import type { CordisCardFace, CordisPanelFace, CordisRunCardFace } from './slots.ts'
 import { en, NS, zh } from './locales.ts'
@@ -66,6 +70,17 @@ export function apply(ctx: ClientContext): void {
   const runner = ctx.dynamicCordisRunner
   const loaded = { getSnapshot: () => runner.getSnapshot(), subscribe: (fn: () => void) => runner.subscribe(fn) }
   const runCards = new CordisRunCardRegistry()
+  const liveEdit = createLiveEditController(ctx, createLiveEditPreview(document))
+  ctx.effect(() => () => { liveEdit.dispose() }, 'ui-cordis: Live Edit preview')
+
+  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
+    name: 'sidebar.footer.action', id: 'live-edit', order: 45, locale: NS,
+    inject: () => liveEdit.face,
+  }, LiveEditBadge))
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay', id: 'live-edit.controls', order: 70, locale: NS,
+    inject: () => liveEdit.face,
+  }, LiveEditOverlay))
 
   ctx.effect(() => inventory.subscribe(() => {
     const snapshot = inventory.getSnapshot()

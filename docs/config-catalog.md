@@ -858,7 +858,7 @@ export interface ToolResultPruneConfig {
 ## `@yharness/cordis-host-runner`
 
 - `inject`: `tools`
-- `source`: [`packages/extensions/cordis-host-runner/src/index.ts:93`](../packages/extensions/cordis-host-runner/src/index.ts)
+- `source`: [`packages/extensions/cordis-host-runner/src/index.ts:94`](../packages/extensions/cordis-host-runner/src/index.ts)
 
 ```ts config-catalog
 /** Runner configuration. */
@@ -867,6 +867,8 @@ export interface Config {
   vmTimeoutMs?: number
   /** Maximum wait for a valid Client inspect response in milliseconds. */
   clientInspectTimeoutMs?: number
+  /** Optional private profile file retaining validated Live Edit changes. */
+  liveEditFile?: string | undefined
 }
 ```
 <!-- END GENERATED config-catalog:@yharness/cordis-host-runner -->

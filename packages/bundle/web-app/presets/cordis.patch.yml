@@ -158,6 +158,8 @@
               searchTimeoutMs: 60000
           - id: tool-cordis
             name: '@yharness/tool-cordis'
+          - id: tool-live-edit-ui
+            name: '@yharness/tool-cordis/live-edit'
           - id: skill-filesystem
             name: '@yharness/skill-filesystem'
             config:

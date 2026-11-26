@@ -71,6 +71,27 @@ Dynamic Plugin registry and Host-half lifecycle.
 
 ```ts cordis-catalog
 /**
+ * Stage a validated, reversible UI preview for the private profile.
+ * @param patch - JSON payload supplied by the model tool; validation happens here.
+ * @returns the new owner-visible state and revision.
+ */
+stageLiveEdit(patch: unknown): Promise<LiveEditState>
+
+/**
+ * Read the current Live Edit state for the private profile.
+ * @returns the current patch, preview, revision, and Undo availability.
+ */
+@Remote('liveEditState') liveEditState(): LiveEditState
+
+/**
+ * Apply a user-confirmed Keep or Undo against the exact displayed revision.
+ * @param action - User action from the Live Edit controls.
+ * @param revision - Exact state revision displayed by those controls.
+ * @returns the resulting owner-visible state.
+ */
+@Remote('applyLiveEdit') applyLiveEdit(action: LiveEditAction, revision: string): Promise<LiveEditState>
+
+/**
  * Define a new Plugin's first Package or append a Package to an existing Plugin.
  * @param request - Session ownership, Plugin selection, metadata, and source code.
  * @returns Host-minted Plugin and Package identities with declared-half metadata.
@@ -342,6 +363,22 @@ Notify every Client that an inspect query has settled or been cancelled.
  * @mode emit
  */
 'cordis/inspect-query-resolved'(resolved: CordisInspectQueryResolved): void
+```
+
+Source: [`packages/extensions/cordis-host-runner/src/types.ts`](../../packages/extensions/cordis-host-runner/src/types.ts)
+
+<a id="cordislive-edit-changed--emit"></a>
+
+#### `cordis/live-edit-changed` — emit
+
+The private profile's Live Edit state changed and the open window should refresh.
+
+```ts cordis-catalog
+/**
+ * The private profile's Live Edit state changed and the open window should refresh.
+ * @mode emit
+ */
+'cordis/live-edit-changed'(): void
 ```
 
 Source: [`packages/extensions/cordis-host-runner/src/types.ts`](../../packages/extensions/cordis-host-runner/src/types.ts)

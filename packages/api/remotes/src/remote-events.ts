@@ -8,6 +8,7 @@
 
 import type {} from '@yharness/api-session-controller/remote-events'
 import type {} from '@yharness/bots/types'
+import type {} from '@yharness/cordis-host-runner/types'
 import type {} from '@yharness/deepseek-account/types'
 import type {} from '@yharness/permission-presets/types'
 import type {} from '@yharness/plugin-manager/types'
@@ -37,6 +38,7 @@ export const API_REMOTE_FORWARDED_EVENTS = [
   { event: 'cordis/request-run-resolved', mode: 'emit' },
   { event: 'cordis/dynamic-package', mode: 'emit' },
   { event: 'cordis/dynamic-retract', mode: 'emit' },
+  { event: 'cordis/live-edit-changed', mode: 'emit' },
   { event: 'cordis/inspect-query', mode: 'emit' },
   { event: 'cordis/inspect-query-resolved', mode: 'emit' },
   { event: 'llm/adapters-updated', mode: 'emit' },

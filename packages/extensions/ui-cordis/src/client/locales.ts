@@ -55,6 +55,15 @@ export const zh = {
   'body.output': 'Result',
   'body.copy': 'Copy',
   'body.copied': 'Copied',
+  'liveEdit.title': 'Live Edit',
+  'liveEdit.previewing': 'Previewing changes',
+  'liveEdit.kept': 'Changes kept',
+  'liveEdit.working': 'Applying…',
+  'liveEdit.keep': 'Keep',
+  'liveEdit.undo': 'Undo',
+  'liveEdit.failed': 'Could not update the interface: {message}',
+  'liveEdit.badge.preview': 'Live Edit preview',
+  'liveEdit.badge.kept': 'Live Edit changes',
 } satisfies Record<string, string>
 
 /** Translation keys owned by the Cordis UI namespace. */
@@ -120,4 +129,13 @@ export const en = {
   'body.output': 'Result',
   'body.copy': 'Copy',
   'body.copied': 'Copied',
+  'liveEdit.title': 'Live Edit',
+  'liveEdit.previewing': 'Previewing changes',
+  'liveEdit.kept': 'Changes kept',
+  'liveEdit.working': 'Applying…',
+  'liveEdit.keep': 'Keep',
+  'liveEdit.undo': 'Undo',
+  'liveEdit.failed': 'Could not update the interface: {message}',
+  'liveEdit.badge.preview': 'Live Edit preview',
+  'liveEdit.badge.kept': 'Live Edit changes',
 } satisfies Record<CordisKey, string>

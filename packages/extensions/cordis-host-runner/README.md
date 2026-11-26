@@ -40,6 +40,10 @@ Mount this plugin for the inspection registry or programmatic dynamic-package li
 
 The generated [configuration catalog](../../../docs/config-catalog.md#yharnesscordis-host-runner) is the exhaustive source for every accepted field.
 
+### Live Edit
+
+The runner validates and previews structured edits to the open interface. The owner chooses Keep or Undo from the Client with the revision shown in the UI. `liveEditFile` optionally saves kept edits and the previous kept layout to a private profile file. The shipped Web profile enables this storage.
+
 <a id="client-inspection"></a>
 ### Client inspection
 

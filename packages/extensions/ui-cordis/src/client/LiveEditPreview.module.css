@@ -1,0 +1,27 @@
+.addition {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--yh-alias-state-info-primary) 24%, var(--yh-alias-border-l2));
+  border-radius: var(--yh-radius-control);
+  color: var(--yh-alias-label-primary);
+  background: color-mix(in srgb, var(--yh-alias-bg-layer-2) 92%, var(--yh-alias-state-info-primary));
+}
+
+.title {
+  overflow-wrap: anywhere;
+  color: var(--yh-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.text {
+  overflow-wrap: anywhere;
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 17px;
+}

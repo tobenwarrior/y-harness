@@ -24,7 +24,7 @@ This table connects model-visible tool names to the plugin package and service s
 | `@yharness/tool-bash` | `bash` | `ctx.tools`, `ctx.shell`, `ctx.systemPrompt`, `ctx.shellEnv`, `ctx.jobs for run_in_background and the job-backed foreground path` | `tool/call`, `tool/result` | - | The bash tool is the model-facing consumer of the bash executor seam. With a job registry composed every call registers with the generic `ctx.jobs` runtime as it starts, collected/stopped through the `job_*` tools from `@yharness/tool-jobs`; without one, or with `enableRunInBackground: false`, the tool registers a foreground-only schema without the `run_in_background` parameter. |
 | `@yharness/tool-present` | `present` | `ctx.tools`, `ctx.fs`, `ctx.sessionProjections` | `tool/call`, `deliverables/presented after a successful final result`, `tool/result` | - | Deliveries belong to the calling Session; Web ui-deliverables supplies source-file opening and cards. |
 | `@yharness/tool-pwsh` | `pwsh` | `ctx.tools`, `ctx.shell`, `ctx.systemPrompt`, `ctx.shellEnv`, `ctx.jobs for run_in_background and the job-backed foreground path` | `tool/call`, `tool/result` | - | The pwsh tool is the PowerShell-dialect consumer of the bash executor seam for Windows compositions (a PowerShell executor such as `@yharness/pwsh-local` backs `ctx.shell`); it mirrors the bash tool call-for-call minus sandbox controls — `run_in_background` runs register with the generic `ctx.jobs` runtime and are collected/stopped through the `job_*` tools, and the managed `DSH_*` environment comes from `@yharness/shell-env`. Each call runs in a fresh process (no persistent PTY session), with native `C:\...` paths and `$env:NAME` variables. |
-| `@yharness/tool-cordis` | `cordis_inspect_list`, `cordis_inspect_query` | `ctx.tools`, `ctx.cordisInspect` | `tool/call`, `tool/result` | - | Creator mode provides two read-only runtime inspection tools. The Cordis host runner supplies the inspection registry; Client queries require a connected page. Author persistent changes as bundles and install them with plugin_manager. |
+| `@yharness/tool-cordis` | `cordis_inspect_list`, `cordis_inspect_query`, `live_edit_ui` | `ctx.tools`, `ctx.cordisInspect`, `ctx.dynamicCordisRunner` | `tool/call`, `tool/result` | - | The Cordis host runner supplies the inspection registry and Live Edit previews. Client queries require a connected page. Live Edit changes presentation through validated operations, with Keep and Undo in the open window. |
 | `@yharness/tool-bash-persistent` | `bash` | `ctx.tools`, `ctx.terminals`, `an owning Agent at execution time` | `tool/call`, `PTY shell state`, `tool/result` | - | One owner-isolated persistent bash tool; deployment composition supplies the PTY backend and may override the model-facing environment description. |
 | `@yharness/tool-pwsh-persistent` | `pwsh` | `ctx.tools`, `ctx.terminals`, `an owning Agent at execution time` | `tool/call`, `PTY shell state`, `tool/result` | - | One owner-isolated persistent pwsh tool, the Windows counterpart of the persistent bash tool; deployment composition supplies a pwsh-dialect PTY backend and may override the model-facing environment description. |
 | `@yharness/tool-str-replace-editor` | `str_replace_editor` | `ctx.tools`, `ctx.fs` | `tool/call`, `fs/observed after view presence/absence, edit absence, or successful mutation`, `tool/result` | - | Standalone view/create/unique literal replace/line insert tool over the filesystem seam; it composes with any shell or terminal API. |
@@ -779,7 +779,35 @@ Run a read-only query declared by an Inspect Provider. platform, provider, and m
 
 Source: [`packages/extensions/tool-cordis/src/index.ts`](../packages/extensions/tool-cordis/src/index.ts)
 
-Creator mode provides two read-only runtime inspection tools. The Cordis host runner supplies the inspection registry; Client queries require a connected page. Author persistent changes as bundles and install them with plugin_manager.
+### `live_edit_ui`
+
+Preview reversible changes to the open Y Harness interface without restarting. Use only when the user explicitly asks to change the app UI. Inspect before previewing to see the current patch and supported targets. A preview replaces the previous patch, so include earlier edits the user wants to keep. The window offers Keep and Undo, which only the user can select.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "Inspect the current patch or preview a complete new one.",
+      "enum": [
+        "inspect",
+        "preview"
+      ]
+    },
+    "patch": {
+      "description": "For preview, provide {title, operations}. Operations: {kind:\"hide\",target}; {kind:\"add\",target,id,position:\"before\"|\"after\"|\"start\"|\"end\",title,text?}; {kind:\"style\",target,color?,background?,radius?,padding?,order?}. Colors are six-digit hex strings. Radius and padding are pixels. Targets are exact UI marker names, not CSS selectors. Added content is plain text."
+    }
+  },
+  "required": [
+    "action"
+  ]
+}
+```
+
+Source: [`packages/extensions/tool-cordis/src/live-edit.ts`](../packages/extensions/tool-cordis/src/live-edit.ts)
+
+The Cordis host runner supplies the inspection registry and Live Edit previews. Client queries require a connected page. Live Edit changes presentation through validated operations, with Keep and Undo in the open window.
 
 <a id="yharnesstool-bash-persistent"></a>
 

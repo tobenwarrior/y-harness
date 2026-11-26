@@ -4952,6 +4952,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'resolved', description: 'exact query identity that is no longer answerable.' }],
   },
   {
+    name: 'cordis/live-edit-changed',
+    mode: 'emit',
+    signature: '\'cordis/live-edit-changed\'(): void',
+    summary: 'The private profile\'s Live Edit state changed and the open window should refresh.',
+    description: 'The private profile\'s Live Edit state changed and the open window should refresh.',
+    parameters: [],
+  },
+  {
     name: 'cordis/request-run',
     mode: 'emit',
     signature: '\'cordis/request-run\'(request: DynamicCordisRunRequest): void',

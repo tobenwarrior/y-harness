@@ -19,6 +19,7 @@ import { TypertRemoteService, Remote } from '@yharness/typert-protocol'
 import type { JsonValue } from '@yharness/util-values'
 import { isPlugin, normalizeHandler } from './guard.ts'
 import { CordisInspectRegistryService } from './inspect-registry.ts'
+import { LiveEditStore } from './live-edit.ts'
 import { missingServices, startHostHalf } from './lifecycle.ts'
 import { DynamicCordisRegistry } from './registry.ts'
 import type {
@@ -34,7 +35,7 @@ import type {
   CordisInspectRequestId, CordisInspectResolveAck, DynamicCordisClientSource, DynamicCordisHostHalfResult,
   DynamicCordisInventoryRow, DynamicCordisInvokeResult, DynamicCordisRenderFailure, DynamicCordisResolveAck,
   DynamicCordisRunAttempt, DynamicCordisRunResolution, DynamicCordisRunResponse, DynamicCordisStopResponse,
-  DynamicCordisUndefineReceipt, RequestRunOutcome,
+  DynamicCordisUndefineReceipt, LiveEditAction, LiveEditState, RequestRunOutcome,
 } from './types.ts'
 
 export type * from './types.ts'
@@ -95,6 +96,8 @@ export interface Config {
   vmTimeoutMs?: number
   /** Maximum wait for a valid Client inspect response in milliseconds. */
   clientInspectTimeoutMs?: number
+  /** Optional private profile file retaining validated Live Edit changes. */
+  liveEditFile?: string | undefined
 }
 
 type ResolvedConfig = Required<Config>
@@ -134,11 +137,13 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
   static Config: z<Config> = z.object({
     vmTimeoutMs: z.number().min(1).default(5000),
     clientInspectTimeoutMs: z.number().step(1).min(1).max(2_147_483_647).default(10_000),
+    liveEditFile: z.union([z.string().min(1).max(4096), z.const(undefined)]),
   })
 
   private readonly rootCtx: Context
   private readonly registry = new DynamicCordisRegistry()
   private readonly inspectRegistry: CordisInspectRegistryService
+  private readonly liveEdits: LiveEditStore
   private readonly starting = new Map<CordisDynamicPluginId, Promise<DynamicCordisHostHalfResult>>()
   private readonly resolved: ResolvedConfig
   private group: Fiber | undefined
@@ -149,6 +154,38 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     this.rootCtx = ctx
     this.resolved = config as ResolvedConfig
     this.inspectRegistry = new CordisInspectRegistryService(ctx, this.resolved.clientInspectTimeoutMs)
+    this.liveEdits = new LiveEditStore(config.liveEditFile, () => {
+      this.rootCtx.emit('cordis/live-edit-changed')
+    })
+  }
+
+  /**
+   * Stage a validated, reversible UI preview for the private profile.
+   * @param patch - JSON payload supplied by the model tool; validation happens here.
+   * @returns the new owner-visible state and revision.
+   */
+  stageLiveEdit(patch: unknown): Promise<LiveEditState> {
+    return this.liveEdits.stage(patch)
+  }
+
+  /**
+   * Read the current Live Edit state for the private profile.
+   * @returns the current patch, preview, revision, and Undo availability.
+   */
+  @Remote('liveEditState')
+  liveEditState(): LiveEditState {
+    return this.liveEdits.state()
+  }
+
+  /**
+   * Apply a user-confirmed Keep or Undo against the exact displayed revision.
+   * @param action - User action from the Live Edit controls.
+   * @param revision - Exact state revision displayed by those controls.
+   * @returns the resulting owner-visible state.
+   */
+  @Remote('applyLiveEdit')
+  applyLiveEdit(action: LiveEditAction, revision: string): Promise<LiveEditState> {
+    return this.liveEdits.apply(action, revision)
   }
 
   /**

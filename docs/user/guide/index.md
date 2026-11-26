@@ -20,6 +20,10 @@ Start a session and send:
 
 The agent can read and edit workspace files, run commands, delegate work, and maintain a plan. The Web UI asks before operations that require approval under the active permission policy.
 
+## Edit the open interface
+
+In a private Standard or Creator session, ask for a change such as “Hide Skills from my sidebar and add a note labeled Release checklist under Y Harness.” Live Edit previews additions, removals, and visual adjustments to supported interface elements while you stay in the current session. Select **Keep** to save the layout to your profile, or **Undo** to discard the preview or revert the last saved edit. If your system reduces motion, layout changes appear immediately.
+
 ## Let a bot use your Mac
 
 In the Mac workspace, choose **Bots**, open a bot, and select **Computer**. Open the two permission pages from the panel. Enable Y Harness under **Screen & System Audio Recording** for screenshots and **Device Control and Data Access** for mouse and keyboard input. Earlier macOS versions call the second permission **Accessibility**. Reopen Y Harness if macOS asks, then choose **Share this Mac** and confirm.

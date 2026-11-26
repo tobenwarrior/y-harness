@@ -19,6 +19,8 @@
               maxBytes: 65536
           - id: time-context
             name: '@yharness/time-context'
+          - id: tool-live-edit-ui
+            name: '@yharness/tool-cordis/live-edit'
           - id: tool-bash
             name: '@yharness/tool-bash'
             disabled: !!js process.platform === 'win32'

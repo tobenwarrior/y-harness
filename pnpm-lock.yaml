@@ -9146,6 +9146,9 @@ importers:
       '@yharness/client-locale':
         specifier: workspace:*
         version: link:../../client/locale
+      '@yharness/client-ui-layout':
+        specifier: workspace:*
+        version: link:../../client/ui-layout
       '@yharness/client-ui-primitives':
         specifier: workspace:*
         version: link:../../client/ui-primitives

@@ -9,6 +9,8 @@ kind: "package-reference"
 
 `dsh-client-ui-cordis` renders historical generated-plugin cards and a control panel for process-local definitions. Users can operate definitions supplied by programmatic consumers; persisted cards remain readable after restart without recreating those definitions. New Creator plugins use Plugin Manager.
 
+Live Edit displays previews proposed from the current chat and gives the user **Keep** and **Undo** in the same window. Changes apply to the visible interface, respect reduced motion, and leave the chat open. Kept changes are stored with the Host profile and applied when the window opens again. [Live Edit tool](../tool-cordis/README.md)
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)
@@ -23,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## Use this package
 
-Compose this package with the Host and Client runners to render historical tool cards and operate programmatically registered definitions in the panel. New agent-authored plugins use Plugin Manager; this package exposes no model mutation tools.
+Compose this package with the Host and Client runners to render historical tool cards and operate programmatically registered definitions in the panel. Ask for a change such as “Hide Skills in the sidebar and add a note under the Y Harness title.” Use **Keep** to save the preview or **Undo** to return to the previous appearance. Review controls live outside the edited area.
 
 ### What the panel shows
 
