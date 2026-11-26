@@ -1,9 +1,35 @@
 /** Browser geometry for settings, expanded plugin dialogs, and their menus under Windows caption markers. */
 import { fileURLToPath } from 'node:url'
+import { readFile } from 'node:fs/promises'
 import { chromium } from 'playwright'
 import { expect, it } from 'vitest'
 import { launchWebScaffold, watchConsole } from './scaffold.ts'
 import { openSettings, ZH_BROWSER_LOCALE } from './support.ts'
+
+it('boots the Cloud workspace with native caption clearance and browser shortcuts', async () => {
+  const preload = await readFile(new URL('../../desktop/lib/preload-cloud-workspace.cjs', import.meta.url), 'utf8')
+  const scaffold = await launchWebScaffold({})
+  try {
+    const browser = await chromium.launch()
+    try {
+      const page = await browser.newPage({ viewport: { width: 1000, height: 700 }, locale: 'en' })
+      await page.addInitScript({ content: `(() => {
+        const require = () => ({ ipcRenderer: { on() {} } });
+        const process = { platform: 'darwin' };
+        const exports = {};
+        ${preload}
+      })()` })
+      await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+      expect(await page.locator('html').getAttribute('data-platform')).toBeNull()
+      const frame = page.locator('[data-yh-part="frame"]')
+      await frame.waitFor()
+      expect((await frame.boundingBox())?.y).toBe(36)
+      await page.evaluate(() => { document.documentElement.dataset.fullscreen = 'true' })
+      expect((await frame.boundingBox())?.y).toBe(0)
+      expect(await page.getByRole('button', { name: 'New session', exact: true }).first().isVisible()).toBe(true)
+    } finally { await browser.close() }
+  } finally { await scaffold.close() }
+})
 
 it('keeps settings and expanded plugin dialogs clear of the Windows caption across fullscreen transitions', async () => {
   const scaffold = await launchWebScaffold({

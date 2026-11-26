@@ -1,13 +1,30 @@
-/** Expose native window geometry to the isolated Cloud document through DOM attributes. */
+/** Reserve space for the macOS caption in the isolated Cloud Web document. */
 
-import { markDocumentPlatform, syncWindowFullscreen } from './preload-platform.ts'
+import { syncWindowFullscreen } from './preload-platform.ts'
 
-markDocumentPlatform()
 syncWindowFullscreen()
 
-// The Cloud view sits over the local renderer. Its background must cover that view in both palettes.
-const paintBackground = (): void => {
-  document.body.style.backgroundColor = 'var(--yh-alias-bg-base, var(--dsh-boot-bg, Canvas))'
+// The Cloud document uses Web shortcuts and has no native keyboard bridge.
+const installCaption = (): void => {
+  const style = document.createElement('style')
+  style.textContent = `
+    html { --yh-cloud-caption-height: 36px; --dsh-frame-overlay-top: calc(20px + var(--yh-cloud-caption-height)); }
+    html[data-fullscreen] { --yh-cloud-caption-height: 0px; }
+    html body {
+      box-sizing: border-box;
+      padding-block-start: var(--yh-cloud-caption-height);
+      background-color: var(--yh-alias-bg-base, var(--dsh-boot-bg, Canvas));
+    }
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0 0 auto;
+      height: var(--yh-cloud-caption-height);
+      pointer-events: none;
+      -webkit-app-region: drag;
+    }
+  `
+  document.head.append(style)
 }
-if (document.body === null) window.addEventListener('DOMContentLoaded', paintBackground, { once: true })
-else paintBackground()
+if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', installCaption, { once: true })
+else installCaption()

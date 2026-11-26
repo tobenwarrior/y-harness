@@ -53,10 +53,11 @@ describe.skipIf(!existsSync(preload('preload-app')))('built sandboxed Desktop pr
   it('shares the macOS caption layout with Cloud without exposing a desktop bridge', () => {
     const browser = browserEnvironment()
     const ipcRenderer = new EventEmitter()
-    const body = { style: { backgroundColor: '' } }
+    const sheet = { textContent: '' }
+    const head = { append: vi.fn() }
     runInNewContext(readFileSync(preload('preload-cloud-workspace'), 'utf8'), {
       ...browser.globals,
-      document: { ...browser.globals.document, body },
+      document: { ...browser.globals.document, head, createElement: () => sheet },
       require: (id: string) => {
         if (id !== 'electron') throw new Error(`sandbox cannot load ${id}`)
         return { ipcRenderer }
@@ -65,12 +66,14 @@ describe.skipIf(!existsSync(preload('preload-app')))('built sandboxed Desktop pr
       exports: {},
     })
     const { dataset } = browser.globals.document.documentElement
-    expect(dataset).toEqual({ platform: 'darwin' })
-    expect(body.style.backgroundColor).toBe('var(--yh-alias-bg-base, var(--dsh-boot-bg, Canvas))')
+    browser.loadTheme('dark')
+    expect(head.append).toHaveBeenCalledWith(sheet)
+    expect(sheet.textContent).toContain('-webkit-app-region: drag')
+    expect(dataset).toEqual({})
     ipcRenderer.emit('dsh-desktop:window-fullscreen', {}, true)
     expect(dataset.fullscreen).toBe('true')
     ipcRenderer.emit('dsh-desktop:window-fullscreen', {}, false)
-    expect(dataset).toEqual({ platform: 'darwin' })
+    expect(dataset).toEqual({})
   })
 
   it.each(['preload-app', 'preload-welcome'])('%s loads without filesystem module access', async (name) => {
