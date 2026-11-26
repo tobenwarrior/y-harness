@@ -919,8 +919,8 @@ describe('desktop main startup', () => {
     if (platform === 'darwin') {
       const workspace = template.find(item => item.label === en.cloudWorkspace)
       expect(workspace?.submenu).toEqual([
-        expect.objectContaining({ label: en.cloudOpenMac }),
-        expect.objectContaining({ label: en.cloudOpen }),
+        expect.objectContaining({ label: en.cloudSettings }),
+        expect.objectContaining({ label: en.cloudVault }),
       ])
     }
     const application = template[0]!.submenu as MenuItemConstructorOptions[]

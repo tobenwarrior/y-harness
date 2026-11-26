@@ -6,22 +6,25 @@ it('accepts workspace actions only from the private control document', () => {
   expect(cloudAction('https://workspace.invalid/connect?target=fixture-host')).toEqual({
     type: 'connect', target: 'fixture-host',
   })
-  expect(cloudAction('https://workspace.invalid/mac')).toEqual({ type: 'mac' })
-  expect(cloudAction('https://workspace.invalid/vault')).toEqual({ type: 'vault' })
+  expect(cloudAction('https://workspace.invalid/cancel')).toEqual({ type: 'cancel' })
+  expect(cloudAction('https://workspace.invalid/retry')).toEqual({ type: 'retry' })
+  expect(cloudAction('https://workspace.invalid/mac')).toBeUndefined()
+  expect(cloudAction('https://workspace.invalid/vault')).toBeUndefined()
   expect(cloudAction('https://workspace.invalid/online')).toBeUndefined()
   expect(cloudAction('https://other.invalid/connect?target=fixture-host')).toBeUndefined()
   expect(cloudAction('https://name@workspace.invalid/mac')).toBeUndefined()
 })
 
-it('presents a workspace switch without a browser address or a server identifier', () => {
-  const url = cloudDocument(en, 'online')
-  const markup = decodeURIComponent(url.split(',')[1]!)
-  expect(markup).toContain('>Mac<')
-  expect(markup).toContain('>Cloud<')
-  expect(markup).toContain('Connected')
-  expect(markup).toContain('href="https://workspace.invalid/vault"')
-  expect(markup).toContain('aria-label="Vault"')
-  expect(markup).not.toMatch(/127\.0\.0\.1|token=|name="target"/u)
+it('renders setup and recovery without a workspace toolbar', () => {
+  const setup = decodeURIComponent(cloudDocument(en, 'setup').split(',')[1]!)
+  expect(setup).toContain('name="target"')
+  expect(setup).toContain('href="https://workspace.invalid/cancel"')
+  const recovery = decodeURIComponent(cloudDocument(en, 'reconnecting').split(',')[1]!)
+  expect(recovery).toContain(en.cloudReconnecting)
+  expect(recovery).toContain('href="https://workspace.invalid/retry"')
+  for (const markup of [setup, recovery]) {
+    expect(markup).not.toMatch(/<header|<nav|workspace.invalid\/(mac|vault)|127\.0\.0\.1|token=/u)
+  }
 })
 
 it('limits remote traffic to the tunnel and its matching WebSocket port', () => {

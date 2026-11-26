@@ -139,6 +139,7 @@ export function createElectronBuilderConfig(
       'lib/welcome/**/*',
       'lib/preload-app.cjs',
       'lib/preload-cloud-vault.cjs',
+      'lib/preload-cloud-workspace.cjs',
       'lib/preload-mandatory.cjs',
       'lib/preload-platform-account.cjs',
       'lib/preload-update-dialog.cjs',

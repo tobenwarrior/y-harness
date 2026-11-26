@@ -1,6 +1,7 @@
 /** Native desktop view of the private VPS workspace. */
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { writeFileAtomic } from '@yharness/atomic-write'
 import { WebContentsView, session, type BrowserWindow, type Session } from 'electron'
 import { isCloudTarget, openCloudConnection, openCloudForward, type CloudConnection, type CloudForward } from './cloud-connection.ts'
@@ -15,24 +16,19 @@ import {
   type CloudWorkspaceStatus,
 } from './cloud-workspace-document.ts'
 import type { DesktopCloudVault } from './cloud-vault-window.ts'
+import { DESKTOP_IPC } from './ipc.ts'
 import type { DesktopMessages } from './locale.ts'
 
-const BAR_HEIGHT = 50
 const RETRY_MS = 5_000
 const MAX_RETRY_MS = 30_000
 const LOAD_TIMEOUT_MS = 20_000
 
-interface CloudPreference {
-  target: string
-  selected: boolean
-}
-
-function readPreference(file: string): CloudPreference | undefined {
+function readTarget(file: string): string | undefined {
   try {
     const value: unknown = JSON.parse(readFileSync(file, 'utf8'))
-    if (typeof value === 'object' && value !== null && 'target' in value && 'selected' in value
-      && typeof value.target === 'string' && isCloudTarget(value.target) && typeof value.selected === 'boolean') {
-      return { target: value.target, selected: value.selected }
+    if (typeof value === 'object' && value !== null && 'target' in value
+      && typeof value.target === 'string' && isCloudTarget(value.target)) {
+      return value.target
     }
   } catch {
     // A missing or unreadable preference opens Mac with Cloud setup available.
@@ -56,9 +52,10 @@ export class DesktopCloudWorkspace {
   private authenticated = false
   private readonly flights = new Set<Promise<void>>()
   private pending: AbortController | undefined
-  private saved: CloudPreference | undefined
+  private savedTarget: string | undefined
   private target: string | undefined
   private selected = false
+  private configuring = false
   private invalidTarget = false
   private status: CloudWorkspaceStatus = 'setup'
   private retry: NodeJS.Timeout | undefined
@@ -82,48 +79,36 @@ export class DesktopCloudWorkspace {
   attach(owner: BrowserWindow): void {
     if (this.owner === owner) return
     this.owner = owner
-    this.saved = readPreference(this.file)
-    this.target = this.saved?.target
+    this.savedTarget = readTarget(this.file)
+    this.target = this.savedTarget
     owner.on('resize', this.layout)
+    owner.on('enter-full-screen', this.syncFullscreen)
+    owner.on('leave-full-screen', this.syncFullscreen)
     owner.once('closed', this.onClosed)
-    if (this.saved?.selected === true) this.showCloud()
-  }
-
-  /** @returns Whether Cloud is covering the Mac workspace. */
-  isCloudSelected(): boolean { return this.selected }
-
-  /** Open Cloud or its first-time setup in the existing window. */
-  showCloud(): void {
-    if (this.owner === undefined) return
-    this.selected = true
-    this.onShowCloud?.()
-    if (this.saved !== undefined && !this.saved.selected) this.save(this.saved.target)
-    if (this.connection === undefined && this.pending === undefined && this.target !== undefined) {
+    if (this.target !== undefined) {
+      this.selected = true
+      this.onShowCloud?.()
       this.connect(this.target)
-      return
     }
+  }
+
+  /** @returns Whether Cloud or its settings cover the local workspace. */
+  isCloudSelected(): boolean { return this.selected || this.configuring }
+
+  /** Configure the server while keeping the current connection and chat open until submission. */
+  showSettings(): void {
+    if (this.owner === undefined) return
+    this.configuring = true
+    this.invalidTarget = false
+    this.onShowCloud?.()
     this.render()
   }
 
-  /** Return to the local workspace, preserving an open Cloud view for quick switching. */
-  showMac(): void {
-    this.vault.close()
-    this.selected = false
-    if (this.status !== 'online') {
-      this.stopConnection()
-      if (!this.remoteReady) this.dropRemote()
-      this.retryDelay = RETRY_MS
-    }
-    if (this.saved?.selected === true) this.save(this.saved.target)
-    this.render()
-    this.owner?.webContents.focus()
-  }
-
-  /** Open Vault for the active Cloud connection. */
-  showVault(): void {
+  /** Open Vault for the active Cloud connection. @returns Whether Vault opened. */
+  showVault(): boolean {
     const { connection, owner, remote, target } = this
-    if (!this.selected || this.status !== 'online' || connection === undefined || owner === undefined
-      || remote === undefined || target === undefined) return
+    if (!this.selected || this.configuring || this.status !== 'online' || connection === undefined || owner === undefined
+      || remote === undefined || target === undefined) return false
     const contents = remote.webContents
     this.vault.open(owner, target, { kind: 'manage' }, {
       origin: connection.origin,
@@ -132,6 +117,7 @@ export class DesktopCloudWorkspace {
         return contents.session.fetch(url, options)
       },
     })
+    return true
   }
 
   /**
@@ -142,8 +128,13 @@ export class DesktopCloudWorkspace {
     const owner = this.owner
     this.owner = undefined
     owner?.off('resize', this.layout)
+    owner?.off('enter-full-screen', this.syncFullscreen)
+    owner?.off('leave-full-screen', this.syncFullscreen)
     owner?.off('closed', this.onClosed)
     this.resetWorkspace(owner)
+    this.selected = false
+    this.configuring = false
+    this.status = 'setup'
     this.release(this.controls, owner)
     this.controls = undefined
     this.controlsDocument = undefined
@@ -151,9 +142,8 @@ export class DesktopCloudWorkspace {
   }
 
   private save(target: string): void {
-    const preference: CloudPreference = { target, selected: this.selected }
-    this.saved = preference
-    this.writes = this.writes.then(() => writeFileAtomic(this.file, JSON.stringify(preference) + '\n', {
+    this.savedTarget = target
+    this.writes = this.writes.then(() => writeFileAtomic(this.file, JSON.stringify({ target }) + '\n', {
       mode: 0o600, dirMode: 0o700,
     })).catch(() => { if (this.owner !== undefined) this.preferenceError() })
   }
@@ -161,8 +151,15 @@ export class DesktopCloudWorkspace {
   private layout = (): void => {
     if (this.owner === undefined || this.owner.isDestroyed()) return
     const { width, height } = this.owner.getContentBounds()
-    this.controls?.setBounds({ x: 0, y: 0, width, height: this.remoteReady ? BAR_HEIGHT : height })
-    this.remote?.setBounds({ x: 0, y: BAR_HEIGHT, width, height: Math.max(0, height - BAR_HEIGHT) })
+    this.controls?.setBounds({ x: 0, y: 0, width, height })
+    this.remote?.setBounds({ x: 0, y: 0, width, height })
+  }
+
+  private syncFullscreen = (): void => {
+    const { owner, remote } = this
+    if (owner !== undefined && !owner.isDestroyed() && remote !== undefined && !remote.webContents.isDestroyed()) {
+      remote.webContents.send(DESKTOP_IPC.windowFullscreen, owner.isFullScreen())
+    }
   }
 
   private release(view: WebContentsView | undefined, owner = this.owner): void {
@@ -174,9 +171,16 @@ export class DesktopCloudWorkspace {
   private render(): void {
     const owner = this.owner
     if (owner === undefined || owner.isDestroyed()) return
-    if (!this.selected) {
+    if (!this.isCloudSelected()) {
       this.controls?.setVisible(false)
       this.remote?.setVisible(false)
+      return
+    }
+    if (this.remoteReady && !this.configuring) {
+      this.controls?.setVisible(false)
+      this.layout()
+      this.remote?.setVisible(true)
+      if (this.status === 'online') this.remote?.webContents.focus()
       return
     }
     if (this.controls === undefined) {
@@ -194,26 +198,32 @@ export class DesktopCloudWorkspace {
         const action = cloudAction(url)
         if (action === undefined) return
         switch (action.type) {
-          case 'mac': this.showMac(); break
-          case 'vault': this.showVault(); break
-          case 'configure':
-            this.resetWorkspace()
-            this.target = undefined
-            this.invalidTarget = false
-            this.status = 'setup'
+          case 'cancel':
+            this.configuring = false
             this.render()
+            if (!this.selected) owner.webContents.focus()
             break
+          case 'configure': this.showSettings(); break
           case 'retry': if (this.target !== undefined) this.connect(this.target); break
           case 'connect':
             this.invalidTarget = !isCloudTarget(action.target)
             if (this.invalidTarget) this.render()
-            else this.connect(action.target)
+            else {
+              this.configuring = false
+              this.selected = true
+              if (action.target === this.target && (this.connection !== undefined || this.pending !== undefined)) {
+                this.render()
+              } else {
+                this.resetWorkspace()
+                this.connect(action.target)
+              }
+            }
             break
         }
       })
       owner.contentView.addChildView(controls)
     }
-    const document = cloudDocument(this.messages(), this.status, this.invalidTarget, this.remoteReady)
+    const document = cloudDocument(this.messages(), this.configuring ? 'setup' : this.status, this.invalidTarget)
     if (this.controlsDocument !== document) {
       this.controlsDocument = document
       void this.controls.webContents.loadURL(document).catch(() => {
@@ -222,8 +232,7 @@ export class DesktopCloudWorkspace {
     }
     this.layout()
     this.controls.setVisible(true)
-    this.remote?.setVisible(this.remoteReady)
-    if (this.status === 'online') this.remote?.webContents.focus()
+    this.remote?.setVisible(false)
   }
 
   private track(task: Promise<void>): void {
@@ -272,7 +281,7 @@ export class DesktopCloudWorkspace {
 
   private offline(): void {
     const target = this.target
-    if (this.selected && target !== undefined && target === this.saved?.target) {
+    if (this.selected && target !== undefined && target === this.savedTarget) {
       this.status = 'reconnecting'
       this.retry = setTimeout(() => {
         this.retry = undefined
@@ -300,10 +309,10 @@ export class DesktopCloudWorkspace {
     const owner = this.owner
     if (!this.selected || owner === undefined || owner.isDestroyed()
       || this.pending !== undefined || this.connection !== undefined) return
-    if (this.target !== target) this.resetWorkspace()
     this.clearRetry()
+    const reconnecting = this.target === target && this.status === 'reconnecting'
     this.target = target
-    this.status = this.status === 'reconnecting' ? 'reconnecting' : 'connecting'
+    this.status = reconnecting ? 'reconnecting' : 'connecting'
     const pending = new AbortController()
     this.pending = pending
     this.render()
@@ -344,7 +353,7 @@ export class DesktopCloudWorkspace {
 
       this.status = 'online'
       this.retryDelay = RETRY_MS
-      if (this.saved?.target !== target || this.saved.selected !== this.selected) this.save(target)
+      if (this.savedTarget !== target) this.save(target)
       this.render()
     } catch {
       // Raw SSH and Electron errors can contain the destination or sign-in URL.
@@ -375,10 +384,12 @@ export class DesktopCloudWorkspace {
 
     const remote = new WebContentsView({ webPreferences: {
       session: isolated, nodeIntegration: false, contextIsolation: true, sandbox: true, devTools: false,
+      preload: fileURLToPath(new URL('./preload-cloud-workspace.cjs', import.meta.url)),
     } })
     this.remote = remote
     remote.setVisible(false)
     const contents = remote.webContents
+    contents.on('did-finish-load', this.syncFullscreen)
     contents.setWindowOpenHandler(() => ({ action: 'deny' }))
     contents.on('will-frame-navigate', (event) => {
       if (!cloudRequestAllowed(origin, event.url)) event.preventDefault()

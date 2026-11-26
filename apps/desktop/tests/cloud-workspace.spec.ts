@@ -4,6 +4,7 @@ import { BrowserWindow } from 'electron'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { DesktopCloudWorkspace } from '../src/cloud-workspace.ts'
 import type { DesktopCloudVault } from '../src/cloud-vault-window.ts'
+import { DESKTOP_IPC } from '../src/ipc.ts'
 import { en } from '../src/locale.ts'
 
 type RequestHandler = (request: { url: string }, reply: (result: { cancel: boolean }) => void) => void
@@ -32,6 +33,7 @@ vi.mock('electron', () => ({
     readonly webContents = { focus: vi.fn() }
     readonly contentView = { addChildView: vi.fn(), removeChildView: vi.fn() }
     readonly isDestroyed = () => false
+    readonly isFullScreen = vi.fn(() => false)
     readonly getContentBounds = () => ({ width: 900, height: 700 })
   },
   WebContentsView: class {
@@ -41,6 +43,7 @@ vi.mock('electron', () => ({
       isDestroyed: vi.fn(() => false),
       close: vi.fn(),
       focus: vi.fn(),
+      send: vi.fn(),
       getUserAgent: vi.fn(() => 'Cloud workspace fixture'),
       setUserAgent: vi.fn(),
       setWindowOpenHandler: vi.fn(),
@@ -79,8 +82,10 @@ type FakeView = {
   readonly webContents: EventEmitter & {
     close: ReturnType<typeof vi.fn>
     loadURL: ReturnType<typeof vi.fn<(url: string) => Promise<void>>>
+    send: ReturnType<typeof vi.fn>
   }
   readonly setVisible: ReturnType<typeof vi.fn>
+  readonly setBounds: ReturnType<typeof vi.fn>
 }
 
 function view(index: number): FakeView {
@@ -89,6 +94,10 @@ function view(index: number): FakeView {
 function visibleControls(): string {
   const url = view(0).webContents.loadURL.mock.lastCall?.[0]
   return decodeURIComponent(url?.slice(url.indexOf(',') + 1) ?? '')
+}
+
+function choose(action: string): void {
+  view(0).webContents.emit('will-navigate', { preventDefault: vi.fn() }, 'https://workspace.invalid/' + action)
 }
 
 let workspace: DesktopCloudWorkspace
@@ -115,18 +124,25 @@ it('keeps the loaded Cloud chat across a failed reconnect and reauthenticates at
   const first = connection()
   const restored = connection()
   fixture.open.mockResolvedValueOnce(first.value).mockRejectedValueOnce(new Error('Offline')).mockResolvedValueOnce(restored.value)
-  workspace.attach(new BrowserWindow())
+  const owner = new BrowserWindow()
+  workspace.attach(owner)
   await vi.advanceTimersByTimeAsync(0)
-  expect(visibleControls()).toContain('Connected')
   const chat = view(1)
+  expect(view(0).setVisible).toHaveBeenLastCalledWith(false)
+  expect(chat.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 900, height: 700 })
+  chat.webContents.emit('did-finish-load')
+  expect(chat.webContents.send).toHaveBeenLastCalledWith(DESKTOP_IPC.windowFullscreen, false)
+  vi.spyOn(owner, 'isFullScreen').mockReturnValue(true)
+  owner.emit('enter-full-screen')
+  expect(chat.webContents.send).toHaveBeenLastCalledWith(DESKTOP_IPC.windowFullscreen, true)
 
   first.ended.resolve(undefined)
   await vi.advanceTimersByTimeAsync(5_000)
   expect(fixture.open).toHaveBeenCalledTimes(2)
   expect(chat.webContents.close).not.toHaveBeenCalled()
   expect(chat.setVisible).toHaveBeenLastCalledWith(true)
-  expect(visibleControls()).toContain('Reconnecting to Cloud')
-  workspace.showVault()
+  expect(view(0).setVisible).toHaveBeenLastCalledWith(false)
+  expect(workspace.showVault()).toBe(false)
   expect(fixture.vault.open).not.toHaveBeenCalled()
 
   const signedIn = Promise.withResolvers<undefined>()
@@ -144,30 +160,27 @@ it('keeps the loaded Cloud chat across a failed reconnect and reauthenticates at
   expect(fixture.views).toHaveLength(2)
   expect(chat.webContents.loadURL).toHaveBeenCalledExactlyOnceWith(ORIGIN + '/')
   expect(fetch).toHaveBeenCalledTimes(2)
-  expect(visibleControls()).toContain('Connected')
-  workspace.showVault()
+  expect(view(0).setVisible).toHaveBeenLastCalledWith(false)
+  expect(workspace.showVault()).toBe(true)
   expect(fixture.vault.open).toHaveBeenCalledOnce()
 })
 
-it('waits for a saved Cloud server on launch and stops retrying on Mac', async () => {
+it('opens and retries a saved server even when the old preference selected the Mac', async () => {
+  fixture.preference = JSON.stringify({ target: 'cloud-fixture', selected: false })
   const online = connection()
   fixture.open.mockRejectedValueOnce(new Error('Offline')).mockResolvedValueOnce(online.value)
   workspace.attach(new BrowserWindow())
   await vi.advanceTimersByTimeAsync(0)
-  expect(visibleControls()).toContain('Reconnecting to Cloud')
-
-  workspace.showMac()
-  await vi.advanceTimersByTimeAsync(60_000)
   expect(fixture.open).toHaveBeenCalledTimes(1)
-  expect(workspace.isCloudSelected()).toBe(false)
+  expect(visibleControls()).toContain('Reconnecting to Cloud')
+  expect(workspace.isCloudSelected()).toBe(true)
 
-  workspace.showCloud()
-  await vi.advanceTimersByTimeAsync(0)
+  await vi.advanceTimersByTimeAsync(5_000)
   expect(fixture.open).toHaveBeenCalledTimes(2)
-  expect(visibleControls()).toContain('Connected')
+  expect(view(0).setVisible).toHaveBeenLastCalledWith(false)
 })
 
-it('cancels the old retry and closes the old chat when the owner changes servers', async () => {
+it('keeps the existing chat while editing server settings and cancels retries for a replaced server', async () => {
   const first = connection()
   const initialForward = forward()
   const newOrigin = 'http://127.0.0.1:43191'
@@ -177,17 +190,24 @@ it('cancels the old retry and closes the old chat when the owner changes servers
   workspace.attach(new BrowserWindow())
   await vi.advanceTimersByTimeAsync(0)
   const chat = view(1)
+  workspace.showSettings()
+  expect(view(0).setVisible).toHaveBeenLastCalledWith(true)
+  expect(chat.setVisible).toHaveBeenLastCalledWith(false)
+  expect(initialForward.close).not.toHaveBeenCalled()
+  choose('cancel')
+  expect(chat.setVisible).toHaveBeenLastCalledWith(true)
+  expect(chat.webContents.close).not.toHaveBeenCalled()
   first.ended.resolve(undefined)
   await vi.advanceTimersByTimeAsync(0)
 
-  function choose(url: string) {
-    view(0).webContents.emit('will-navigate', { preventDefault: vi.fn() }, url)
-  }
-  choose('https://workspace.invalid/configure')
+  workspace.showSettings()
+  choose('connect?target=another-cloud')
   expect(initialForward.close).toHaveBeenCalledOnce()
   expect(chat.webContents.close).toHaveBeenCalledOnce()
-  choose('https://workspace.invalid/connect?target=another-cloud')
   await vi.advanceTimersByTimeAsync(30_000)
   expect(fixture.open.mock.calls.map(([target]) => target)).toEqual(['cloud-fixture', 'another-cloud'])
   expect(view(2).webContents.loadURL).toHaveBeenCalledExactlyOnceWith(newOrigin + '/')
+  expect(fixture.write).toHaveBeenCalledWith('cloud-preference.json', '{"target":"another-cloud"}\n', {
+    mode: 0o600, dirMode: 0o700,
+  })
 })

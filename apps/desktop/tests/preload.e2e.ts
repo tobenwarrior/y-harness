@@ -1,5 +1,6 @@
 /** Built preloads must execute with only Electron's sandbox-supported require. */
 import { existsSync, readFileSync } from 'node:fs'
+import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
@@ -49,6 +50,29 @@ function browserEnvironment() {
 }
 
 describe.skipIf(!existsSync(preload('preload-app')))('built sandboxed Desktop preloads', () => {
+  it('shares the macOS caption layout with Cloud without exposing a desktop bridge', () => {
+    const browser = browserEnvironment()
+    const ipcRenderer = new EventEmitter()
+    const body = { style: { backgroundColor: '' } }
+    runInNewContext(readFileSync(preload('preload-cloud-workspace'), 'utf8'), {
+      ...browser.globals,
+      document: { ...browser.globals.document, body },
+      require: (id: string) => {
+        if (id !== 'electron') throw new Error(`sandbox cannot load ${id}`)
+        return { ipcRenderer }
+      },
+      process: { platform: 'darwin' },
+      exports: {},
+    })
+    const { dataset } = browser.globals.document.documentElement
+    expect(dataset).toEqual({ platform: 'darwin' })
+    expect(body.style.backgroundColor).toBe('var(--yh-alias-bg-base, var(--dsh-boot-bg, Canvas))')
+    ipcRenderer.emit('dsh-desktop:window-fullscreen', {}, true)
+    expect(dataset.fullscreen).toBe('true')
+    ipcRenderer.emit('dsh-desktop:window-fullscreen', {}, false)
+    expect(dataset).toEqual({ platform: 'darwin' })
+  })
+
   it.each(['preload-app', 'preload-welcome'])('%s loads without filesystem module access', async (name) => {
     const exposed = new Map<string, Record<string, unknown>>()
     const invoke = vi.fn<(...args: unknown[]) => Promise<unknown>>(() => Promise.resolve({ languages: ['en-US'], preference: 'zh' }))

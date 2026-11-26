@@ -1096,8 +1096,12 @@ async function main(): Promise<void> {
     ? [shortcuts.fileMenu(currentDesktopLocale().messages), { role: 'editMenu' }, {
       label: currentDesktopLocale().messages.cloudWorkspace,
       submenu: [
-        { label: currentDesktopLocale().messages.cloudOpenMac, click: () => { cloudWorkspace?.showMac() } },
-        { label: currentDesktopLocale().messages.cloudOpen, click: () => { cloudWorkspace?.showCloud() } },
+        { label: currentDesktopLocale().messages.cloudSettings, click: () => { cloudWorkspace?.showSettings() } },
+        { label: currentDesktopLocale().messages.cloudVault, click: () => {
+          if (cloudWorkspace?.showVault() === false) {
+            void dialog.showMessageBox({ message: currentDesktopLocale().messages.cloudVaultConnectionRequired })
+          }
+        } },
       ],
     }, { role: 'windowMenu' }]
     : [{ role: 'editMenu' }]
