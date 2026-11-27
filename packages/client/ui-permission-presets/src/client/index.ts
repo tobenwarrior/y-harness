@@ -18,7 +18,7 @@
 import type { Context as ClientContext } from '@yharness/cordis'
 import type { SessionFace } from '@yharness/api-session-controller/client'
 import type { SessionId } from '@yharness/api-remotes/client'
-import type { PermissionCatalog, PermissionSelection } from '@yharness/permission-presets/client'
+import { isInteractivePermissionChat, type PermissionCatalog, type PermissionSelection } from '@yharness/permission-presets/client'
 // Direct dependency: catalog settlements are fenced by the actual connection
 // generation rather than by a parallel domain counter.
 import type {} from '@yharness/client-connection/client'
@@ -77,8 +77,9 @@ function optionsOf(
   catalog: PermissionCatalog,
   currentValue: string,
   t: TranslateNS<typeof PERMISSION_ACCESS_NS>,
+  shared: boolean,
 ): SelectOption[] {
-  return catalog.options
+  return (shared ? catalog.defaultOptions : catalog.options)
     .map(option => ({
       id: option.value,
       label: option.value === AUTO_REVIEW_PRESET
@@ -89,11 +90,11 @@ function optionsOf(
         ? { detail: t('auto.description') }
         : option.description !== undefined ? { detail: option.description } : {}),
       ...(option.value === currentValue ? { active: true } : {}),
-      ...(option.value === FULL_ACCESS_PRESET || option.value === AUTO_REVIEW_PRESET
+      ...(option.value === FULL_ACCESS_PRESET || option.value === AUTO_REVIEW_PRESET || option.unrestricted === true
         ? {
           confirmation: {
             title: t(option.value === AUTO_REVIEW_PRESET ? 'auto.confirm.title' : 'confirm.title'),
-            description: t(option.value === AUTO_REVIEW_PRESET ? 'auto.confirm.description' : 'confirm.description'),
+            description: t(option.value === AUTO_REVIEW_PRESET ? 'auto.confirm.description' : shared ? 'confirm.description.shared' : 'confirm.description'),
             acknowledgeLabel: t(option.value === AUTO_REVIEW_PRESET ? 'auto.confirm.acknowledge' : 'confirm.acknowledge'),
             cancelLabel: t('confirm.cancel'),
             confirmLabel: t(option.value === AUTO_REVIEW_PRESET ? 'auto.confirm.enable' : 'confirm.enable'),
@@ -121,6 +122,13 @@ export function apply(ctx: ClientContext): void {
   const submit = async (sessionId: SessionId, preset: string): Promise<boolean> => {
     const live = sessions.binding(sessionId)?.session
     if (live === undefined) throw new Error('this session is not materialized yet')
+    if (isInteractivePermissionChat(sessionId) && typeof (await catalog.load()).sharedPreset === 'string') {
+      await controller.load()
+      if (!await controller.select(preset)) {
+        throw new Error(controller.store.getSnapshot().error ?? t('shared.unavailable'))
+      }
+      return true
+    }
     const result = await live.command(`/permission ${preset}`)
     if (!result.ok) {
       throw new Error(`permission switch failed: ${result.error.code}: ${result.error.message}`)
@@ -145,7 +153,7 @@ export function apply(ctx: ClientContext): void {
   const controller = new PermissionPresetSettingsController(
     ctx.configForms.describe(), ctx, catalog)
   const load = (): Promise<void> => controller.load()
-  const select = (preset: string): Promise<void> => controller.select(preset)
+  const select = (preset: string): Promise<boolean> => controller.select(preset)
   const injected = (): PermissionRowInjected => ({
     hooks: { permission: controller.store },
     load,
@@ -168,6 +176,7 @@ export function apply(ctx: ClientContext): void {
     inject: (sessionId: SessionId): PermissionSelectInjected => ({
       hooks: { permissionCatalog: catalog.store },
       select: preset => submit(sessionId, preset),
+      interactive: isInteractivePermissionChat(sessionId),
     }),
   }, PermissionSelect))
 
@@ -182,7 +191,8 @@ export function apply(ctx: ClientContext): void {
       options: async (session) => {
         const selection = selectionOf(sessionFor(session))
         if (selection === undefined) throw new Error('permission presets are not available on this host')
-        return optionsOf(await catalog.load(), selection.currentValue, t)
+        const value = await catalog.load()
+        return optionsOf(value, selection.currentValue, t, isInteractivePermissionChat(session.sessionId) && typeof value.sharedPreset === 'string')
       },
       onSelect: (option, session) => submit(session.sessionId, option.id).then(() => undefined),
     },

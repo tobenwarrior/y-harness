@@ -50,7 +50,7 @@ function permissionController(api: object) {
 
 describe('permission settings store', () => {
   it('derives configured options from the permission catalog and preserves the inferred default', () => {
-    expect(resolveDefault(view('read-only'))).toEqual({ currentValue: 'read-only', options: [
+    expect(resolveDefault(view('read-only'))).toEqual({ currentValue: 'read-only', scope: 'default', options: [
       { id: 'read-only', label: 'Read Only' }, { id: 'workspace-write', label: 'Workspace' },
     ] })
     expect(resolveDefault({ ...view('read-only'), value: {} }).currentValue).toBe('read-only')

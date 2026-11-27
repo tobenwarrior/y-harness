@@ -17,6 +17,8 @@ export interface PresetOption {
   name: string
   /** One user-facing sentence on what the value means; omitted when not configured. */
   description?: string
+  /** A configured preset that grants unrestricted access. */
+  unrestricted?: true
 }
 
 /**
@@ -30,6 +32,17 @@ export interface PermissionCatalog {
   defaultOptions: PresetOption[]
   /** Effective default when the Config field is omitted. */
   defaultPreset: string
+  /** Explicit shared preset for private chats, or null until the owner selects one. */
+  sharedPreset?: string | null
+}
+
+/**
+ * Identify an ordinary chat created or forked by the interactive Session controller.
+ * @param id - Session identity.
+ * @returns whether the id belongs to the interactive chat namespace.
+ */
+export function isInteractivePermissionChat(id: string): boolean {
+  return id.startsWith('session-')
 }
 
 /** Whole `permissions` Session projection: current durable selection only. */

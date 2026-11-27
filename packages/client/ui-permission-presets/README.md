@@ -1,5 +1,5 @@
 ---
-description: "Permission preset surfaces for the Web GUI: the General settings default row and the /permission picker for the current session; for users and maintainers of permission policy."
+description: "Permission preset surfaces for the Web GUI: the shared permission selector in General settings and private chats; for users and maintainers of permission policy."
 kind: "package-reference"
 ---
 
@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Choose permission presets for the current Web session or future sessions. General settings changes only the future default; the composer and `/permission` pickers switch the current session. Default Web offers Ask for approval, Approve for me, and Full access; deployments can add read-only sandbox and preset descriptions. Loading the experimental Auto integration adds Auto review to current-session pickers. Visible Full access and Auto selections require risk acknowledgement, while a complete `/permission <preset>` command executes directly. The host confirms each change through the Session projection.
+Choose a shared permission preset in General settings, the composer, or the `/permission` picker. The Host publishes the effective mode through each private chat’s permissions projection. Full access requires acknowledgement of the profile-wide effect. Separate session policies can offer experimental Auto review.
 
 ## Table of Contents
 
@@ -23,17 +23,17 @@ Choose permission presets for the current Web session or future sessions. Genera
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this plugin alongside the settings, commands, and conversation packages. General settings receives the future-default row; the composer receives the `conversation.input.permission` control, and bare `/permission` opens the slash picker. Current-session controls require both the Session projection and a complete catalog snapshot. A permission-less composition exposes neither current-session controls nor the Settings row.
+Mount this plugin alongside the settings, commands, and conversation packages. General settings receives the shared access row; the composer receives the `conversation.input.permission` control, and bare `/permission` opens the slash picker. Current-session controls require both the Session projection and a complete catalog snapshot. A permission-less composition exposes neither current-session controls nor the Settings row.
 
 ### The picker
 
-A pick submits the `/permission <preset>` command line. The argument-bearing form (`/permission <preset>` typed directly) still switches directly; the decoration replaces only the bare invocation. The built-in English labels are `Read Only`, `Ask for approval`, `Approve for me`, `Full access`, and `Auto review`; localized deployments may provide equivalent labels. Explicit host labels remain unchanged, unknown kebab-case names render in title case, and `auto` carries an `EXP` badge plus an experimental-risk confirmation. `custom` is display state, never a target.
+After the first shared selection in General settings, private chat pickers save `permission.sharedPreset` through the same Settings API. The session-specific pickers submit `/permission <preset>`. The built-in English labels are `Read Only`, `Ask for approval`, `Approve for me`, `Full access`, and `Auto review`; localized deployments may provide equivalent labels. Explicit host labels remain unchanged, unknown kebab-case names render in title case, and `auto` carries an `EXP` badge plus an experimental-risk confirmation. `custom` is display state, never a target.
 
 When the live catalog withdraws a preset, the composer closes its pending confirmation and shows the Session's current value instead of an unavailable optimistic pick. Every catalog invalidation — the payload-free notification or a connection-generation change — closes an open slash picker or its confirmation without consuming the draft, while publishing the result of a read the picker waits for leaves it open with its failure and retry state; reopening reads the current catalog. A submitted command remains busy until its response settles.
 
 ### The Settings row
 
-The row derives its options from the host's dynamic `defaultPreset` enum, uses the same localized built-in labels as the current-session picker, and writes one settings mutation. Current-session-only contributions such as `auto` are absent. The value applies only when a later session is created; changing it never switches or rewrites the current session.
+The row takes its choices from the configured preset catalog. Selecting a mode applies it to open, new, and reopened private chats in the profile. The row uses the legacy future-session default when connected to an older Host.
 
 -----
 
@@ -43,7 +43,7 @@ The row derives its options from the host's dynamic `defaultPreset` enum, uses t
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The General row reads the explicitly exposed `permission` Settings descriptor through `ctx.configForms` and writes one `settings.mutate` path operation with the descriptor revision; its observable rides the slot system's `hooks` compartment, so the renderer owns React hook binding, and a push invalidation refetches the descriptor. The value is read only when a later session is created. The current-session surface is a popupSelect decoration hung on the host `/permission` command (`ctx.commandUi.decorate`): the host command keeps its slash-menu row, argument-bearing form, and durable lifecycle logging, while the decoration replaces only the bare invocation with the picker. One process-scoped directory subscribes to the payload-free catalog notification before its first Remote read and publishes only the latest complete success for the active connection generation. A winning failure or connection reset clears the old snapshot, which hides the composer seat until a later existing trigger retries, while the slash picker stays available and shows the failure with its retry; stale-generation and disposed settlements are ignored. Its public observables are `{ value }` and `invalidations`, one tick per catalog notification or connection-generation change; failures remain internal to imperative loading. Both the slash popup and composer seat consume that shared catalog, while the Session `permissions` projection supplies only `currentValue`. Full access and Auto review each carry localized confirmation copy; Auto also carries the badge rendered by the shared popup shell.
+The General row reads the explicitly exposed `permission` Settings descriptor through `ctx.configForms` and writes one `settings.mutate` path operation with the descriptor revision; its observable rides the slot system's `hooks` compartment, so the renderer owns React hook binding, and a push invalidation refetches the descriptor. The chooser writes through the Host settings provider and uses its revision to reject stale edits. A popupSelect decoration for the bare `/permission` command opens the composer picker. One process-scoped directory subscribes to the payload-free catalog notification before its first Remote read and publishes only the latest complete success for the active connection generation. A winning failure or connection reset clears the old snapshot, which hides the composer seat until a later existing trigger retries, while the slash picker stays available and shows the failure with its retry; stale-generation and disposed settlements are ignored. Its public observables are `{ value }` and `invalidations`, one tick per catalog notification or connection-generation change; failures remain internal to imperative loading. Both the slash popup and composer seat consume that shared catalog, while the Session `permissions` projection supplies only `currentValue`. Full access and Auto review each carry localized confirmation copy; Auto also carries the badge rendered by the shared popup shell.
 
 </details>
 
@@ -64,7 +64,7 @@ Read these pages when the permission surface is not enough. They move from the b
 <a id="model-experience"></a>
 ## Model Experience
 
-Indirectly, through the permission facts its two surfaces write: the Settings row causes a future session to start with whole-value knob events, while the `/permission` picker appends the selected current-session preset. Sandbox and approval consumers resolve their own knob events; selecting `auto` additionally activates the host Auto integration's independent per-call reviewer.
+Indirectly, through the durable permission facts the Host writes for each affected session. Sandbox and approval consumers resolve their own knob events; selecting `auto` additionally activates the host Auto integration's independent per-call reviewer.
 
 #### KV Cache effect
 

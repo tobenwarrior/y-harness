@@ -237,8 +237,8 @@
       name: '@yharness/permission-presets'
       config:
         # New sessions start confined to the workspace without approval
-        # prompts; wider access is refused. The composer selector and
-        # the /permission command still switch a single session.
+        # prompts; wider access is refused. The profile keeps this default
+        # until the owner selects a shared mode for private chats.
         defaultPreset: approve-for-me
         # Descriptions are the selector's second line. `ask` prompts only for actions the
         # sandbox would refuse, and `never` refuses them outright, so the middle preset

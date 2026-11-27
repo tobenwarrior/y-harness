@@ -1,8 +1,4 @@
-/**
- * Permission preference row: the default preset for subsequently created
- * sessions. Current-session switches remain on the composer `/permission`
- * control.
- */
+/** Profile permission selector in General settings. */
 
 import { useEffect, useState } from 'react'
 import type { SnapshotStore } from '@yharness/client-store'
@@ -24,7 +20,7 @@ export interface PermissionRowInjected {
   /** Load the descriptor when the row first renders. */
   load: () => Promise<void>
   /** Persist one advertised preset. */
-  select: (preset: string) => Promise<void>
+  select: (preset: string) => Promise<boolean>
 }
 
 /** Full component props. */
@@ -34,14 +30,14 @@ export type PermissionRowProps =
   & InjectFace<PermissionRowInjected>
 
 /**
- * Render the new-session Permission default selector.
+ * Render the Host's editable permission setting.
  * @param props - composed slot props.
  * @returns the row, or null when the host does not expose permission settings.
  */
 export function PermissionRow({ load, select, usePermission, t }: PermissionRowProps) {
   const state = usePermission(snapshot => snapshot)
   const [open, setOpen] = useState(false)
-  const [confirmingFullAccess, setConfirmingFullAccess] = useState(false)
+  const [confirmingPreset, setConfirmingPreset] = useState<string | null>(null)
   const [acknowledged, setAcknowledged] = useState(false)
 
   useEffect(() => {
@@ -52,16 +48,17 @@ export function PermissionRow({ load, select, usePermission, t }: PermissionRowP
     if (state.writable && state.status !== 'unavailable') return
     setOpen(false)
     setAcknowledged(false)
-    setConfirmingFullAccess(false)
+    setConfirmingPreset(null)
   }, [state.status, state.writable])
 
   if (state.status === 'unavailable') return null
   const selected = state.options.find(option => option.id === state.currentValue)
-  const busy = state.status === 'loading' || state.status === 'saving' || confirmingFullAccess
+  const busy = state.status === 'loading' || state.status === 'saving' || confirmingPreset !== null
   const optionLabel = (option: PermissionSettingsState['options'][number]): string =>
     displayPermissionPreset(option.id, option.label, t)
   const label = selected !== undefined ? optionLabel(selected) : (busy ? t('loading') : t('unavailable'))
-  const description: string = state.error ?? t('description')
+  const sharedSettings = state.scope !== 'default'
+  const description: string = state.error ?? t(sharedSettings ? 'description.shared' : 'description')
 
   return (
     <>
@@ -77,10 +74,10 @@ export function PermissionRow({ load, select, usePermission, t }: PermissionRowP
           selectedId={state.currentValue}
           onSelect={(id) => {
             setOpen(false)
-            if (id === state.currentValue) return
-            if (id === FULL_ACCESS_PRESET) {
+            if (id === state.currentValue && state.scope !== 'available') return
+            if (id === FULL_ACCESS_PRESET || state.options.find(option => option.id === id)?.unrestricted === true) {
               setAcknowledged(false)
-              setConfirmingFullAccess(true)
+              setConfirmingPreset(id)
               return
             }
             void select(id)
@@ -103,9 +100,9 @@ export function PermissionRow({ load, select, usePermission, t }: PermissionRowP
         />
       </div>
       <RiskConfirmation
-        open={confirmingFullAccess}
+        open={confirmingPreset !== null}
         title={t('confirm.title')}
-        description={t('confirm.description')}
+        description={t(sharedSettings ? 'confirm.description.shared' : 'confirm.description')}
         acknowledgeLabel={t('confirm.acknowledge')}
         cancelLabel={t('confirm.cancel')}
         closeLabel={t('close')}
@@ -115,12 +112,12 @@ export function PermissionRow({ load, select, usePermission, t }: PermissionRowP
         onAcknowledgedChange={setAcknowledged}
         onCancel={() => {
           setAcknowledged(false)
-          setConfirmingFullAccess(false)
+          setConfirmingPreset(null)
         }}
         onConfirm={() => {
           setAcknowledged(false)
-          setConfirmingFullAccess(false)
-          void select(FULL_ACCESS_PRESET)
+          setConfirmingPreset(null)
+          if (confirmingPreset !== null) void select(confirmingPreset)
         }}
       />
     </>

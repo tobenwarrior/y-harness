@@ -7897,7 +7897,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'PermissionCatalog',
-    declaration: 'export interface PermissionCatalog {\n    options: PresetOption[];\n    defaultOptions: PresetOption[];\n    defaultPreset: string;\n}',
+    declaration: 'export interface PermissionCatalog {\n    options: PresetOption[];\n    defaultOptions: PresetOption[];\n    defaultPreset: string;\n    sharedPreset?: string | null;\n}',
   },
   {
     name: 'PlatformSession',
@@ -8001,7 +8001,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'PresetOption',
-    declaration: 'export interface PresetOption {\n    value: string;\n    name: string;\n    description?: string;\n}',
+    declaration: 'export interface PresetOption {\n    value: string;\n    name: string;\n    description?: string;\n    unrestricted?: true;\n}',
   },
   {
     name: 'PresetSpec',

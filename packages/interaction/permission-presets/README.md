@@ -45,7 +45,8 @@ The plugin config defines the preset table and the default for fresh sessions. E
 | Field | Default | Meaning |
 |---|---|---|
 | `presets` | `workspace-write`, `danger-full-access` | Table of preset name → sandbox/approval bundle |
-| `defaultPreset` | inferred | Preset pinned into fresh sessions; required when composition defaults match no preset |
+| `defaultPreset` | inferred | Preset pinned into fresh sessions without a shared choice |
+| `sharedPreset` | unset | Owner-selected preset applied to all private interactive chats in the profile |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#yharnesspermission-presets) is the exhaustive source for every accepted field and its JSDoc. `custom` is reserved for the derived not-a-preset state, while `auto` is reserved for the Auto review integration. Mounting requires a confining bash executor (one that reports a `sandboxMode`) and the approval service.
 
@@ -59,7 +60,7 @@ Clients render selectable entries from the process catalog: configured presets i
 
 ### Session defaults
 
-The `permission` settings namespace holds `defaultPreset` for future sessions and accepts configured presets only. Session creation reads it, applies it to the sandbox mode and approval policy, and records the applied preset as a `permission/preset` selection. Later settings changes never alter an existing session. A resumed seed, including an explicitly empty one marked by `session/end-seed`, preserves its effective permission and receives only missing durable facts rather than the latest user default; a persisted `auto` identity requires the live Auto registration and its admission before publication.
+The `permission` settings namespace accepts configured presets for `defaultPreset` and `sharedPreset`. Choose `sharedPreset` to apply the same permission to open, new, and reopened private chats in this profile. Existing profiles retain their choices until the owner selects a shared preset. Bot, shared collaborator, webhook, and delegated sessions retain their own policy. Session creation otherwise pins `defaultPreset` only for fresh sessions. Restored sessions receive any missing durable facts, and a restored `auto` selection outside the shared policy requires live Auto admission.
 
 -----
 

@@ -7,6 +7,7 @@ import SessionStore, {
 import SessionProjectionRegistry from '@yharness/session-projection'
 import type { SandboxMode } from '@yharness/sandbox'
 import type { ApprovalPolicy } from '@yharness/user-approval'
+import type { SettingsNamespace } from '@yharness/settings/types'
 import PermissionPresetService, {
   AUTO_PRESET, CUSTOM_PRESET,
 } from '@yharness/permission-presets'
@@ -265,7 +266,7 @@ describe('PermissionPresetService', () => {
 
   it('optionOf() presents shipped labels/descriptions, falls back to the raw key, and fixes custom', async () => {
     const ctx = await mounted()
-    expect(ctx.permissionPresets.optionOf('danger-full-access')).toEqual({ value: 'danger-full-access', name: 'danger-full-access', description: 'Full file access without approval prompts.' })
+    expect(ctx.permissionPresets.optionOf('danger-full-access')).toEqual({ value: 'danger-full-access', name: 'danger-full-access', description: 'Full file access without approval prompts.', unrestricted: true })
     expect(ctx.permissionPresets.optionOf('custom')).toEqual({ value: 'custom', name: 'Custom', description: 'Current sandbox and approval settings do not match a preset.' })
     const bare = await mounted({ config: { presets: { plain: { sandbox: 'workspace-write', approval: 'ask' } } } })
     expect(bare.permissionPresets.optionOf('plain')).toEqual({ value: 'plain', name: 'plain' })
@@ -344,6 +345,32 @@ describe('new-session default', () => {
     expect(second.snapshotEvents().map(event => event.type)).toEqual([
       'permission/preset', 'sandbox/mode', 'approval/policy',
     ])
+  })
+
+  it('applies an explicitly shared preset to open, new, and reopened private chats', async () => {
+    const ctx = await mountedStore()
+    const config = configurations.get(ctx)!
+    const first = ctx.sessions.create(SessionId('session-first'))
+    const bot = ctx.sessions.create(SessionId('bot-session-example'))
+    const child = ctx.sessions.create(SessionId('session-child'), { meta: { delegationDepth: 1 } })
+    ctx.permissionPresets.set(first, 'danger-full-access')
+    ctx.permissionPresets.set(bot, 'danger-full-access')
+    ctx.permissionPresets.set(child, 'danger-full-access')
+    const original = first.snapshotEvents()
+
+    await config.update({ sharedPreset: 'workspace-write' })
+    ctx.emit('settings/document-updated', 'permission' as SettingsNamespace, 1)
+    expect(ctx.permissionPresets.catalog().sharedPreset).toBe('workspace-write')
+    const fresh = ctx.sessions.create(SessionId('session-fresh'))
+    const resumed = ctx.sessions.create(SessionId('session-resumed'), { seed: original })
+    for (const session of [first, fresh, resumed]) {
+      expect(ctx.permissionPresets.current(session)).toBe('workspace-write')
+      expect(ctx.sessionProjections.stateOf(session, 'permissions')).toMatchObject({
+        sandbox: 'workspace-write', approval: 'ask',
+      })
+    }
+    expect(ctx.permissionPresets.current(bot)).toBe('danger-full-access')
+    expect(ctx.permissionPresets.current(child)).toBe('danger-full-access')
   })
 
   it('preserves a seeded legacy session instead of applying the latest user default', async () => {

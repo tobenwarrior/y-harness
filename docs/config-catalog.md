@@ -2315,6 +2315,8 @@ export interface Config {
    * sandbox and approval defaults is used.
    */
   defaultPreset: Volatile<string | undefined>
+  /** Explicitly selected preset for existing and future private interactive chats. */
+  sharedPreset: Volatile<string | undefined>
 }
 
 /** One preset's sandbox/approval bundle and optional client presentation. */

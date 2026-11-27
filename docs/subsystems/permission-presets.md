@@ -37,6 +37,8 @@ interface Config {
    * sandbox and approval defaults is used.
    */
   defaultPreset: Volatile<string | undefined>
+  /** Explicitly selected preset for existing and future private interactive chats. */
+  sharedPreset: Volatile<string | undefined>
 }
 ```
 
@@ -63,10 +65,14 @@ interface PresetOption {
   name: string
   /** One user-facing sentence on what the value means; omitted when not configured. */
   description?: string
+  /** A configured preset that grants unrestricted access. */
+  unrestricted?: true
 }
 ```
 
 ## Switching and the `permission/preset` event
+
+An explicit `permission.sharedPreset` choice applies to ordinary private chats created by the interactive Session controller. When the setting changes, the service records the new intent and both enforcement values where they differ in open chats. On reopening a chat, it applies the saved profile choice before the chat becomes available. Independent automation and delegated Sessions keep their own policies.
 
 `set(session, name)` resolves the preset (unknown names throw), runs Auto admission when applicable, appends a log-only `permission/preset` event unless `name` is already the effective preset, then writes each knob through its own setter — `setSandboxMode` from [dsh-sandbox-policy](../../packages/sandbox/sandbox-policy) and `setApprovalPolicy` from [dsh-user-approval](../../packages/interaction/user-approval) — only when that knob's effective value changes. The selection event precedes the knob events in the same turn, and re-selecting the effective preset appends nothing.
 

@@ -1,7 +1,7 @@
 /**
- * Permission default-settings controller. The permission descriptor comes
+ * Permission settings controller. The permission descriptor comes
  * from the shared describe mirror and choices from the permission catalog; writes target
- * only `defaultPreset`, carry the descriptor revision, and fold their answer
+ * the shared preset, carry the descriptor revision, and fold their answer
  * back into the mirror.
  */
 
@@ -24,6 +24,8 @@ export interface PermissionDefaultOption {
   id: string
   /** Host-supplied label or a title-cased preset key. */
   label: string
+  /** Whether this configured mode requires acknowledgement of unrestricted access. */
+  unrestricted?: true
 }
 
 /** Permission settings-row snapshot. */
@@ -34,6 +36,7 @@ export interface PermissionSettingsState {
   currentValue: string
   options: readonly PermissionDefaultOption[]
   revision: number
+  scope: 'default' | 'available' | 'shared'
 }
 
 /** Resolve the new-session choices from the permission domain's catalog.
@@ -44,13 +47,18 @@ export interface PermissionSettingsState {
 export function permissionDefaultOf(view: SettingsNamespaceView, catalog: PermissionCatalog): {
   currentValue: string
   options: PermissionDefaultOption[]
+  scope: PermissionSettingsState['scope']
 } {
-  const currentValue = (view.value as { defaultPreset?: string }).defaultPreset ?? catalog.defaultPreset
+  const value = view.value as { defaultPreset?: string; sharedPreset?: string }
+  const sharedPreset = value.sharedPreset ?? catalog.sharedPreset
+  const currentValue = sharedPreset ?? value.defaultPreset ?? catalog.defaultPreset
   const options = catalog.defaultOptions.map(option => ({
     id: option.value, label: displayPermissionPreset(option.value, option.name),
+    ...option.unrestricted === true ? { unrestricted: true as const } : {},
   }))
   if (!options.some(option => option.id === currentValue)) throw new Error('permission catalog does not advertise its current default')
-  return { currentValue, options }
+  const scope = catalog.sharedPreset === undefined ? 'default' : sharedPreset == null ? 'available' : 'shared'
+  return { currentValue, options, scope }
 }
 
 /** Controller deriving the row from the shared mirror and writing the default through it. */
@@ -63,6 +71,7 @@ export class PermissionPresetSettingsController {
     currentValue: '',
     options: [],
     revision: 0,
+    scope: 'default',
   })
 
   private following: (() => void) | undefined
@@ -102,18 +111,18 @@ export class PermissionPresetSettingsController {
   }
 
   /**
-   * Persist one preset as the default for subsequently created sessions.
+   * Persist the preset for private chats, or the default on an older Host.
    * A selection made while one is already saving is ignored — the row's
    * control is disabled during the save, so this only drops programmatic
    * double-submits rather than user intent.
    * @param preset - advertised preset key.
-   * @returns nothing; {@link store} carries success or failure.
+   * @returns whether the settings provider accepted the new value.
    */
-  async select(preset: string): Promise<void> {
+  async select(preset: string): Promise<boolean> {
     const state = this.store.getSnapshot()
     const view = this.describeFace.getSnapshot().view?.namespaces
       .find(entry => entry.ns === PERMISSION_SETTINGS_NS)
-    if (view === undefined || !state.writable || this.saving) return
+    if (view === undefined || !state.writable || this.saving) return false
     this.saving = true
     this.store.update((draft) => {
       draft.status = 'saving'
@@ -123,22 +132,26 @@ export class PermissionPresetSettingsController {
     try {
       response = await this.ctx.remote.settings.mutate(
         PERMISSION_SETTINGS_NS,
-        [{ op: 'set', path: ['defaultPreset'], value: preset }],
+        [{ op: 'set', path: [state.scope === 'default' ? 'defaultPreset' : 'sharedPreset'], value: preset }],
         view.revision,
       )
+    } catch (error) {
+      if (!this.disposed) this.fail(error)
+      return false
     } finally {
       // Cleared before the fold below, whose publish reaches `derive` through
       // this row's own subscription and is skipped while a save is pending.
       this.saving = false
     }
-    if (this.disposed) return
+    if (this.disposed) return false
     if (!response.ok) {
       this.fail(response.error)
-      return
+      return false
     }
     // The mirror publish reaches this row's own subscription, so the fold
     // is also what republishes the accepted value here.
     this.describeFace.acceptView(response.value)
+    return true
   }
 
   /** Stop following the mirror; later publishes leave the snapshot alone. */
@@ -192,6 +205,7 @@ export class PermissionPresetSettingsController {
         state.currentValue = resolved.currentValue
         state.options = resolved.options
         state.revision = view.revision
+        state.scope = resolved.scope
       })
     } catch (error) {
       this.fail(error)

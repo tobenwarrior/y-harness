@@ -118,3 +118,7 @@
 .chevronOpen {
   transform: rotate(180deg);
 }
+.selectionError {
+  color: var(--yh-alias-state-warn-label);
+  font-size: 12px;
+}

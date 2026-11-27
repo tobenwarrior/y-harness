@@ -20,6 +20,10 @@ Start a session and send:
 
 The agent can read and edit workspace files, run commands, delegate work, and maintain a plan. The Web UI asks before operations that require approval under the active permission policy.
 
+## Share one access mode across chats
+
+Choose an access mode in **Settings → General → Permission** to share it across private chats in this profile. Open and reopened chats use your choice, and the composer can change it for all of them. **Ask for approval** keeps workspace limits in place and lets you review requests for wider access, such as agent-requested plugin installation. Bots, shared conversations, and automated runs keep their own policies.
+
 ## Edit the open interface
 
 In a private Standard or Creator session, ask for a change such as “Hide Skills from my sidebar and add a note labeled Release checklist under Y Harness.” Live Edit previews additions, removals, and visual adjustments to supported interface elements while you stay in the current session. Select **Keep** to save the layout to your profile, or **Undo** to discard the preview or revert the last saved edit. If your system reduces motion, layout changes appear immediately.

@@ -31,7 +31,7 @@ import { APPROVAL_POLICIES, setApprovalPolicy } from '@yharness/user-approval'
 // Type-only: resolves the required projection service and optional settings/command children.
 import type {} from '@yharness/session-projection'
 import type {} from '@yharness/commands'
-import type { PermissionCatalog, PermissionSelection, PresetOption } from './types.ts'
+import { isInteractivePermissionChat, type PermissionCatalog, type PermissionSelection, type PresetOption } from './types.ts'
 
 export type * from './types.ts'
 
@@ -169,6 +169,8 @@ export interface Config {
    * sandbox and approval defaults is used.
    */
   defaultPreset: Volatile<string | undefined>
+  /** Explicitly selected preset for existing and future private interactive chats. */
+  sharedPreset: Volatile<string | undefined>
 }
 
 /**
@@ -196,6 +198,7 @@ export class PermissionPresetService extends TypertRemoteService {
       },
     }),
     defaultPreset: z.string().volatile(),
+    sharedPreset: z.string().volatile(),
   })
 
   static inject = ['shell', 'approval', 'sessions', 'sessionProjections']
@@ -203,6 +206,7 @@ export class PermissionPresetService extends TypertRemoteService {
   private readonly presets: Record<string, PresetSpec>
   private autoAdmit: (() => void) | undefined
   private defaultSettings: () => PermissionSettings
+  private sharedPreset: string | undefined
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'permissionPresets')
@@ -225,6 +229,14 @@ export class PermissionPresetService extends TypertRemoteService {
       throw new Error('permission: composed sandbox and approval defaults match no preset; configure defaultPreset explicitly')
     }
     this.resolve(defaultPreset)
+    const readSharedPreset = (): string | undefined => {
+      const preset = config.sharedPreset.get()
+      if (preset !== undefined && !Object.hasOwn(this.presets, preset)) {
+        throw new Error(`permission: unknown shared preset "${preset}"`)
+      }
+      return preset
+    }
+    this.sharedPreset = readSharedPreset()
     this.defaultSettings = () => {
       const defaultPreset = config.defaultPreset.get() ?? inferredDefault
       if (!Object.hasOwn(this.presets, defaultPreset)) throw new Error(`permission: unknown default preset "${defaultPreset}"`)
@@ -248,6 +260,18 @@ export class PermissionPresetService extends TypertRemoteService {
     for (const session of ctx.sessions.list()) {
       this.pinInitialPermission(session)
     }
+    ctx.on('settings/document-updated', (namespace) => {
+      if (namespace !== 'permission') return
+      const preset = readSharedPreset()
+      if (preset === this.sharedPreset) return
+      this.sharedPreset = preset
+      if (preset !== undefined) {
+        for (const session of ctx.sessions.list()) {
+          if (this.sharedFor(session) !== undefined) this.pinInitialPermission(session)
+        }
+      }
+      this.emitCatalogChanged()
+    })
 
     // The /permission command: the one write path a web client uses (the
     // popup contribution submits the picked preset as this line). The child
@@ -265,6 +289,9 @@ export class PermissionPresetService extends TypertRemoteService {
           const name = rawInput.trim()
           if (name === '') {
             return { kind: 'success', text: `current preset ${this.current(agent.session)} (available: ${this.names.join(', ')})` }
+          }
+          if (this.sharedFor(agent.session) !== undefined) {
+            return { kind: 'error', text: 'Use the permission picker or Settings to change access for all private chats.' }
           }
           if (!this.names.includes(name)) {
             return { kind: 'error', text: `unknown preset "${name}" (available: ${this.names.join(', ')})` }
@@ -295,6 +322,7 @@ export class PermissionPresetService extends TypertRemoteService {
       options: this.names.map(name => this.optionOf(name)),
       defaultOptions: Object.keys(this.presets).map(name => this.optionOf(name)),
       defaultPreset: this.defaultSettings().defaultPreset,
+      sharedPreset: this.sharedPreset ?? null,
     }
   }
 
@@ -386,7 +414,11 @@ export class PermissionPresetService extends TypertRemoteService {
       return { value: CUSTOM_PRESET, name: 'Custom', description: 'Current sandbox and approval settings do not match a preset.' }
     }
     const spec = this.resolve(name)
-    return { value: name, name: spec.name ?? name, ...spec.description !== undefined ? { description: spec.description } : {} }
+    return {
+      value: name, name: spec.name ?? name,
+      ...spec.description !== undefined ? { description: spec.description } : {},
+      ...name !== AUTO_PRESET && spec.sandbox === 'danger-full-access' ? { unrestricted: true } : {},
+    }
   }
 
   /**
@@ -396,7 +428,17 @@ export class PermissionPresetService extends TypertRemoteService {
    * @param name - the preset to switch to; unknown names throw.
    */
   set(session: Session, name: string): void {
+    const shared = this.sharedFor(session)
+    if (shared !== undefined && shared !== name) {
+      throw new Error('permission: this chat uses the shared profile preset')
+    }
     this.apply(session, name, (policy) => { setApprovalPolicy(session, policy) })
+  }
+
+  private sharedFor(session: Session): string | undefined {
+    if (!isInteractivePermissionChat(session.id) || session.header.origin === 'subagent'
+      || (session.header.delegationDepth ?? 0) > 0) return undefined
+    return this.sharedPreset
   }
 
   /** Apply one preset through its durable identity and canonical knob setters. */
@@ -428,6 +470,14 @@ export class PermissionPresetService extends TypertRemoteService {
   private pinInitialPermission(session: Session): void {
     const state = this.permissionState(session)
     const { preset, sandbox, approval, seeded } = state
+    const shared = this.sharedFor(session)
+    if (shared !== undefined) {
+      const spec = this.resolve(shared)
+      if (preset !== shared) session.append('permission/preset', { preset: shared })
+      if (sandbox !== spec.sandbox) setSandboxMode(session, spec.sandbox)
+      if (approval !== spec.approval) setApprovalPolicy(session, spec.approval)
+      return
+    }
     if (preset === AUTO_PRESET) {
       if (this.autoAdmit === undefined) {
         throw new Error('permission: cannot restore preset "auto" without its active integration')

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { bindSnapshotSelector, RemoteError } from '@yharness/client-test-runtime'
 import type { SettingsNamespaceView } from '@yharness/api-remotes/client'
+import type { PermissionCatalog } from '@yharness/permission-presets/client'
 import { PermissionRow, type PermissionRowProps } from '../src/client/PermissionRow.tsx'
 import { en } from '../src/client/locales.ts'
 import { SettingsDescribeMirror } from '@yharness/client-ui-settings/src/client/settings-mirror.ts'
@@ -18,9 +19,12 @@ const catalog = { options: [], defaultPreset: 'read-only', defaultOptions: ['rea
 const directory = { store: createSnapshotStore({ value: catalog }), load: () => Promise.resolve(catalog) }
 
 /** Controller over a real mirror derived from the same scripted context. */
-function derivedController(remote: { settings: object }) {
+function derivedController(remote: { settings: object }, hostCatalog: PermissionCatalog = catalog) {
   const ctx = { remote } as never
-  return new PermissionPresetSettingsController(new SettingsDescribeMirror(ctx), ctx, directory)
+  const source = hostCatalog === catalog ? directory : {
+    store: createSnapshotStore({ value: hostCatalog }), load: () => Promise.resolve(hostCatalog),
+  }
+  return new PermissionPresetSettingsController(new SettingsDescribeMirror(ctx), ctx, source)
 }
 
 afterEach(cleanup)
@@ -78,6 +82,22 @@ function mount(controller: PermissionPresetSettingsController) {
 }
 
 describe('PermissionRow', () => {
+  it('shares the selected preset with existing chats even when it matches the default', async () => {
+    const initial = view('workspace-write', 4)
+    const accepted = { ...initial, revision: 5, value: { defaultPreset: 'workspace-write', sharedPreset: 'workspace-write' } }
+    const mutate = vi.fn(() => Promise.resolve(ok(accepted)))
+    mount(derivedController({ settings: {
+      describe: () => Promise.resolve(ok({ writable: true, hasDocument: true, namespaces: [initial] })),
+      mutate,
+    } }, { ...catalog, sharedPreset: null }))
+
+    fireEvent.click(await screen.findByRole('button', { name: en['preset.workspaceWrite'] }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en['preset.workspaceWrite'] }))
+    await waitFor(() => expect(mutate).toHaveBeenCalledWith('permission', [
+      { op: 'set', path: ['sharedPreset'], value: 'workspace-write' },
+    ], 4))
+  })
+
   it('loads the descriptor, opens the menu, and selects a new default', async () => {
     const mutate = vi.fn(() => Promise.resolve(ok(view('workspace-write', 1))))
     const controller = derivedController({
@@ -128,6 +148,28 @@ describe('PermissionRow', () => {
     fireEvent.click(enable)
     await waitFor(() => { expect(mutate).toHaveBeenCalledOnce() })
     expect(dialog.isConnected).toBe(false)
+  })
+
+  it('requires acknowledgement for a renamed unrestricted mode before sharing it', async () => {
+    const initial = view('workspace-write', 4)
+    const accepted = { ...initial, revision: 5, value: { sharedPreset: 'operator' } }
+    const mutate = vi.fn(() => Promise.resolve(ok(accepted)))
+    mount(derivedController({ settings: {
+      describe: () => Promise.resolve(ok({ writable: true, hasDocument: true, namespaces: [initial] })),
+      mutate,
+    } }, {
+      ...catalog, sharedPreset: null,
+      defaultOptions: [...catalog.defaultOptions, { value: 'operator', name: 'Operator', unrestricted: true }],
+    }))
+    fireEvent.click(await screen.findByRole('button', { name: en['preset.workspaceWrite'] }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Operator' }))
+    expect(screen.getByText(en['confirm.description.shared'])).toBeDefined()
+    expect(mutate).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(screen.getByRole('button', { name: en['confirm.enable'] }))
+    await waitFor(() => expect(mutate).toHaveBeenCalledWith('permission', [
+      { op: 'set', path: ['sharedPreset'], value: 'operator' },
+    ], 4))
   })
 
   it('hides an unavailable namespace and disables a read-only provider', async () => {

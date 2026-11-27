@@ -167,6 +167,7 @@
     "apps/web/tests/sidebar-subagent-activity.e2e.ts",
     "apps/web/tests/background-job-list.e2e.ts",
     "apps/web/tests/live-edit.e2e.ts",
+    "apps/web/tests/shared-chat-permissions.e2e.ts",
     "apps/web/tests/live-job-stream.e2e.ts",
     "apps/web/tests/bash-abort-row.e2e.ts",
     "apps/web/tests/skill-tool-row.e2e.ts",

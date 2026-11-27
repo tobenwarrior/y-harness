@@ -66,6 +66,8 @@ export interface PermissionSelectInjected {
   }
   /** Submit one current-session preset through the existing command writer. */
   select: (preset: string) => Promise<boolean>
+  /** This session can use the shared profile setting. */
+  interactive?: boolean
 }
 
 /** Complete props derived from the conversation slot, injected hooks, and locale. */
@@ -75,14 +77,16 @@ export type PermissionSelectProps =
   & PropsLocale<typeof PERMISSION_ACCESS_NS>
 
 export function PermissionSelect({
-  locked, select, usePermissionCatalog, useProjection, t,
+  locked, select, usePermissionCatalog, useProjection, t, interactive,
 }: PermissionSelectProps) {
   const selection = useProjection('permissions')
   const catalog = usePermissionCatalog(state => state.value)
+  const shared = interactive === true && typeof catalog?.sharedPreset === 'string'
   const [pick, setPick] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   const [confirmation, setConfirmation] = useState<string | null>(null)
   const [acknowledged, setAcknowledged] = useState(false)
+  const [failed, setFailed] = useState(false)
 
   useEffect(() => {
     if (!locked && selection !== undefined && catalog !== null
@@ -102,7 +106,7 @@ export function PermissionSelect({
     : permissionLabel(current.value, current.name, t)
   const busy = pick !== null || confirmation !== null
 
-  const items: MenuEntry[] = catalog.options.map((option) => {
+  const items: MenuEntry[] = (shared ? catalog.defaultOptions : catalog.options).map((option) => {
     const icon = permissionGlyph(option.value)
     const label = permissionLabel(option.value, option.name, t)
     const badge = optionBadge(option.value, t)
@@ -119,21 +123,22 @@ export function PermissionSelect({
       label: text,
       ...description === undefined ? {} : { description },
       ...icon === undefined ? {} : { icon },
-      ...option.value === FULL_ACCESS ? { danger: true } : {},
+      ...option.value === FULL_ACCESS || option.unrestricted === true ? { danger: true } : {},
     }
   })
 
   const submit = (id: string): void => {
     setPick(id)
+    setFailed(false)
     void select(id)
       .catch(() => false)
-      .then(() => { setPick(null) })
+      .then((applied) => { setPick(null); setFailed(!applied) })
   }
 
   const choose = (id: string): void => {
     setOpen(false)
     if (id === selection.currentValue) return
-    if (id === FULL_ACCESS || id === AUTO_REVIEW) {
+    if (id === FULL_ACCESS || id === AUTO_REVIEW || catalog.options.find(option => option.value === id)?.unrestricted === true) {
       setAcknowledged(false)
       setConfirmation(id)
       return
@@ -156,7 +161,7 @@ export function PermissionSelect({
     : t('confirm.title')
   const confirmationDescription = confirmation === AUTO_REVIEW
     ? t('auto.confirm.description')
-    : t('confirm.description')
+    : t(shared ? 'confirm.description.shared' : 'confirm.description')
   const confirmationAcknowledge = confirmation === AUTO_REVIEW
     ? t('auto.confirm.acknowledge')
     : t('confirm.acknowledge')
@@ -198,6 +203,7 @@ export function PermissionSelect({
           </button>
         }
       />
+      {failed && <span role="alert" className={css.selectionError}>{t('select.failed')}</span>}
       {confirmation !== null && (
         <RiskConfirmation
           open

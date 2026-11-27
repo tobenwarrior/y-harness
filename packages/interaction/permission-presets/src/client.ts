@@ -8,3 +8,4 @@
  */
 
 export type * from './types.ts'
+export { isInteractivePermissionChat } from './types.ts'
